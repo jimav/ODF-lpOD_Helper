@@ -1,6 +1,6 @@
 package Jima::Vis;
 use strict; use warnings;
-our $VERSION = sprintf "%d.%03d", q$Id: Interp.pm,v 1.1 2012/05/07 04:00:29 jima Exp $ =~ /(\d+)/g;
+our $VERSION = sprintf "%d.%03d", q$Revision: 1.2 $ =~ /(\d+)/g;
 
 =head1 NAME
 
