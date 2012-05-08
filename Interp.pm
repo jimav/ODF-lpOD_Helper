@@ -4,7 +4,7 @@ use strict; use warnings;
 # (james_avera AT ya (ho)o dot youknowwhat) 
 # Please retain the preceeding attribution in any copies or derivitives.
 
-our $VERSION = sprintf "%d.%03d", q$Revision: 1.3 $ =~ /(\d+)/g; 
+our $VERSION = sprintf "%d.%03d", q$Revision: 1.4 $ =~ /(\d+)/g; 
 
 =head1 SYNOPSIS
 
@@ -48,62 +48,80 @@ our $VisMaxWidth = 72;
 
 use Carp;
 use Data::Dumper ();
+use POSIX qw(INT_MAX);
 
 sub u($) { defined $_[0] ? $_[0] : "undef" }
 sub vis(@);
-sub vis(@) { 
+sub vis(@) {
   if (@_ > 1) {
     return "(" . (join ", ", map { vis($_) } @_) . ")";
   }
-  local $_ = Data::Dumper->new([@_])->
-              Quotekeys(0)->Sortkeys(1)->Terse(1)->Indent(1)->
-              Useqq(1)->Dump();
+  my @lines = split /(?<=\n)/, 
+                    Data::Dumper->new([@_])->
+                      Quotekeys(0)->Sortkeys(1)->Terse(1)->Indent(1)->
+                      Useqq(1)->Dump();
 
-  s/\s+\z//s;       # omit final newline
+  $lines[$#lines] =~ s/\s+\z//s;  # omit final newline
 
-  # Make the output more horizontal
-  use feature 'state';
-  state $item_re = qr/  (?:
-                            [^",\\\[\]\{\}]*[^",\\\[\]\{\}\s]    
-                            | \\.
-                            | "(?:[^"\\]+|\\.)*" 
-                        )+
-                      /xs; 
+  #print "---BEFORE---\n"; foreach(@lines) { print; } print "\n-----------\n";
+  # Data::Dumper output looks like this, with an indent increment of 2 spaces:
+  # [
+  #   value,
+  #   value,
+  #   {
+  #     key => [
+  #       value,
+  #       value
+  #     ],
+  #     key => {
+  #       key => value,
+  #       key => value
+  #     },
+  #   },
+  #   value
+  # ]
+  my $restart = 0;
+  while ($restart < $#lines) 
+  {
+    OUTER_LOOP:
+    for (my $I=$restart, my $J=$restart+1, $restart=INT_MAX; 
+         $J < $#lines; 
+         $I=$J, $J=$I+1) 
+    {
+      while ($lines[$I] =~/^\s*$/) { next OUTER_LOOP if ++$I >= $J }
+      my ($Iind,$Icode) = ($lines[$I] =~ /^(\s*)(.*\S)/);
+      $Iind = length($Iind);
 
-   #warn "### ORIGINAL:\n$_\n----\n";
-   s/^(\ *) 
-     (
-       (?|  # reuse same group numbers in each alternation
-         (\[) \s* ( (?:\s*${item_re},)* (?:\s*${item_re})? ) \s* (\]) \s*
-         |
-         (\{) \s* ( (?:\s*${item_re},)* (?:\s*${item_re})? ) \s* (\}) \s*
-       )
-     )
-    /
-     do{ my ($indent, $lb, $content, $rb) = ($1,$3,$4,$5);
-         #warn "### lb=",u($lb)," content=",u($content)," rb=",u($rb),"\n";
-         local $_;
-         my $new = "${indent}${lb}";
-         my $llen = length($indent)+1;
-         my $comma;
-         foreach my $piece (split m#\s*(${item_re})\s*#,$content) {
-           #warn "### piece=$piece\n";
-           if ($piece =~ m#^,?$#) { #delimiter or initial empty field
-             $comma = $piece;
-             next;
-           }
-           $new .= $comma; $llen += length($comma); 
-           if ($llen + 1 + length($piece) + 1 > $VisMaxWidth) {
-             $new .= "\n${indent} ";
-             $llen = length($indent)+1;
-           }
-           $new .= " $piece";
-           $llen += (1 + length($piece));
-         }
-         $new .= " ${rb}";
-         $new;
-     }/xemsg;
-  $_;
+      #die "bug" if grep {$_ ne ""} @lines[$I+1..$J-1]; ### TEMP
+
+      while ($lines[$J] =~/^\s*$/) { last OUTER_LOOP if ++$J > $#lines }
+      my ($Jind,$Jcode) = ($lines[$J] =~ /^(\s*)(.*\S)/);
+      $Jind = length($Jind);
+
+      my $do_join;
+      if ($Iind <= $Jind           # I & J at same level
+          && $Icode !~ /^[\]\}]/   # I isn't closing an aggregate
+          && $Jcode !~ /[\[\{]$/   # J isn't opening an aggregate
+         ) {
+        $do_join = 1;
+      }
+      if ($do_join) {
+        my $Ilen = $Iind+length($Icode);
+        if ($Ilen + $Jind + length($Jcode)+1 <= $VisMaxWidth) {
+          substr($lines[$I],$Ilen,1) = " ";
+          substr($lines[$I],$Ilen+1) = substr($lines[$J], $Jind);
+          $lines[$J] = "";
+          $restart = $I if ($I < $restart);
+          last if ++$J > $#lines;
+          redo;
+        } else {
+          next;  # won't fit
+        }
+      }
+    }
+  }
+
+  return join "",@lines;
 }
 
 sub forcequo($) {
