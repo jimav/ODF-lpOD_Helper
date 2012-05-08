@@ -1,5 +1,5 @@
 use strict; use warnings; 
-our $VERSION = sprintf "%d.%03d", q$Revision: 1.5 $ =~ /(\d+)/g; 
+our $VERSION = sprintf "%d.%03d", q$Revision: 1.6 $ =~ /(\d+)/g; 
 
 # Copyright © Jim Avera 2012.  Released into the Public Domain May 7, 2012.
 # (james_avera AT ya (ho)o dot youknowwhat) 
@@ -22,21 +22,24 @@ use POSIX qw(INT_MAX);
 sub u($) { defined $_[0] ? $_[0] : "undef" }
 sub vis(@);
 sub vis(@) {
+  local $_;  # preserve $1 etc. in caller's context
   if (@_ == 0) {
     return "()";
   }
-  if (@_ > 1) {
-    return "(" . (join ", ", map { vis($_) } @_) . ")";
+  elsif (@_ != 1) {
+    $_ = vis(\@_);
+    s/^\[/\(/ or die "bug($_)"; # convert to "(list,of,args)"
+    s/\]$/\)/ or die "bug($_)";
+    return $_;
   }
+
   my @lines = split /(?<=\n)/, 
                     Data::Dumper->new([@_])->
                       Quotekeys(0)->Sortkeys(1)->Terse(1)->Indent(1)->
                       Useqq(1)->Dump();
-
   $lines[$#lines] =~ s/\s+\z//s;  # omit final newline
 
-  #print "---BEFORE---\n"; foreach(@lines) { print; } print "\n-----------\n";
-  # Data::Dumper output looks like this, with an indent increment of 2 spaces:
+  # Data::Dumper output is very structured, with a 2-space indent increment:
   # [
   #   value,
   #   value,
@@ -52,48 +55,46 @@ sub vis(@) {
   #   },
   #   value
   # ]
+  
+  # Combine appropriate lines to make it more "horizontal"
   my $restart = 0;
   while ($restart < $#lines) 
   {
     OUTER_LOOP:
     for (my $I=$restart, my $J=$restart+1, $restart=INT_MAX; 
-         $J < $#lines; 
+         $J <= $#lines; 
          $I=$J, $J=$I+1) 
     {
       while ($lines[$I] =~/^\s*$/) { next OUTER_LOOP if ++$I >= $J }
-      my ($Iind,$Icode) = ($lines[$I] =~ /^(\s*)(.*\S)/);
-      $Iind = length($Iind);
-
-      #die "bug" if grep {$_ ne ""} @lines[$I+1..$J-1]; ### TEMP
+      my ($Iindent,$Icode) = ($lines[$I] =~ /^(\s*)(.*\S)/);
+      $Iindent = length($Iindent);
 
       while ($lines[$J] =~/^\s*$/) { last OUTER_LOOP if ++$J > $#lines }
-      my ($Jind,$Jcode) = ($lines[$J] =~ /^(\s*)(.*\S)/);
-      $Jind = length($Jind);
+      my ($Jindent,$Jcode) = ($lines[$J] =~ /^(\s*)(.*\S)/);
+      $Jindent = length($Jindent);
 
-      my $do_join;
-      if ($Iind <= $Jind           # I & J at same level
-          && $Icode !~ /^[\]\}]/   # I isn't closing an aggregate
-          && $Jcode !~ /[\[\{]$/   # J isn't opening an aggregate
-         ) {
-        $do_join = 1;
-      }
-      if ($do_join) {
-        my $Ilen = $Iind+length($Icode);
-        if ($Ilen + $Jind + length($Jcode)+1 <= $VisMaxWidth) {
-          substr($lines[$I],$Ilen,1) = " ";
-          substr($lines[$I],$Ilen+1) = substr($lines[$J], $Jind);
-          $lines[$J] = "";
-          $restart = $I if ($I < $restart);
-          last if ++$J > $#lines;
-          redo;
-        } else {
-          next;  # won't fit
-        }
+      if ($Iindent <= $Jindent           # I & J at same level
+          && $Icode !~ /^[\]\}]/ # I isn't closing an aggregate
+          && $Jcode !~ /[\[\{]$/ # J isn't opening an aggregate
+         )
+      {
+        my $Ilen = $Iindent+length($Icode);
+        next 
+          if $Ilen + 1 + length($Jcode) > $VisMaxWidth;
+        substr($lines[$I],$Ilen,1) = " ";
+        substr($lines[$I],$Ilen+1) = substr($lines[$J], $Jindent);
+        $lines[$J] = "";
+        $restart = $I if ($I < $restart);
+        last if ++$J > $#lines;
+        redo;
       }
     }
   }
 
-  return join "",@lines;
+  $_ = join "",@lines;
+  s/\[ (.*) \]$/\[$1\]/;  # "[ 1, 2, 3 ]" -> "[1, 2, 3]"
+
+  return $_
 }
 
 sub forcequo($) {
