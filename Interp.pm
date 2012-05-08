@@ -1,5 +1,5 @@
 use strict; use warnings; 
-our $VERSION = sprintf "%d.%03d", q$Revision: 1.6 $ =~ /(\d+)/g; 
+our $VERSION = sprintf "%d.%03d", q$Revision: 1.7 $ =~ /(\d+)/g; 
 
 # Copyright © Jim Avera 2012.  Released into the Public Domain May 7, 2012.
 # (james_avera AT ya (ho)o dot youknowwhat) 
@@ -11,30 +11,19 @@ package Vis;
 
 use Exporter;
 our @ISA       = qw(Exporter);
-our @EXPORT    = qw(vis quo forcequo);
+our @EXPORT    = qw(vis avis quo forcequo);
 our @EXPORT_OK = ('$VisMaxWidth');
+
 our $VisMaxWidth = 72;
 
 use Carp;
 use Data::Dumper ();
 use POSIX qw(INT_MAX);
 
-sub u($) { defined $_[0] ? $_[0] : "undef" }
-sub vis(@);
-sub vis(@) {
+sub vis1($) {
   local $_;  # preserve $1 etc. in caller's context
-  if (@_ == 0) {
-    return "()";
-  }
-  elsif (@_ != 1) {
-    $_ = vis(\@_);
-    s/^\[/\(/ or die "bug($_)"; # convert to "(list,of,args)"
-    s/\]$/\)/ or die "bug($_)";
-    return $_;
-  }
-
   my @lines = split /(?<=\n)/, 
-                    Data::Dumper->new([@_])->
+                    Data::Dumper->new([shift])->
                       Quotekeys(0)->Sortkeys(1)->Terse(1)->Indent(1)->
                       Useqq(1)->Dump();
   $lines[$#lines] =~ s/\s+\z//s;  # omit final newline
@@ -96,17 +85,27 @@ sub vis(@) {
 
   return $_
 }
+sub vis(@) {
+  local $_;  # preserve $1 etc. in caller's context
+  return join "\n", map { vis1($_) } @_;
+}
+sub avis(@) {
+  local $_ = vis(\@_);
+  s/^\[/\(/ or die "bug($_)"; # convert to "(list,of,args)"
+  s/\]$/\)/ or die "bug($_)";
+  return $_;
+}
 
 sub forcequo($) {
-  my $str = shift;
-  confess "quo:value is undef" unless defined $str;
-  $str =~ s/'/'\\''/g;
-  return "'${str}'";
+  local $_ = shift;
+  croak "quo:value is undef" unless defined $_;
+  s/'/'\\''/g;
+  return "'${_}'";
 }
 
 sub quo(;$) {
-  my $str = (@_==0 ? $_ : $_[0]);
-  return (($str =~ /[^-\w_\/:\.]/ || $str eq "") ? forcequo($str) : $str);
+  local $_ = (@_==0 ? $_ : $_[0]);
+  return ((/[^-\w_\/:\.]/ || $_ eq "") ? forcequo($_) : $_);
 }
 
 1;
@@ -119,6 +118,8 @@ __END__
   my $struct = { complicated => ['lengthy','stuff',1..20] };
   print "struct=", vis($struct), "\n";
 
+  print "My args are ", avis(@_), "\n";
+
   foreach ($ENV{HOME}, "/dir/safe", "Uck!", 
            "My Documents", "Qu'ote", 'Qu"ote') 
   {
@@ -127,8 +128,13 @@ __END__
 
 =head1 DESCRIPTION
 
-vis() is a wrapper for Data::Dumper which provides a simplified interface
-and much more compact output, suitable for error/diagnostic messages:
+=head2 vis($item ...)
+
+Returns a printable representation of arbitrary Perl data structure(s).
+
+vis() is a wrapper for Data::Dumper which provide
+a simplified interface and much more compact output, 
+suitable for error/diagnostic messages:
 
 =over
 
@@ -138,31 +144,41 @@ There is no final newline.
 
 =item
 
-Argument(s) are all items to format.  If a single argument is passed,
-then that object is simply stringified.  Otherwise the result has the
-form of a list: "(arg1,arg2,arg3,...)", and no arguments produces "()".
-This is nice for showing arrays, 
-e.g.  C<print "Myfunc",vis(@_)," was called.\n";> 
-
-=item
-
-Array and hash members are shown all on the same line, subject to
-a maximum line length given by $Vis::VisMaxWidth.
-
-=back
-
+Multiple array and hash members are shown on the same line, subject to
+a maximum line length given by $Vis::VisMaxWidth
 $Vis::VisMaxWidth is not exported by default.
 
-The above example produces the followint output:
+The example shown above produces the following output:
+
   struct={
-    complicated => [ "lengthy", "stuff", 1, 2, 3, 4, 5, 6, 7, 8, 9,
-      10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20
+    complicated => [ "lengthy", "stuff", 1, 2, 3, 4, 5, 6, 7,
+      8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20
     ]
   }
 
-quo() and forcequo() 'single-quote' a string suitable for parsing by /bin/sh.
+=item
 
-quo() returns the input unchanged if quoting is not necessary.
+Although vis() is usually is called with a single argument, multiple 
+args are allowed and are formatted separately, appearing on separate lines
+(there is still no final newline).
+
+=back
+
+=head2 avis(@array)
+
+avis() returns a parenthesized list C<(arg1,arg2,arg3,...)>,
+and zero arguments produces C<()>.   This allows @arrays to
+be shown without taking a reference.
+
+
+=head2 quo($string) 
+
+The string is 'single-quoted' if necessary for parsing by /bin/sh, otherwise
+the string is returned unchanged.
+
+=head2 forcequo($string)
+
+The string is 'single-quoted' for /bin/sh if even if not necessary.
 
 =cut
 
