@@ -1,42 +1,11 @@
 use strict; use warnings; 
+our $VERSION = sprintf "%d.%03d", q$Revision: 1.5 $ =~ /(\d+)/g; 
 
 # Copyright © Jim Avera 2012.  Released into the Public Domain May 7, 2012.
 # (james_avera AT ya (ho)o dot youknowwhat) 
 # Please retain the preceeding attribution in any copies or derivitives.
 
-our $VERSION = sprintf "%d.%03d", q$Revision: 1.4 $ =~ /(\d+)/g; 
-
-=head1 SYNOPSIS
-
-  use Vis;
-
-  my $struct = { complicated => [stuff] };
-  print "struct:", vis($struct), "\n";
-
-  foreach ($ENV{HOME}, "/dir/safe", "Uck!", "My Folder", "Qu'ote", 'Qu"ote') {
-    system( "set -x; /bin/ls -ld ".quo($_) );
-  }
-
-=head1 DESCRIPTION
-
-vis() is a wrapper for Data::Dumper which provides a simplified interface
-and more compact output, suitable for error/diagnostic messages.
-
-  The argument(s) are simply items to format.  If more than one argument
-  is passed, the result looks like a list: (arg1,arg2,arg3,...)
-
-  List and hash members are shown all on the same line, subject to
-  a maximum line length given by $Vis::VisMaxWidth.
-
-  There is no final newline.
-
-$Vis::VisMaxWidth is not exported by default.
-
-
-quo() and forcequo() 'single-quote' a string suitable for parsing by /bin/sh.
-quo() returns the input unchanged if quoting is not necessary.
-
-=cut
+# Documentation is at the end
 
 package Vis;
 
@@ -53,6 +22,9 @@ use POSIX qw(INT_MAX);
 sub u($) { defined $_[0] ? $_[0] : "undef" }
 sub vis(@);
 sub vis(@) {
+  if (@_ == 0) {
+    return "()";
+  }
   if (@_ > 1) {
     return "(" . (join ", ", map { vis($_) } @_) . ")";
   }
@@ -137,3 +109,59 @@ sub quo(;$) {
 }
 
 1;
+__END__
+
+=head1 SYNOPSIS
+
+  use Vis;
+
+  my $struct = { complicated => ['lengthy','stuff',1..20] };
+  print "struct=", vis($struct), "\n";
+
+  foreach ($ENV{HOME}, "/dir/safe", "Uck!", 
+           "My Documents", "Qu'ote", 'Qu"ote') 
+  {
+    system( "set -x; /bin/ls -ld ".quo($_) );
+  }
+
+=head1 DESCRIPTION
+
+vis() is a wrapper for Data::Dumper which provides a simplified interface
+and much more compact output, suitable for error/diagnostic messages:
+
+=over
+
+=item
+
+There is no final newline.
+
+=item
+
+Argument(s) are all items to format.  If a single argument is passed,
+then that object is simply stringified.  Otherwise the result has the
+form of a list: "(arg1,arg2,arg3,...)", and no arguments produces "()".
+This is nice for showing arrays, 
+e.g.  C<print "Myfunc",vis(@_)," was called.\n";> 
+
+=item
+
+Array and hash members are shown all on the same line, subject to
+a maximum line length given by $Vis::VisMaxWidth.
+
+=back
+
+$Vis::VisMaxWidth is not exported by default.
+
+The above example produces the followint output:
+  struct={
+    complicated => [ "lengthy", "stuff", 1, 2, 3, 4, 5, 6, 7, 8, 9,
+      10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20
+    ]
+  }
+
+quo() and forcequo() 'single-quote' a string suitable for parsing by /bin/sh.
+
+quo() returns the input unchanged if quoting is not necessary.
+
+=cut
+
