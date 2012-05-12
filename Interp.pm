@@ -1,5 +1,5 @@
 use strict; use warnings; 
-our $VERSION = sprintf "%d.%03d", q$Revision: 1.7 $ =~ /(\d+)/g; 
+our $VERSION = sprintf "%d.%03d", q$Revision: 1.8 $ =~ /(\d+)/g; 
 
 # Copyright © Jim Avera 2012.  Released into the Public Domain May 7, 2012.
 # (james_avera AT ya (ho)o dot youknowwhat) 
@@ -11,21 +11,34 @@ package Vis;
 
 use Exporter;
 our @ISA       = qw(Exporter);
-our @EXPORT    = qw(vis avis quo forcequo);
-our @EXPORT_OK = ('$VisMaxWidth');
+our @EXPORT    = qw(vis avis svis quo forcequo);
+our @EXPORT_OK = ('$VisMaxWidth', '$VisUseqq');
 
 our $VisMaxWidth = 72;
+our $VisUseqq = 1;
 
 use Carp;
 use Data::Dumper ();
 use POSIX qw(INT_MAX);
 
 sub vis1($) {
-  local $_;  # preserve $1 etc. in caller's context
-  my @lines = split /(?<=\n)/, 
-                    Data::Dumper->new([shift])->
-                      Quotekeys(0)->Sortkeys(1)->Terse(1)->Indent(1)->
-                      Useqq(1)->Dump();
+
+  local $_ = Data::Dumper->new([shift])->
+               Quotekeys(0)->Sortkeys(1)->Terse(1)->Indent(1)->
+               Useqq($VisUseqq)->Dump();
+
+  #print "===== RAW =====\n${_}---------------\n";
+
+  # Split into logical lines, being careful to ignore newlines inside strings. 
+  # The "delimiter" is the whole (logical) line, including final newline,
+  # which is returned because it is in a (capture group).
+  my @lines = (grep {defined} 
+               ($VisUseqq 
+                 ? split(/( (?: "(?: [^"]++ |\\" )*" | [^"\n]+)* \n )/xo, $_)
+                 : split(/( (?: '(?: [^']++ |\\' )*' | [^'\n]+)* \n )/xo, $_)
+               )
+              );
+
   $lines[$#lines] =~ s/\s+\z//s;  # omit final newline
 
   # Data::Dumper output is very structured, with a 2-space indent increment:
@@ -54,17 +67,27 @@ sub vis1($) {
          $J <= $#lines; 
          $I=$J, $J=$I+1) 
     {
-      while ($lines[$I] =~/^\s*$/) { next OUTER_LOOP if ++$I >= $J }
-      my ($Iindent,$Icode) = ($lines[$I] =~ /^(\s*)(.*\S)/);
+      while ($lines[$I] =~/\A\s*$/s) { next OUTER_LOOP if ++$I >= $J }
+      my ($Iindent,$Icode) = ($lines[$I] =~ /^(\s*)(.*\S)/s);
       $Iindent = length($Iindent);
 
-      while ($lines[$J] =~/^\s*$/) { last OUTER_LOOP if ++$J > $#lines }
-      my ($Jindent,$Jcode) = ($lines[$J] =~ /^(\s*)(.*\S)/);
+      while ($lines[$J] =~/\A\s*$/s) { last OUTER_LOOP if ++$J > $#lines }
+      my ($Jindent,$Jcode) = ($lines[$J] =~ /\A(\s*)(.*\S)/s);
       $Jindent = length($Jindent);
 
-      if ($Iindent <= $Jindent           # I & J at same level
-          && $Icode !~ /^[\]\}]/ # I isn't closing an aggregate
-          && $Jcode !~ /[\[\{]$/ # J isn't opening an aggregate
+#      print "===== I=$I Iind=$Iindent, J=$J Jind=$Jindent =====\n";
+#      for my $ix(0..$#lines) {
+#        next if $lines[$ix] eq "" && $ix != $I && $ix != $J;
+#        printf "[%2d] ", $ix;
+#        print($ix==$I ? "I" : " ");
+#        print($ix==$J ? "J" : " ");
+#        print ":", ($lines[$ix] eq "" ? "(empty)" : "«$lines[$ix]»"), "\n";
+#      }
+#      print "--------------------\n";
+
+      if ($Iindent <= $Jindent
+          && $Icode !~ /^[\]\}]/s # I isn't closing an aggregate
+          && $Jcode !~ /[\[\{]$/s # J isn't opening an aggregate
          )
       {
         my $Ilen = $Iindent+length($Icode);
@@ -95,6 +118,10 @@ sub avis(@) {
   s/\]$/\)/ or die "bug($_)";
   return $_;
 }
+sub svis { 
+  goto &DB::_svis;
+}
+
 
 sub forcequo($) {
   local $_ = shift;
@@ -106,6 +133,31 @@ sub forcequo($) {
 sub quo(;$) {
   local $_ = (@_==0 ? $_ : $_[0]);
   return ((/[^-\w_\/:\.]/ || $_ eq "") ? forcequo($_) : $_);
+}
+
+sub svis { goto &DB::_svis }
+
+package DB; # Makes 'eval' see caller's context
+
+sub _svis(@) {
+  local $_;
+  join("", map{
+    local $_ = $_;
+    s/(?<!\\)\$/\{ VisDollar \}/xgs;
+    # Interpolate \n, unicode escapes, etc.
+    $_ = eval qq(<<"V i s E O F"
+${_}
+V i s E O F
+);
+    s/\{ VisDollar \}/\$/g;
+    s/(?<!\\)  (?| \$(\w+)\b | \$\{(\w+)\} )/
+              do{
+                my $varname = $1;
+                my $value = eval "\$$varname";
+                $value;
+              }/xegs;
+    $_;
+  } @_);
 }
 
 1;
@@ -166,9 +218,9 @@ args are allowed and are formatted separately, appearing on separate lines
 
 =head2 avis(@array)
 
-avis() returns a parenthesized list C<(arg1,arg2,arg3,...)>,
-and zero arguments produces C<()>.   This allows @arrays to
-be shown without taking a reference.
+avis() formats an array or list in parenthesis: C<(arg1,arg2,arg3,...)> .
+Zero arguments produces C<()>.   
+This allows @arrays to be shown without taking a reference.
 
 
 =head2 quo($string) 
