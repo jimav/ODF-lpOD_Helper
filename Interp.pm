@@ -1,5 +1,5 @@
 use strict; use warnings; 
-our $VERSION = sprintf "%d.%03d", q$Revision: 1.9 $ =~ /(\d+)/g; 
+our $VERSION = sprintf "%d.%03d", q$Revision: 1.10 $ =~ /(\d+)/g; 
 
 # Copyright © Jim Avera 2012.  Released into the Public Domain 
 # by the copyright owner.  (james_avera AT yahoo đøţ ¢ÔḾ) 
@@ -28,10 +28,12 @@ sub vis(@)    { return __PACKAGE__->vnew(@_)->Dump; }
 sub avis(@)   { return __PACKAGE__->anew(@_)->Dump; }
 sub svis(@)   { unshift @_,__PACKAGE__; goto &DB::Vis_DB_svis; }
 
-# Emulate Data::Dumper non-oo APIs except for more compact output
+# Provide Data::Dumper non-oo APIs 
 sub Dumper(@) { return __PACKAGE__->Dump([@_]); }
 sub Dumpf(@)  { return __PACKAGE__->Dump([@_]); }
 sub Dumpp(@)  { print __PACKAGE__->Dump([@_]); }
+
+# Note: All Data::Dumper methods can be called on Vis objects
 
 sub _config_defaults {
   my $self = shift;
@@ -61,13 +63,15 @@ sub anew {
 }
 sub snew {
   my $class = shift;
-  # The Dumper object is created with no dump items because our Dump()
-  # will call it repeatedly to dump each interpolated $varname etc. 
-  # using whatever settings the user may have installed by calling methods
-  # such as Useqq() etc.
-  my $obj = (bless($class->SUPER::new([]), $class))->_config_defaults()->Useqq(0);
+  # The string is passed to the Dumper constructure just to store it
+  # (and allow the user to get/set it via the interhited Value method).
+  # Our overload Dump() method will extract the string and then 
+  # re-use the dumper object to format each interpolated $varname etc.
+  # separately, with any configurations (Useqq etc.) in effect.
+  warn "### snew args=@_\n";
+  my $obj = (bless($class->SUPER::new([@_]), $class))->_config_defaults()->Useqq(0);
+  warn "### snew obj->{todump}=$obj->{todump}\n";
   $obj->{VisType} = 's';
-  $obj->{VisString} = join "", @_;
   $obj;
 }
 
@@ -228,7 +232,7 @@ sub Vis_DB_sdump {
                       )*
                      }x;
   
-  local $_ = $self->{VisString} // die "bug";
+  local $_ = join "", $self->Values(); 
 
   my @parts;
   while (1) {
@@ -256,23 +260,17 @@ sub Vis_DB_sdump {
       if ($rhs =~ /^_\b/) {
         # Perl limitation (bug?): '@_' does not see caller's context!
         print "### UNSUPP $sigl$rhs\n" if $self->{VisDebug};
-        push @parts, "$sigl$rhs"; # don't show $self
+        push @parts, "<cant show $sigl$rhs>"; # don't show $self
         next;
       }
+      print "### EVAL $sigl$rhs\n" if $self->{VisDebug};
+      my @items = eval "$sigl$rhs";
+      Carp::confess "($sigl$rhs)$@" if $@ && $self->{VisDebug};
+      Carp::croak($@) if $@ =~ s/ at \(eval.*//;
       if ($sigl eq '$') {
-        # $name or ${scalar-ref expression}
-        print "### SCALAR $sigl$rhs\n" if $self->{VisDebug};
-        my $item = eval "$sigl$rhs";
-        #Carp::croak($@) if $@ =~ s/ at \(eval.*//;
-        Carp::confess "($sigl$rhs)$@" if $@;
-        $self->Reset()->Values([$item])->{VisType} = 'v';
+        $self->Reset()->Values([$items[0]])->{VisType} = 'v';
         push @parts, $self->Dump;
       } else {
-        # @arrayname or @{array-ref expression}
-        print "### ARRAY $sigl$rhs\n" if $self->{VisDebug};
-        my @items = eval "$sigl$rhs";
-        #Carp::croak($@) if $@ =~ s/ at \(eval.*//;
-        Carp::confess "($sigl$rhs)$@" if $@;
         $self->Reset()->Values([\@items])->{VisType} = 'a';
         push @parts, $self->Dump;
       }
@@ -299,6 +297,10 @@ ${1}
 1;
 __END__
 
+=head1 NAME 
+
+Vis - Format arbitrary Perl data structures for printing
+
 =head1 SYNOPSIS
 
   use Vis;
@@ -306,16 +308,12 @@ __END__
   my $struct = { complicated => ['lengthy','stuff',1..20] };
 
   print "struct=", vis($struct), "\n";
-  print "My args are ", avis(@_), "\n";
-  print svis 'struct=$struct\nMy args are @_\n'; # note SINGLE quotes
-
-  my $obj = Vis->vnew($struct);
-  my $obj = Vis->qnew(@array);
-  my $obj = Vis->snew($string_to_interpret);
+  print "ARGV is ", avis(@ARGV), "\n";
+  print svis 'struct=$struct\nARGV=@ARGV\n'; # SINGLE quoted!
 
   print "struct=", Vis->vnew($struct)->Useqq(0)->Dump, "\n";
-
-  print "My args are ", Vis->anew(@_)->Useqq(0)->Dump, "\n";
+  print "ARGV is ", Vis->anew(@ARGV)->Useqq(0)->Dump, "\n";
+  print Vis->snew('struct=$struct\nARGV=@ARGV\n')->Useqq(1)->Dump;
 
   foreach ($ENV{HOME}, "/dir/safe", "Uck!", 
            "My Documents", "Qu'ote", 'Qu"ote') 
@@ -323,15 +321,15 @@ __END__
     system( "set -x; /bin/ls -ld ".quo($_) );
   }
 
+  print Vis->new([items],[names])->Dump;  # same API as Data::Dumper
+  print Vis::Dumper(items);
+
 =head1 DESCRIPTION
 
-=head2 vis($item ...)
-
-Returns a printable representation of arbitrary Perl data structure(s).
-
-vis() is a wrapper for Data::Dumper which provide
-a simplified interface and much more compact output, 
-suitable for error/diagnostic messages:
+The Vis package is a wrapper (subclass, actually) of Data::Dumper 
+with simplified interfaces 
+and much more compact output,
+especially suitable for error/diagnostic messages:
 
 =over
 
@@ -342,10 +340,9 @@ There is no final newline.
 =item
 
 Multiple array and hash members are shown on the same line, subject to
-a maximum line length given by $Vis::VisMaxwidth
-$Vis::VisMaxwidth is not exported by default.
+a maximum line length given by $Vis::VisMaxwidth or the Maxwidth() method.
 
-The example shown above produces the following output:
+The vis() call shown above produces the following output:
 
   struct={
     complicated => [ "lengthy", "stuff", 1, 2, 3, 4, 5, 6, 7,
@@ -355,27 +352,69 @@ The example shown above produces the following output:
 
 =item
 
-Although vis() is usually is called with a single argument, multiple 
-args are allowed and are formatted separately, appearing on separate lines
-(there is still no final newline).
+Just the data items are shown, no variable assignments 
+(controllable using the oo API).
 
 =back
 
-=head2 avis(@array)
+Vis also supports all the Data::Dumper APIs and can be used as a
+drop-in replacement which produces more compact results (the old APIs
+include the final newline, just like Data::Dumper).
 
-avis() formats an array or list in parenthesis: C<(arg1,arg2,arg3,...)> .
+=head2 vis $item,... 
+
+Format arbitrary Perl data structures for printing.  
+
+Although vis() is usually called with a single argument, multiple 
+args are allowed and are formatted separately, each appearing on a separate
+line (there is still no final newline).
+
+=head2 avis @array
+
+avis() formats an array or list in parenthesis: C<(arg1,arg2,arg3,...)>.
 Zero arguments produces C<()>.   
 This allows @arrays to be shown without taking a reference.
 
+=head2 svis 'string to be interpolated',...
+
+The string(s) are interpolated similar to Perl double-quoted strings,
+except that variable references are replaced by representations of
+referenced aggregates (also string values are 'quoted').  
+Multiple arguments are concatenated.
+Scalar values are formatted as if with vis(), and @array values with avis().
+
+The strings are usually specified SINGLE QUOTED so Perl will not
+interpolate $variable references before passing the string.
+
+Due to a Perl limitation, @_ can not be interpolated in svis() strings.
+
+=head2 OO interfaces
+
+The vnew, anew, and snew constructors provide the new styles of formatting 
+(see SYNOPSIS above). 
+
+Vis is a subclass of Data::Dumper and also inherits all its methods,
+including Useqq() which controls whether to use "double quoted strings"
+in the output.  The 'new' constructor implements the Data::Dumper API,
+including a trailing newline in the output.
+
+The Maxwidth(N) method gets or sets the maximum line width.
 
 =head2 quo($string) 
 
 The string is 'single-quoted' if necessary for parsing by /bin/sh, otherwise
 the string is returned unchanged.
 
+If $string is actually a ref, then the stringified data structure is 
+substituted (in 'quotes').
+
 =head2 forcequo($string)
 
 The string is 'single-quoted' for /bin/sh if even if not necessary.
+
+=head1 SEE ALSO
+
+Data::Dumper
 
 =cut
 
