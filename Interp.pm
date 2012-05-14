@@ -1,5 +1,5 @@
 use strict; use warnings; 
-our $VERSION = sprintf "%d.%03d", q$Revision: 1.11 $ =~ /(\d+)/g; 
+our $VERSION = sprintf "%d.%03d", q$Revision: 1.12 $ =~ /(\d+)/g; 
 
 # Copyright © Jim Avera 2012.  Released into the Public Domain 
 # by the copyright owner.  (james_avera AT yahoo đøţ ¢ÔḾ) 
@@ -46,7 +46,7 @@ sub _config_defaults {
 # anew(items...)              
 # snew(strings...)             
 # dnew(strings...)             
-# new([items...],[names...])  --with trailing \n like Data::Dumper::new 
+# new([items...],[names...])  --with $VAR names & trailing \n like Data::Dumper
 sub new {
   my $class = shift;
   bless($class->SUPER::new(@_), $class)->_config_defaults()->Terse(0);
@@ -69,12 +69,9 @@ sub snew {
   # the user can get or replace via the inherited Value method) will not 
   # actually be formatted as-is.  Instead, our overload Dump() method
   # will parse the string and then re-use the dumper object to format 
-  # each interpolated $varname etc.  separately, thereby using any 
-  # configurations (Useqq etc.) set by the user.
-  #
-  # Useqq(0) by default so that newline appear as such, rather than '\n'
-  # so   «print svis 'The answer is $answer\n';»   just works.
-  my $obj = (bless($class->SUPER::new([@_]), $class))->_config_defaults()->Useqq(0);
+  # each interpolated $varname etc. separately, thereby using any 
+  # configurations (such as Useqq) set by the user.
+  my $obj = (bless($class->SUPER::new([@_]), $class))->_config_defaults();
   $obj->{VisType} = 's';
   $obj;
 }
@@ -184,12 +181,12 @@ sub Dump {
     }
   }
 
-  foreach (@lines) {
-    s/\[ (.*) \]$/\[$1\]/;  # "[ 1, 2, 3 ]" -> "[1, 2, 3]"
-    s/\{ (.*) \}$/\{$1\}/;  # "{ key => value }" -> "{key => value}"
-  }
-
   $_ = join "", @lines;
+
+  # "[ 1, 2, 3 ]" -> "[1, 2, 3]"
+  # "{ key => value }" -> "{key => value}"
+  s/([\{\[]) +/$1/gs; 
+  s/(?<=\S) +([\}\]])/$1/gs;
 
   if (($self->{VisType}//"") eq 'a') {
     s/^\[/\(/ or confess "bug($_)"; # convert to "(list,of,args)"
@@ -203,7 +200,7 @@ sub Dump {
 }
 
 sub forcequo($) {
-  local $_ = vnew(shift)->Useqq(0)->Dump;
+  local $_ = __PACKAGE__->vnew(shift)->Useqq(0)->Dump;
   $_ = vnew($_)->Useqq(0)->Dump unless /^'/;  # re-quote [aggregate]
   s/\\'/'\\''/g;  # 'foo\'bar'  =>  'foo'\''bar' for /bin/sh
   return $_;
@@ -225,8 +222,8 @@ sub Vis_DB_Dump {
   state $qstr_re = qr{" ( [^\"\\]+ | \\. ) " |' ( [^\'\\]+ | \\. ) ' }x;
   state $expr_re = qr{ 
                       (
-                          [^\{\}\[\]\(\)\'\"]+  # backslash okay
-                        | \{ (?-1) \}
+                          [^\{\}\[\]\(\)\'\"]+      # backslash okay
+                        | \{ (?-1) \} (?:->(?-1))?  # {} or {}->{key}
                         | \[ (?-1) \]
                         | \( (?-1) \)
                         | $qstr_re
@@ -241,23 +238,25 @@ sub Vis_DB_Dump {
   my $debug = $self->{VisDebug};
   my $display_mode = $self->{VisType} eq 'd';
 
-  local $_ = join "", $self->Values(); 
-
-  my @parts;
-  while (1) {
-    if (
+  my @actions;
+  {
+    # We have to localize $_ while running regexprs to preserve user's $1 
+    # etc., but do the evals later after $_ is restored.
+    local $_ = join "", $self->Values();
+    while (1) {
+      if (
         # Sigh.  \G does not work with (?|...) in Perl 5.12.4
         # https://rt.perl.org/rt3//Public/Bug/Display.html?id=112894
 
-        # $? and other 'punctuation variables'
-        /\G (?!\\)([\$\@])( [^\s\{\w] )/xsgc 
+        # $1 $? and other 'punctuation variables'
+        /\G (?!\\)([\$\@])( [^\s\{a-zA-Z] )/xsgc 
         ||
-        # $name $name[expr] $name->{expr} etc.
+        # $name $name[expr] $name->[expr] etc.
         /\G (?!\\)([\$\@])( \w+ (?:->)? 
             (?: \[ $expr_re \] | \{ $expr_re \} )? )/xsgc
         ||
-        # ${?} etc. (loosing the curlies)
-        /\G (?!\\)([\$\@]) \{ ( [^\s\{\w] ) \}/xsgc 
+        # ${1} ${10}${?} etc. (loosing the curlies)
+        /\G (?!\\)([\$\@]) \{ ( [^\s\{a-zA-Z] ) \}/xsgc 
         ||
         # ${name} (loosing the curlies)
         /\G (?!\\)([\$\@]) \{ ( \w+ ) \}/xsgc 
@@ -265,41 +264,68 @@ sub Vis_DB_Dump {
         # ${refexpr} or ${^SPECIALVARNAME}
         /\G (?!\\)([\$\@]) ( \{ $expr_re \} )/xsgc 
        )
-    {
-      my ($sigl, $rhs) = ($1,$2);
+      {
+        push @actions, ['e',$1,$2];  # eval $1$2
+        my ($sigl, $rhs) = ($1,$2);
+      }
+      elsif (/\G ( (?: [^\$\@\\]+ | \\. )* ) /xsgc) {  # plain text
+        # Interpolate \n etc.
+        push @actions, ['t',$1];  # interpolate \n etc. in plain text
+      }
+      else {
+        die "bug pos=",pos," in:\n$_\n".(" "x pos)."^\n" if /\G./;
+        last;
+      }
+    }
+  }
+
+  # $_ and $1 etc. have now been restored to the caller's values
+
+  my $result = "";
+  foreach my $action (@actions) {
+    my $act = $action->[0];
+    if ($act eq 'e') {
+      my ($sigl, $rhs) = @$action[1,2];
       # $sigl$rhs is a Perl expression giving the desired value.  
       # Note that the curlies were dropped from ${name} in the string
       # (because braces can not be used that way in expressions, only strings)
       print "### EVAL $sigl$rhs\n" if $debug;
-      my @items = eval "$sigl$rhs";
-      Carp::confess "($sigl$rhs)$@" if $@ && $debug;
-      Carp::croak($@) if $@ =~ s/ at \(eval.*//;
-      push @parts, "$sigl$rhs=" if $display_mode;
-      if ($sigl eq '$') {
-        $self->Reset()->Values([$items[0]])->{VisType} = 'v';
-        push @parts, $self->Dump;
-      } else {
-        $self->Reset()->Values([\@items])->{VisType} = 'a';
-        push @parts, $self->Dump;
+      { local $@ = $@;
+        my @items;
+        if ($rhs eq '@' && $sigl eq '$') {
+          # Special case--we can't see caller's $@ inside another eval!
+          @items = ($@);
+        } else {
+          @items = eval "$sigl$rhs";
+          Carp::confess "($sigl$rhs)$@" if $@ && $debug;
+          Carp::croak($@) if $@ =~ s/ at \(eval.*//;
+        }
+        my $prefix = $display_mode ? "$sigl$rhs=" : "";
+        if ($sigl eq '$') {
+          $self->Reset()->Values([$items[0]])->{VisType} = 'v';
+        } else {
+          $self->Reset()->Values([\@items])->{VisType} = 'a';
+        }
+        $result .= $prefix.$self->Dump;
       }
     }
-    elsif (/\G ( (?: [^\$\@\\]+ | \\. )* ) /xsgc)  # plain text
-    {
+    elsif ($act eq 't') {
       # Interpolate \n etc.
-      print "### PLAIN $1\n" if $debug;
-      chomp (my $value = eval qq{<<" V i s EOF"
-${1}
- V i s EOF
+      my $text = $action->[1];
+      print "### PLAIN $text\n" if $debug;
+      { local $@;
+        chomp (my $value = eval qq{<<"ViSEoF"
+$text
+ViSEoF
 });
-      Carp::confess "Unexpected eval faulre ($1): $@" if $@;
-      push @parts, $value;  # plain text
-    }
-    else {
-      die "bug pos=",pos," in:\n$_\n".(" "x pos)."^\n" if /\G./;
-      last;
+        Carp::confess "Unexpected eval faulre ($text): $@" if $@;
+        $result .= $value;  # plain text
+      }
+    } else {
+      die "bug";
     }
   }
-  return join "",@parts;
+  return $result;
 }
 
 1;
