@@ -1,5 +1,5 @@
 use strict; use warnings; 
-our $VERSION = sprintf "%d.%03d", q$Revision: 1.12 $ =~ /(\d+)/g; 
+our $VERSION = sprintf "%d.%03d", q$Revision: 1.13 $ =~ /(\d+)/g; 
 
 # Copyright © Jim Avera 2012.  Released into the Public Domain 
 # by the copyright owner.  (james_avera AT yahoo đøţ ¢ÔḾ) 
@@ -223,13 +223,20 @@ sub Vis_DB_Dump {
   state $expr_re = qr{ 
                       (
                           [^\{\}\[\]\(\)\'\"]+      # backslash okay
-                        | \{ (?-1) \} (?:->(?-1))?  # {} or {}->{key}
+                        | \{ (?-1) \}
                         | \[ (?-1) \]
                         | \( (?-1) \)
                         | $qstr_re
                       )*
                      }x;
-  
+  state $index_re = qr{
+                      (
+                        (?: -> )?
+                        (?: \{ $expr_re \} | \[ $expr_re \] )
+                      )*
+                     }x;
+  state $punctvarname_re = qr{ [^\s\{\}\[\]\(\)a-zA-Z\\]+ }xs;
+
   # This allows @_ to be interpolated
   # See https://rt.perl.org/rt3//Public/Bug/Display.html?id=112896
   () = caller 1;
@@ -248,32 +255,37 @@ sub Vis_DB_Dump {
         # Sigh.  \G does not work with (?|...) in Perl 5.12.4
         # https://rt.perl.org/rt3//Public/Bug/Display.html?id=112894
 
-        # $1 $? and other 'punctuation variables'
-        /\G (?!\\)([\$\@])( [^\s\{a-zA-Z] )/xsgc 
-        ||
         # $name $name[expr] $name->[expr] etc.
-        /\G (?!\\)([\$\@])( \w+ (?:->)? 
-            (?: \[ $expr_re \] | \{ $expr_re \} )? )/xsgc
+        /\G (?!\\)([\$\@])( \w+ ${index_re}? )/xsgc
         ||
-        # ${1} ${10}${?} etc. (loosing the curlies)
-        /\G (?!\\)([\$\@]) \{ ( [^\s\{a-zA-Z] ) \}/xsgc 
+        # ${name} ${name[index]} etc. (loosing the curlies)
+        /\G (?!\\)([\$\@]) \{ ( \w+ ${index_re}? ) \}/xsgc 
         ||
-        # ${name} (loosing the curlies)
-        /\G (?!\\)([\$\@]) \{ ( \w+ ) \}/xsgc 
+        # $1 $? $#+ and other 'punctuation variables'
+        /\G (?!\\)([\$\@])( $punctvarname_re )/xsgc 
         ||
-        # ${refexpr} or ${^SPECIALVARNAME}
-        /\G (?!\\)([\$\@]) ( \{ $expr_re \} )/xsgc 
+        # ${1} ${10} ${?} etc. (loosing the curlies)
+        /\G (?!\\)([\$\@]) \{ ( \d+ | $punctvarname_re ) \}/xsgc 
+        ||
+        # ${refexpr}[index] or ${^SPECIALVARNAME}[index]
+        /\G (?!\\)([\$\@]) ( \{ $expr_re \} ${index_re}? )/xsgc 
        )
       {
         push @actions, ['e',$1,$2];  # eval $1$2
-        my ($sigl, $rhs) = ($1,$2);
+        if ($debug) {
+          print "### regex match ($_):";
+          for my $i (1..$#+) {
+            eval "print \" $i=«\$$i»\" if defined \$$i;"; die "bug" if $@; 
+          }
+          print "\n";
+        }
       }
       elsif (/\G ( (?: [^\$\@\\]+ | \\. )* ) /xsgc) {  # plain text
         # Interpolate \n etc.
         push @actions, ['t',$1];  # interpolate \n etc. in plain text
       }
       else {
-        die "bug pos=",pos," in:\n$_\n".(" "x pos)."^\n" if /\G./;
+        die "bug pos=",pos," in:\n$_\n".(" "x pos)."^\n " if /\G./;
         last;
       }
     }
@@ -296,7 +308,7 @@ sub Vis_DB_Dump {
           # Special case--we can't see caller's $@ inside another eval!
           @items = ($@);
         } else {
-          @items = eval "$sigl$rhs";
+          @items = eval "use strict; use warnings; $sigl$rhs";
           Carp::confess "($sigl$rhs)$@" if $@ && $debug;
           Carp::croak($@) if $@ =~ s/ at \(eval.*//;
         }
