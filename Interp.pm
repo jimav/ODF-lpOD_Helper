@@ -1,5 +1,5 @@
 use strict; use warnings; 
-our $VERSION = sprintf "%d.%03d", q$Revision: 1.13 $ =~ /(\d+)/g; 
+our $VERSION = sprintf "%d.%03d", q$Revision: 1.14 $ =~ /(\d+)/g; 
 
 # Copyright © Jim Avera 2012.  Released into the Public Domain 
 # by the copyright owner.  (james_avera AT yahoo đøţ ¢ÔḾ) 
@@ -26,13 +26,13 @@ $VisUseqq    = 1   unless defined $VisUseqq;
 # Functional (non-oo) APIs
 sub vis(@)    { return __PACKAGE__->vnew(@_)->Dump; }
 sub avis(@)   { return __PACKAGE__->anew(@_)->Dump; }
-sub svis(@)   { @_ = (__PACKAGE__->snew(@_)); goto &DB::Vis_DB_Dump }
-sub dvis(@)   { @_ = (__PACKAGE__->dnew(@_)); goto &DB::Vis_DB_Dump }
+sub svis(@)   { @_ = (__PACKAGE__->snew(@_)); goto &DB::Vis_DB_DumpInterpolate }
+sub dvis(@)   { @_ = (__PACKAGE__->dnew(@_)); goto &DB::Vis_DB_DumpInterpolate }
 
 # Provide Data::Dumper non-oo APIs 
 sub Dumper(@) { return __PACKAGE__->Dump([@_]); }
 sub Dumpf(@)  { return __PACKAGE__->Dump([@_]); }
-sub Dumpp(@)  { print __PACKAGE__->Dump([@_]); }
+sub Dumpp(@)  { print __PACKAGE__->Dump(@_); }
 
 # Note: All Data::Dumper methods can be called on Vis objects
 
@@ -92,12 +92,10 @@ sub Maxwidth {
 
 sub Dump {
   my ($self) = @_;
+  $self = $self->new(@_[1..$#_]) unless ref $self;
 
-  $self = $self->new(@_) unless ref $self;
-
-  if (($self->{VisType}//"") =~ /[sd]/) {
-    goto &DB::Vis_DB_Dump;
-  }
+  goto &DB::Vis_DB_DumpInterpolate
+    if ($self->{VisType}//"") =~ /[sd]/;
 
   my $debug = $self->{VisDebug};
   local $_ = $self->SUPER::Dump;
@@ -213,31 +211,16 @@ sub quo(;$) {
 
 package DB;
 
+# These are aliases for forced-globals, so we have to do this for them
+# to be visible in eval "..." in package DB. 
+use English qw( -no_match_vars ) ;
+
 # Implement Dump() method for svis and dvis styles
 # This must be in package DB so that eval "" uses the caller's context
-sub Vis_DB_Dump {
+sub Vis_DB_DumpInterpolate {
   my ($self) = @_;
 
-  use feature 'state';
-  state $qstr_re = qr{" ( [^\"\\]+ | \\. ) " |' ( [^\'\\]+ | \\. ) ' }x;
-  state $expr_re = qr{ 
-                      (
-                          [^\{\}\[\]\(\)\'\"]+      # backslash okay
-                        | \{ (?-1) \}
-                        | \[ (?-1) \]
-                        | \( (?-1) \)
-                        | $qstr_re
-                      )*
-                     }x;
-  state $index_re = qr{
-                      (
-                        (?: -> )?
-                        (?: \{ $expr_re \} | \[ $expr_re \] )
-                      )*
-                     }x;
-  state $punctvarname_re = qr{ [^\s\{\}\[\]\(\)a-zA-Z\\]+ }xs;
-
-  # This allows @_ to be interpolated
+  # This allows the caller's @_ to be interpolated
   # See https://rt.perl.org/rt3//Public/Bug/Display.html?id=112896
   () = caller 1;
   local *_ = \@DB::args;
@@ -245,30 +228,58 @@ sub Vis_DB_Dump {
   my $debug = $self->{VisDebug};
   my $display_mode = $self->{VisType} eq 'd';
 
+  use feature 'state';
+  state $qstr_re = qr{ " ( [^"\\]+ | \\. ) " | ' ( [^'\\]+ | \\. ) ' }x;
+  state $expr_re = qr{ 
+                      (
+                          [^{}()'"\[\]]+      # backslash okay
+                        | $qstr_re
+                        | \{ (?-1) \}
+                        | \[ (?-1) \]
+                        | \( (?-1) \)
+                      )*
+                     }x;
+  state $scalar_index_re = qr{ 
+    ( (?:->)? (?: \{ $expr_re \} | \[ $expr_re \] ) )+ 
+  }x;
+  state $slice_re = qr{ 
+    (?: \{ $expr_re \} | \[ $expr_re \] ) 
+  }x;
+
+  state $variable_re = qr/
+      \#?\w+          # $name $#name $1
+    | \#?\$\w+        # $$ref $#$ref
+    | \^\w            # $^N (control-character 'punctuation' variable)
+    | [^\w\s\{\$]     # $^ $? ('punctuation' variable)
+    | \{ $expr_re \}  # ${^SPECIAL} or ${ref expression}
+  /x;
+
+#  state $variable_re = qr{ \w(?: \w+|::|')* | $punct_variable_re }x;
+#  state $punct_variable_re = qr{ (?: \^. | [^\^\w\s] ) }xs;
+#  state $variable_re = qr{ \w(?: \w+|::|')* | $punct_variable_re }x;
+#  state $special_scalar_variable_re = qr{ \d+ | \{ \^\w+ \} }x;
+
   my @actions;
   {
-    # We have to localize $_ while running regexprs to preserve user's $1 
-    # etc., but do the evals later after $_ is restored.
+    # Localize $_ while running regexprs to preserve the caller's $1 etc.
+    # N.B. The evals are executed after $_ is restored.
     local $_ = join "", $self->Values();
     while (1) {
       if (
         # Sigh.  \G does not work with (?|...) in Perl 5.12.4
         # https://rt.perl.org/rt3//Public/Bug/Display.html?id=112894
 
-        # $name $name[expr] $name->[expr] etc.
-        /\G (?!\\)([\$\@])( \w+ ${index_re}? )/xsgc
+        # $name $name[expr] $name->{expr} ${refexpr}->[expr] etc.
+        /\G (?!\\)(\$)( $variable_re ${scalar_index_re}? )/xsgc
         ||
-        # ${name} ${name[index]} etc. (loosing the curlies)
-        /\G (?!\\)([\$\@]) \{ ( \w+ ${index_re}? ) \}/xsgc 
+        # ${name} ${name->[expr]} etc. (loosing the curlies)
+        /\G (?!\\)(\$) \{ ( $variable_re ${scalar_index_re}? ) \}/xsgc
         ||
-        # $1 $? $#+ and other 'punctuation variables'
-        /\G (?!\\)([\$\@])( $punctvarname_re )/xsgc 
+        # @name @name[slice] @name{slice} @{refexpr}[slice] etc.
+        /\G (?!\\)(\@)( $variable_re ${slice_re}? )/xsgc
         ||
-        # ${1} ${10} ${?} etc. (loosing the curlies)
-        /\G (?!\\)([\$\@]) \{ ( \d+ | $punctvarname_re ) \}/xsgc 
-        ||
-        # ${refexpr}[index] or ${^SPECIALVARNAME}[index]
-        /\G (?!\\)([\$\@]) ( \{ $expr_re \} ${index_re}? )/xsgc 
+        # @{name} @{name->[expr]} etc. (loosing the curlies)
+        /\G (?!\\)(\@) \{ ( $variable_re ${slice_re}? ) \}/xsgc
        )
       {
         push @actions, ['e',$1,$2];  # eval $1$2
@@ -285,7 +296,9 @@ sub Vis_DB_Dump {
         push @actions, ['t',$1];  # interpolate \n etc. in plain text
       }
       else {
-        die "bug pos=",pos," in:\n$_\n".(" "x pos)."^\n " if /\G./;
+        die "Vis bug: next:",substr($_,pos,4),
+            "... pos=",pos," in:\n$_\n".(" "x pos)."^\n "
+          if /\G./;
         last;
       }
     }
@@ -308,9 +321,15 @@ sub Vis_DB_Dump {
           # Special case--we can't see caller's $@ inside another eval!
           @items = ($@);
         } else {
-          @items = eval "use strict; use warnings; $sigl$rhs";
+          if (($rhs eq 'PREMATCH' || $rhs eq 'MATCH' || $rhs eq 'POSTMATCH')
+               && $sigl eq '$') {
+            # we normally don't import these to avoid a performance hit
+            English->import("$sigl$rhs");
+          }
+          @items = eval "($sigl$rhs);";
           Carp::confess "($sigl$rhs)$@" if $@ && $debug;
-          Carp::croak($@) if $@ =~ s/ at \(eval.*//;
+          Carp::croak("Error interpolating '$sigl$rhs': $@") 
+            if $@ =~ s/ at \(eval.*//;
         }
         my $prefix = $display_mode ? "$sigl$rhs=" : "";
         if ($sigl eq '$') {
@@ -319,11 +338,16 @@ sub Vis_DB_Dump {
           $self->Reset()->Values([\@items])->{VisType} = 'a';
         }
         $result .= $prefix.$self->Dump;
+        #$result .= "rhs=«${rhs}» PREFIX«".$prefix."»«".$self->Dump."»";
       }
     }
     elsif ($act eq 't') {
       # Interpolate \n etc.
       my $text = $action->[1];
+      if ($text =~ /\b((?:ARRAY|HASH)\(0x[^\)]*\))/) {
+        state $warned=0;
+        Carp::carp "Warning: String passed to svis or dvis may have been interpolated by Perl\n(use 'single quotes' to avoid this)\n" unless $warned++;
+      }
       print "### PLAIN $text\n" if $debug;
       { local $@;
         chomp (my $value = eval qq{<<"ViSEoF"
@@ -341,6 +365,71 @@ ViSEoF
 }
 
 1;
+__END__
+
+#!/usr/bin/perl
+# TESTER
+use strict; use warnings;
+use English;
+#use lib "$ENV{HOME}/lib/perl";
+use Vis;
+select STDERR; $|=1; select STDOUT; $|=1;
+
+@ARGV = ('fake','argv');
+$. = 1234;
+$ENV{EnvVar} = "Test EnvVar Value";
+$_ = "OuterARG\nMiddle.Right";
+my @toplex_a = (0,1,2,{A=>111,B=>222,C=>{d=>888,e=>999},D=>{}},[],[0..9]);
+my $toplex_r = \@toplex_a;
+my $byte_str = join "",map { chr $_ } 10..30;
+my $unicode_str = join "",map {
+        eval sprintf "\" \\N{U+%04X}\"",$_} (0x263A..0x2650);
+print "unicode_str=$unicode_str\n";
+print "avis(\@_):",avis(@_),"\n";
+
+sub f {
+  my $zero = 0;
+  my $one = 1;
+  my $two = 2;
+  my $EnvVarName = 'EnvVar';
+  my $flex = 'Lexical in sub f';
+  my $flex_ref = \$flex;
+  my $ARGV_ref = \@ARGV;
+  eval { die "FAKE DEATH\n" };  # set $@
+  /(.*)\b(.*)/p or die "nomatch";
+  print "vis(\$_):",vis($_), svis(' svis:$_ $flex con','caten','ated\n');
+
+  foreach my $str (qw( 
+      $unicode_str $byte_str
+      $_ $flex $$flex_ref $. $NR $/ $\ $" $~ $^ $: $^L $?
+      $[ $] $^N $+ @+ @- $; 
+      $1 $2 $3 
+      ${^MATCH} 
+      @ARGV 
+      $ENV{EnvVar} 
+      $ENV{$EnvVarName}
+      @toplex_a
+      @$toplex_r
+      $toplex_r->[3]{C}->{e} 
+      $@ @_ 
+      ),
+      '$#_', '$#toplex_a',
+      '@$toplex_r[$zero,$one]',
+      '@toplex_a[$zero,$one]',
+    )
+  {
+    print dvis "dvis: $str\\n";
+  }
+  exit 2;
+  print dvis '$[ $] $1 $2 $3 ${^MATCH} $^N $+ @+ @-\n';
+  print dvis '$@ $ENV{EnvVar} $ENV{$EnvVarName}\n';
+}
+sub g($) {
+  local $_ = 'SHOULD NEVER SEE THIS';
+  goto &f;
+}
+&g(42,$toplex_r);
+
 __END__
 
 =head1 NAME 
