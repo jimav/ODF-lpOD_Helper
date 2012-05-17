@@ -1,5 +1,5 @@
-use strict; use warnings; 
-our $VERSION = sprintf "%d.%03d", q$Revision: 1.16 $ =~ /(\d+)/g; 
+use strict; use warnings; use utf8;
+our $VERSION = sprintf "%d.%03d", q$Revision: 1.17 $ =~ /(\d+)/g; 
 
 # Copyright © Jim Avera 2012.  Released into the Public Domain 
 # by the copyright owner.  (james_avera AT yahoo đøţ ¢ÔḾ) 
@@ -12,6 +12,7 @@ package Vis;
 use Exporter;
 use Data::Dumper ();
 use Carp;
+use feature qw(switch state);
 use POSIX qw(INT_MAX);
 
 our @ISA       = qw(Exporter Data::Dumper);
@@ -117,6 +118,22 @@ sub Quotestyle {
       return $s->Useqq(($v eq '"' || substr($v,1,1) eq 'q') ? 1:0))
    : $s->{Quotestyle};
 }
+sub Useqq {
+  my($s, $v) = @_;
+  local $_;
+  if (defined $v) {
+    $s->{Quotestyle} =~ /^(q+|"|')(.*)/ or die "bug";
+    given ($1) {
+      when ("'")  { $s->{Quotestyle} = '"'    if $v;   }
+      when ("q")  { $s->{Quotestyle} = "qq$2" if $v;   }
+      when ('"')  { $s->{Quotestyle} = "'"    if ! $v; }
+      when ("qq") { $s->{Quotestyle} = "q$2"  if ! $v; }
+    }
+    return $s->SUPER::Useqq($v);
+  } else {
+    return $s->SUPER::Useqq();
+  }
+}
 
 sub Dump {
   my ($self) = @_;
@@ -215,8 +232,8 @@ sub Dump {
   $_ = join "", @lines;
 
   if (($self->{VisType}//"") eq 'a') {
-    s/^\[/\(/ or confess "bug($_)"; # convert to "(list,of,args)"
-    s/\]$/\)/ or confess "bug($_)";
+    s/^[\[{]/\(/ or confess "bug($_)"; # convert to "(list,of,args)"
+    s/[\]}]$/\)/ or confess "bug($_)";
   }
   if (exists $self->{VisType}) {
     s/\s+\z//s;  # omit final newline except when emulating Data::Dumper
@@ -297,7 +314,6 @@ sub Vis_DB_DumpInterpolate {
   my $debug = $self->{VisDebug};
   my $display_mode = $self->{VisType} eq 'd';
 
-  use feature 'state';
   state $qstr_re = qr{ " ( [^"\\]+ | \\. ) " | ' ( [^'\\]+ | \\. ) ' }x;
   state $expr_re = qr{ 
     (
@@ -343,6 +359,9 @@ sub Vis_DB_DumpInterpolate {
         ||
         # @{name} @{name[slice]} etc. (loosing the curlies)
         /\G (?!\\)(\@) \{ ( $variable_re ${slice_re}? ) \}/xsgc
+        ||
+        # %name 
+        /\G (?!\\)(\%)( $variable_re )/xsgc
        )
       {
         push @actions, ['e',$1,$2];  # eval $1$2
@@ -354,7 +373,7 @@ sub Vis_DB_DumpInterpolate {
           print "\n";
         }
       }
-      elsif (/\G ( (?: [^\$\@\\]+ | \\. )+ ) /xsgc) {
+      elsif (/\G ( (?: [^\$\@%\\]+ | \\. )+ ) /xsgc) {
         push @actions, ['t',$1];  # interpolate \n etc. in plain text
       }
       else {
@@ -399,10 +418,15 @@ sub Vis_DB_DumpInterpolate {
         my $prefix = $display_mode ? "$sigl$rhs=" : "";
         if ($sigl eq '$') {
           $self->Reset()->Values([$items[0]])->{VisType} = 'v';
-        } else {
+        }
+        elsif ($sigl eq '@') {
           $self->Reset()->Values([\@items])->{VisType} = 'a';
         }
-        ### ??? Do we need to re-quote Dump() output ???
+        elsif ($sigl eq '%') { ### TODO: DEBUG THIS
+          my %hash = @items;
+          $self->Reset()->Values([\%hash])->{VisType} = 'a';
+        }
+        else { die "bug" }
         $result .= $prefix.$self->Dump;
       }
     }
@@ -440,17 +464,18 @@ Vis - Improve Data::Dumper to format arbitrary Perl data in messages
 
   use Vis;
 
-  my $struct = { complicated => ['lengthy','stuff',1..20] };
+  my %hash = ( complicated => ['lengthy','stuff',1..20] );
+  my $href = \%hash;
 
-  print svis 'struct=$struct\nARGV=@ARGV\n'; # SINGLE quoted!
-  print dvis 'Display of variables: $struct @ARGV\n'; 
-  print "struct=", vis($struct), "\n";
+  print svis 'href=$href\n hash=%hash\n ARGV=@ARGV\n'; # SINGLE quoted!
+  print dvis 'Display of variables: $href %hash @ARGV\n'; 
+  print "href=", vis($href), "\n";
   print "ARGV=", avis(@ARGV), "\n";
 
-  print "struct=", Vis->vnew($struct)->Quotestyle("'")->Maxlength(110)->Dump, "\n";
-  print "ARGV=",   Vis->anew(@ARGV)->Dump, "\n";
-  print Vis->snew('struct=$struct\n')Dump;
-  print Vis->dnew('$struct\n')->Dump;
+  print "href=", Vis->vnew($href)->Quotestyle("'")->Maxlength(110)->Dump, "\n";
+  print "ARGV=", Vis->anew(@ARGV)->Dump, "\n";
+  print Vis->snew('href=$href\n')->Dump;
+  print Vis->dnew('$href\n')->Dump;
 
   foreach ($ENV{HOME}, "/dir/safe", "Uck!", 
            "My Documents", "Qu'ote", 'Qu"ote') 
@@ -480,7 +505,7 @@ a maximum line length given by $Vis::Maxwidth or the Maxwidth() method.
 
 The vis() call shown above produces the following output:
 
-  struct={
+  href={
     complicated => [ "lengthy", "stuff", 1, 2, 3, 4, 5, 6, 7,
       8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20
     ]
@@ -512,19 +537,25 @@ This allows @arrays to be shown without taking a reference.
 
 =head2 svis 'string to be interpolated',...
 
-The string(s) are interpolated similar to Perl double-quoted strings,
-except that embedded variable references are replaced by the results 
-from vis() or avis().  Multiple strings are concatenated.
+Variables and escapes in the string(s) are interpolated as 
+in Perl double-quotish strings except that expression values 
+are formatted using vis() or avis() (for $ or @ expressions, respectively).
+String values appear 'quoted' and complex data structures are shown in full.
+Multiple arguments are concatenated.
 
-The strings should be SINGLE QUOTED so Perl will not interpolate variable 
-references before passing the string.
+The input string(s) should written SINGLE QUOTED so Perl will not 
+interpolate them before passing to svis().
+
+In additional to all the forms recognized by Perl in double-quotish strings,
+vis() interpolates C<%name> into S<<< C<< (key => value ...) >> >>>
 
 =head2 dvis 'string to be interpolated',...
 
-('d' stands for 'debug display').  C<dvis> is identical to C<svis>
-except that interpolated variable references are automatically prefixed by
+('d' is for 'debug display').  C<dvis> is identical to C<svis>
+except that interpolated variables are automatically prefixed by
 the name of the variable (or the expression).  
-For example, S<dvis('$foo $ary[3]\n')> yields S<< "$foo=<value> $ary[3]=<value><newline>". >>
+For example, S<dvis('$foo $i $ary[$i]\n')> 
+yields S<< "$foo=<value> $i=<value> $ary[$i]=<value><newline>". >>
 
 =head2 OO interfaces
 
@@ -534,34 +565,37 @@ S<< Data::Dumper->new(...). >>   See SYNOPSIS above.
 
 =head2 Configuration Variables or Methods
 
-These work similarly to methods in Data::Dumper (whose methods are also 
+These work similarly to methods of Data::Dumper (which are also 
 available):
 
 =over 4
 
-=item *
-
-$Vis::Maxwidth  I<or>  I<$OBJ>->Maxwidth(I<[NEWVAL]>) 
+=item $Vis::Maxwidth  I<or>  I<$OBJ>->Maxwidth(I<[NEWVAL]>) 
 
 Sets or gets the maximum number of characters for formatted lines.
 
-=item *
+=item $Vis::Quotestyle I<or>  I<$OBJ>->Quotestyle(I<[NEWVAL]>) 
 
-$Vis::Quotestyle I<or>  I<$OBJ>->Quotestyle(I<[NEWVAL]>) 
-
-This may be set to B<'> B<"> B<q()> or B<qq()> to indicate the style of
+This may be set to B<"'"> B<'"'> B<'q()'> or B<'qq()'> to indicate the style of
 quotes used for strings (any pair of delimiters may be specified for q or qq).
 
-Double-quoted styles (" or qq) use I<\n \t \r> escapes, whereas in 
-single-quoted styles, newlines appear as themselves, etc.
+Double-quotish styles (" or qq) use I<\n \t \r> escapes, whereas in 
+single-quotish styles, newlines appear as themselves, etc.
 The default is '"'.
+
+=item $Vis::Useqq I<or>  I<$OBJ>->Useqq(I<[NEWVAL]>) 
+
+Use C<Quotestyle> instead.  C<Useqq> is provided for compatibiliy 
+with Data::Dumper.  Calling either method will automatically set the
+other value to correspond (Useqq will change a previously-set 
+Quotestyle between C<q()> and C<qq()> while preserving delimiters).
 
 =back
 
 Changes to global variables should usually be localized, e.g.
 
  { local $Vis::Quotestyle = "'";
-   ...code which uses vis() and avis()...
+   ...code which uses vis() or avis()...
  }
 
 =head2 qsh 
@@ -618,7 +652,8 @@ sub check($$$) {
 $. = 1234;
 $ENV{EnvVar} = "Test EnvVar Value";
 $_ = "GroupA.GroupB";
-my @toplex_a = (0,1,2,{A=>111,B=>222,C=>{d=>888,e=>999},D=>{}},[],[0..9]);
+my %tophash = (A=>111,B=>222,C=>{d=>888,e=>999},D=>{});
+my @toplex_a = (0,1,2,\%tophash,[],[0..9]);
 my $toplex_r = \@toplex_a;
 my $byte_str = join "",map { chr $_ } 10..30;
 my $unicode_str = join "",map {
@@ -676,6 +711,7 @@ sub f {
     [ q(@ARGV\n), qq(\@ARGV=(\"fake\", \"argv\")\n) ],
     [ q($ENV{EnvVar}\n), qq(\$ENV{EnvVar}=\"Test EnvVar Value\"\n) ],
     [ q($ENV{$EnvVarName}\n), qq(\$ENV{\$EnvVarName}=\"Test EnvVar Value\"\n) ],
+    [ q(%tophash\n), qq(\%tophash=(A => 111, B => 222, C => {d => 888, e => 999}, D => {})\n) ],
     [ q(@toplex_a\n), qq(\@toplex_a=(0, 1, 2, {A => 111, B => 222, C => {d => 888, e => 999}, D => {}}, [],\n  [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]\n)\n) ],
     [ q(@$toplex_r\n), qq(\@\$toplex_r=(0, 1, 2, {A => 111, B => 222, C => {d => 888, e => 999}, D => {}}, [],\n  [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]\n)\n) ],
     [ q($toplex_r->[3]{C}->{e}\n), qq(\$toplex_r->[3]{C}->{e}=999\n) ],
@@ -741,3 +777,4 @@ sub g($) {
 &g(42,$toplex_r);
 print "Tests passed.\n";
 exit 0;
+# End Tester
