@@ -1,5 +1,5 @@
 use strict; use warnings; 
-our $VERSION = sprintf "%d.%03d", q$Revision: 1.15 $ =~ /(\d+)/g; 
+our $VERSION = sprintf "%d.%03d", q$Revision: 1.16 $ =~ /(\d+)/g; 
 
 # Copyright © Jim Avera 2012.  Released into the Public Domain 
 # by the copyright owner.  (james_avera AT yahoo đøţ ¢ÔḾ) 
@@ -37,13 +37,23 @@ sub Dumpp(@)  { print __PACKAGE__->Dump(@_); }
 
 # Note: All Data::Dumper methods can be called on Vis objects
 
-# Sort keys numerically if they are both numbers, else lexicographically
+# Split keys into "components" (e.g. 2.16.A) and sort each component
+# numerically if both corresponding are numbers, else lexicographically.
 sub _sortkeys {
   my $hash = shift;
   return [
-    sort 
-      { ($a =~ /^\d+$/ && $b =~ /^\d+$/) ? ($a <=> $b) : ($a cmp $b) }
-      keys %$hash
+    sort { my @a = split /\b/,$a; 
+           my @b = split /\b/,$b; 
+           for (my $i=0; $i <= $#a; ++$i) {
+             return 1 if $i > $#b;  # b is shorter
+             my $r = ($a[$i] =~ /^\d+$/ && $b[$i] =~ /^\d+$/) 
+                      ? ($a[$i] <=> $b[$i]) : ($a[$i] cmp $b[$i]) ;
+             return $r if $r != 0;
+           }
+           return -1 if $#a < $#b; # a is shorter
+           return 0;
+         }
+         keys %$hash
   ]
 }
 
