@@ -1,5 +1,5 @@
 use strict; use warnings; use utf8;
-our $VERSION = sprintf "%d.%03d", q$Revision: 1.17 $ =~ /(\d+)/g; 
+our $VERSION = sprintf "%d.%03d", q$Revision: 1.18 $ =~ /(\d+)/g; 
 
 # Copyright © Jim Avera 2012.  Released into the Public Domain 
 # by the copyright owner.  (james_avera AT yahoo đøţ ¢ÔḾ) 
@@ -68,11 +68,6 @@ sub _config_defaults {
 # anew(items...)              
 # snew(strings...)             
 # dnew(strings...)             
-# new([items...],[names...])  --with $VAR names & trailing \n like Data::Dumper
-sub new {
-  my $class = shift;
-  bless($class->SUPER::new(@_), $class)->_config_defaults()->Terse(0);
-}
 sub vnew {
   my $class = shift;
   my $obj = (bless($class->SUPER::new(\@_), $class))->_config_defaults();
@@ -101,6 +96,21 @@ sub dnew {
   my $obj = snew(@_);
   $obj->{VisType} = 'd';
   $obj;
+}
+
+# new([items...],[names...])  
+# Functionally compatible with Data::Dumper->new(), including final newline.
+# The differences include:
+#   * Condensed output format 
+#   * Defaults to Deepcopy(1)  
+#   * Defaults to Purity(1) 
+sub new {
+  my $class = shift;
+  bless($class->SUPER::new(@_), $class)
+    ->_config_defaults()
+    ->Deepcopy(1)
+    ->Purity(1)
+    ;
 }
 
 sub Debug {
@@ -145,6 +155,7 @@ sub Dump {
     if ($self->{VisType}//"") =~ /[sd]/;
 
   my $debug = $self->{VisDebug};
+
   $_ = $self->SUPER::Dump;
 
   print "===== RAW =====\n${_}---------------\n" if $debug;
@@ -331,11 +342,11 @@ sub Vis_DB_DumpInterpolate {
     (?: \{ $expr_re \} | \[ $expr_re \] ) 
   }x;
   state $variable_re = qr/   # sigl could be $ or @
-      \#?\w+          # @name $name $#name $1
-    | \#?\$\w+        # $$ref $#$ref
-    | \^\w            # $^N   (control-character 'punctuation' variable)
-    | [^\w\s\{\$]     # $^ $? (regular 'punctuation' variable)
-    | \{ $expr_re \}  # ${ref expression} or ${^SPECIALNAME}
+      \#?\w+(?:::\w+)*   # @name $pkg::name $#name $1
+    | \#?\$\w+(?:::\w+)* # $$ref $#$ref
+    | \^\w               # $^N   (control-character 'punctuation' variable)
+    | [^\w\s\{\$]        # $^ $? (regular 'punctuation' variable)
+    | \{ $expr_re \}     # ${ref expression} or ${^SPECIALNAME}
   /x;
 
   my @actions;
@@ -415,6 +426,7 @@ sub Vis_DB_DumpInterpolate {
           Carp::croak("Error interpolating '$sigl$rhs': $@") 
             if $@ =~ s/ at \(eval.*//;
         }
+        #my $prefix = $display_mode ? ($sigl eq '$' ? "":$sigl)."$rhs=" : "";
         my $prefix = $display_mode ? "$sigl$rhs=" : "";
         if ($sigl eq '$') {
           $self->Reset()->Values([$items[0]])->{VisType} = 'v';
