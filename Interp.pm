@@ -1,5 +1,5 @@
 use strict; use warnings; use utf8;
-our $VERSION = sprintf "%d.%03d", q$Revision: 1.19 $ =~ /(\d+)/g; 
+our $VERSION = sprintf "%d.%03d", q$Revision: 1.20 $ =~ /(\d+)/g; 
 
 # Copyright © Jim Avera 2012.  Released into the Public Domain 
 # by the copyright owner.  (james_avera AT yahoo đøţ ¢ÔḾ) 
@@ -15,6 +15,8 @@ use Carp;
 use feature qw(switch state);
 use POSIX qw(INT_MAX);
 sub u($) { defined $_[0] ? $_[0] : "undef" } # for debugging
+sub debugvis($) 
+{chomp(my $s = Data::Dumper->new([shift])->Useqq('utf8')->Terse(1)->Indent(0)->Dump); $s;}
 
 our @ISA       = qw(Exporter Data::Dumper);
 our @EXPORT    = qw(vis avis svis dvis Dumper qsh forceqsh);
@@ -138,7 +140,7 @@ sub Quotestyle {
    ? (($s->{Quotestyle} = $v), 
       do {
         local $_;
-        # Preserve a special Useqq() value, e.g. 'utf8'
+        # Preserve the existing Useqq() value, e.g. 'utf8',
         # unless a new Useqq value was appended to $v
         $v =~ /^(?:"|qq..)(.*)/
         ? $1
@@ -166,6 +168,9 @@ sub Useqq {
   }
 }
 
+my $qstr_re = qr{ " ( [^"\\]++ | \\. ) " | ' ( [^'\\]++ | \\. ) ' }x;
+my $key_re  = qr{ \w+ | $qstr_re }x;
+
 sub Dump {
   my ($self) = @_;
   local $_; # preserve caller's $1 etc.
@@ -176,6 +181,7 @@ sub Dump {
     if ($self->{VisType}//"") =~ /[sd]/;
 
   my $debug = $self->{VisDebug};
+  my $maxwidth = $self->{Maxwidth};
 
   $_ = $self->SUPER::Dump;
 
@@ -190,7 +196,8 @@ sub Dump {
                  : qr/( (?: '(?: [^']++ |\\' )*' | [^'\n]+ )* \n )/xo ;
   my @lines = (grep {defined} split /$split_re/, $_);
 
-  # Data::Dumper output is very structured, with a 2-space indent increment:
+  # Data::Dumper output with Indent(1) is very structured, with a 
+  # fixed 2-space indent increment:
   # [
   #   value,
   #   value,
@@ -200,8 +207,8 @@ sub Dump {
   #       value
   #     ],
   #     key => {
-  #       key => value,
   #       key => value
+  #       longerkey => value,
   #     },
   #   },
   #   value
@@ -211,52 +218,82 @@ sub Dump {
   my $restart = 0;
   while ($restart < $#lines) 
   {
-    OUTER_LOOP:
-    for (my $I=$restart, my $J=$restart+1, $restart=INT_MAX; 
+    print "RESTART at $restart \n" if $debug;
+    LOOP:
+    for (my $I=$restart, my $J=$restart+1, $restart=INT_MAX-1;
          $J <= $#lines; 
          $I=$J, $J=$I+1) 
     {
-      while ($lines[$I] =~/\A\s*$/s) { next OUTER_LOOP if ++$I >= $J }
-      my ($Iindent,$Icode) = ($lines[$I] =~ /^(\s*)(.*\S)/s);
-      $Iindent = length($Iindent);
+      # Find next pair of lines which haven't been "deleted" yet
+      while ($lines[$J] eq "") { next LOOP if ++$J > $#lines; }
+      while ($lines[$I] eq "") { next LOOP if ++$I >= $J; }
 
-      while ($lines[$J] =~/\A\s*$/s) { last OUTER_LOOP if ++$J > $#lines }
-      my ($Jindent,$Jcode) = ($lines[$J] =~ /\A(\s*)(.*\S)/s);
-      $Jindent = length($Jindent);
+      my ($Iprefix,$Icode) = ($lines[$I] =~ /^(\s*)(.*)/);
+      my $Iindent = length($Iprefix);
+
+      my ($Jprefix,$Jcode) = ($lines[$J] =~ /^(\s*)(.*)/);
+      my $Jindent = length($Jprefix);
 
       if ($debug) {
-        print "===== I=$I Iind=$Iindent, J=$J Jind=$Jindent =====\n";
+        print "===== I=$I Iind=$Iindent, J=$J Jind=$Jindent restart=$restart\n";
+        my $nd = @lines <= 9 ? 1 : @lines <= 99 ? 2 : 3;
         for my $ix(0..$#lines) {
           next if $lines[$ix] eq "" && $ix != $I && $ix != $J;
-          printf "[%2d] ", $ix;
+          printf "[%${nd}d] ", $ix;
           print($ix==$I ? "I" : " ");
           print($ix==$J ? "J" : " ");
-          print ":", ($lines[$ix] eq "" ? "(empty)" : "«$lines[$ix]»"), "\n";
+          print ":",($lines[$ix] eq "" ? "(empty)":debugvis($lines[$ix])),"\n";
         }
         print "--------------------\n";
       }
 
       if ($Iindent <= $Jindent
+          && $Jcode !~ /[\[\{]$/s # J isn't opening a new aggregate
           && $Icode !~ /^[\]\}]/s # I isn't closing an aggregate
-          && $Jcode !~ /[\[\{]$/s # J isn't opening an aggregate
           && ($Icode =~ /(?:,|[\[\{])$/ || $Jcode =~ /^[\]\}]/)
          )
       {
-        my $Ilen = $Iindent+length($Icode);
-        # Omit space between [] or {} and contents 
-        #   [1, 2, 3] instead of [ 1, 2, 3 ]
-        #   {key => value} insteas of { key => value }
-        my $sep = ($Icode =~ /[\[\{]\s*$/ || $Jcode =~ /^[\]\}]/) ? "" : " "; 
-        next 
-          if $Ilen + length($sep) + length($Jcode) > $self->{Maxwidth};
-        substr($lines[$I],$Ilen,1) = $sep;
-        substr($lines[$I],$Ilen+length($sep)) = substr($lines[$J], $Jindent);
-        $lines[$J] = "";
-        $restart = $I if ($I < $restart);
-        last if ++$J > $#lines;
-        redo;
+        # The lines are elegible to be joined, if there is enough space
+
+        my $Ilen = $Iindent + length($Icode);
+
+        my $squish = (($Icode =~ /^\[ / && $Jcode =~ /^\]/) ||
+                      ($Icode =~ /^\{ / && $Jcode =~ /^\}/) ||
+                      ($Icode =~ /^${key_re} => \{ / && $Jcode =~ /^\}/)
+                     ) ? 2:0;     
+
+        print "Ilen=$Ilen squish=$squish len(Jcode)=",length($Jcode),
+              " calc=",
+              ($Ilen + length($Jcode) + 1 - $squish),
+              " mw=$maxwidth\n" if $debug;
+
+        if ($Ilen + length($Jcode) + 1 - $squish <= $maxwidth) {
+          # Join the lines
+          substr($lines[$I],$Ilen  ,1) = ' ';
+          substr($lines[$I],$Ilen+1  ) = substr($lines[$J], $Jindent);
+          if ($squish) {
+            # Change [ 1, 2 ] -> [1, 2]  and  { K => val } -> {K => val}
+            # This is very imperfect.  Only simple cases are squished.
+            die "bug" if substr($lines[$I],$Ilen,1) ne " ";
+            substr($lines[$I],$Ilen,1)="";
+            $lines[$I] =~ s/^( *(?:[\[\(]|(?:${key_re} => )?\{)) /$1/ or "die";
+          }
+          $lines[$J] = "";
+
+          #$restart = $I if $I < $restart;
+          $restart = 0 if $I < $restart;
+          last LOOP if ++$J > $#lines;
+          redo LOOP;
+        } else {
+          # Not joined, but could have if the line wasn't too long.
+          print "NO ROOM\n" if $debug;
+
+          #if ($Jcode =~ /^(?:${key_re} => )?[\{\[]/) {
+          #  indent rest of this block by $Ilen+length($sep)-$Jindent;
+          #}
+        }
       } else {
-        print "NOT JOINED.\n" if $debug;
+        print "NOT ELEGIBLE\n" if $debug;
       }
     }
   }
@@ -346,7 +383,6 @@ sub Vis_DB_DumpInterpolate {
   my $debug = $self->{VisDebug};
   my $display_mode = $self->{VisType} eq 'd';
 
-  state $qstr_re = qr{ " ( [^"\\]+ | \\. ) " | ' ( [^'\\]+ | \\. ) ' }x;
   state $expr_re = qr{ 
     (
         [^"'{}()\[\]]+
@@ -703,11 +739,11 @@ select STDERR; $|=1; select STDOUT; $|=1;
 for my $varname (qw(PREMATCH MATCH POSTMATCH)) {
   $_ = "test"; /(\w+)/;
   no strict 'vars';
-  die "Vis imports high-overhead English ($varname)" 
+  die "Vis imports high-overhead English ($varname)"
     if eval "defined \$Vis::$varname";
   die "EVAL ERR: $@ " if $@;
 }
-        
+
 my $undef_as_false = undef;
 if (! ref Data::Dumper->new([1])->Useqq(undef)) {
   warn "WARNING: Your Data::Dumper has not been fixed to accept undef boolean args.\n";
@@ -721,8 +757,8 @@ sub check($$$) {
   local $_;
   #print $actual;{ local $_;print "<no newline>\n" unless $actual =~ /\n\z/s; }
   confess "\nTEST FAILED: $code\n"
-         ."Expected «${expected}»\n"
-         ."     Got «${actual}»\n"
+         ."Expected:\n${expected}«end»\n"
+         ."Got:\n${actual}«end»\n"
     unless $actual eq $expected;
 }
 
@@ -730,7 +766,7 @@ sub check($$$) {
 $. = 1234;
 $ENV{EnvVar} = "Test EnvVar Value";
 
-my %toplex_h = (A=>111,B=>222,C=>{d=>888,e=>999},D=>{});
+my %toplex_h = (A=>111,"B B"=>222,C=>{d=>888,e=>999},D=>{});
 my @toplex_a = (0,1,2,\%toplex_h,[],[0..9]);
 my $toplex_ar = \@toplex_a;
 my $toplex_hr = \%toplex_h;
@@ -763,7 +799,7 @@ print "         unicode_str:$unicode_str\n";
 }
 
 $_ = "GroupA.GroupB";
-/(.*)\W(.*)/p or die "nomatch"; # set $1 and $2 
+/(.*)\W(.*)/p or die "nomatch"; # set $1 and $2
 
 { my $code = 'vis($_)'; check $code, "\"${_}\"", eval $code; }
 { my $code = 'avis($_,1,2,3)'; check $code, "(\"${_}\", 1, 2, 3)", eval $code; }
@@ -823,7 +859,7 @@ sub test_qs($$;$) {
     unless tf(! $exp_useqqTruth) eq tf($act_useqq);
 }
 my $default_qs = $Vis::Quotestyle;
-for my $qs (qw{ ' " q{} q() qq// qq() }, 'qq!#') { 
+for my $qs (qw{ ' " q{} q() qq// qq() }, 'qq!#') {
   for my $uqq (0,$undef_as_false,1,'utf8') {
     { local $Vis::Quotestyle = $qs;
       local $Vis::Useqq = $uqq if defined $uqq;
@@ -855,21 +891,21 @@ sub doquoting($$) {
   my ($input, $qs) = @_;
   my $quoted = $input;
   given($qs) {
-    when ("'") { 
+    when ("'") {
       $quoted =~ s/([\\'])/\\$1/gs;
       $quoted = "'${quoted}'";
     }
-    when ('q()') { 
+    when ('q()') {
       $quoted =~ s/([\\()])/\\$1/gs;
       $quoted = "q(${quoted})";
     }
-    when ('"') { 
+    when ('"') {
       $quoted =~ s/([\$\@"\\])/\\$1/gs;
       $quoted =~ s/\n/\\n/gs;
       $quoted =~ s/\t/\\t/gs;
       $quoted = "\"${quoted}\"";
     }
-    when ('qq()') { 
+    when ('qq()') {
       $quoted =~ s/([\$\@\\()])/\\$1/gs;
       $quoted =~ s/\n/\\n/gs;
       $quoted =~ s/\t/\\t/gs;
@@ -936,42 +972,81 @@ sub f {
     [ q($ENV{EnvVar}\n), qq(\$ENV{EnvVar}=\"Test EnvVar Value\"\n) ],
     [ q($ENV{$EnvVarName}\n), qq(\$ENV{\$EnvVarName}=\"Test EnvVar Value\"\n) ],
     [ q($@\n), qq(\$\@=\"FAKE DEATH\\n\"\n) ],
-    [ q(@_\n), qq(\@_=(42, [0, 1, 2, {A => 111, B => 222, C => {d => 888, e => 999}, D => {}},\n    [], [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]\n  ]\n)\n) ],
+    [ q(@_\n), qq(\@_=( 42, [ 0, 1, 2, { A => 111, "B B" => 222,\n      C => {d => 888, e => 999}, D => {}\n    },\n    [], [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]\n  ]\n)\n) ],
     [ q($#_\n), qq(\$#_=1\n) ],
-    [ q($#toplex_a), qq(\$#toplex_a=5) ],
-    [ q($#toplex_a\n), qq(\$#toplex_a=5\n) ],
-    [ q(@toplex_a[$zero,$one]\n), qq(\@toplex_a[\$zero,\$one]=(0, 1)\n) ],
-    [ q(@$toplex_ar[$zero,$one]\n), qq(\@\$toplex_ar[\$zero,\$one]=(0, 1)\n) ],
-    [ q(@toplex_h{'A',"B"}\n), qq(\@toplex_h{'A',"B"}=(111, 222)\n) ],
-    [ q(@$toplex_hr{'A',"B"}\n), qq(\@\$toplex_hr{'A',"B"}=(111, 222)\n) ],
 
-    (map {
-     (
-      [ qq(%${_}_h\\n), 
-        qq(\%${_}_h=(A => 111, B => 222, C => {d => 888, e => 999}, D => {})\n)
-      ],
-      [ qq(\@${_}_a\\n), 
-        qq(\@${_}_a=(0, 1, 2, {A => 111, B => 222, C => {d => 888, e => 999}, D => {}}, [],\n  [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]\n)\n) 
-      ],
-      [ qq(\@\$${_}_ar\\n), 
-        qq(\@\$${_}_ar=(0, 1, 2, {A => 111, B => 222, C => {d => 888, e => 999}, D => {}}, [],\n  [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]\n)\n) 
-      ],
-      [ qq(\$${_}_ar->[3]{C}->{e}\\n), 
-        qq(\$${_}_ar->[3]{C}->{e}=999\n) 
-      ],
-      [ qq(%\$${_}_hr\\n), 
-        qq(%\$${_}_hr=(A => 111, B => 222, C => {d => 888, e => 999}, D => {})\n) 
-      ],
-     )
-    } qw(sublex toplex global subglobal maskedglobal localized)),
+    (map
+      { my $name = $_;
+        (
+        map(
+          { my ($dollar, $r) = @$_;
+            (
+            [ qq(%${dollar}${name}_h${r}\\n),
+              qq(\%${dollar}${name}_h${r}=(A => 111, "B B" => 222, C => {d => 888, e => 999}, D => {})\n)
+            ],
+            [ qq(\@${dollar}${name}_a${r}\\n),
+              qq(\@${dollar}${name}_a${r}=( 0, 1, 2, { A => 111, "B B" => 222, C => {d => 888, e => 999}, D => {}\n  },\n  [], [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]\n)\n)
+            ],
+            [ qq(\$#${dollar}${name}_a${r}),    qq(\$#${dollar}${name}_a${r}=5)   ],
+            [ qq(\$#${dollar}${name}_a${r}\\n), qq(\$#${dollar}${name}_a${r}=5\n) ],
+            [ qq(\$${dollar}${name}_a${r}[3]{C}{e}\\n),
+              qq(\$${dollar}${name}_a${r}[3]{C}{e}=999\n)
+            ],
+            [ qq(\$${dollar}${name}_a${r}[3]->{C}{e}\\n),
+              qq(\$${dollar}${name}_a${r}[3]->{C}{e}=999\n)
+            ],
+            [ qq(\$${dollar}${name}_a${r}[3]{C}->{e}\\n),
+              qq(\$${dollar}${name}_a${r}[3]{C}->{e}=999\n)
+            ],
+            [ qq(\$${dollar}${name}_a${r}[3]->{C}->{e}\\n),
+              qq(\$${dollar}${name}_a${r}[3]->{C}->{e}=999\n)
+            ],
+            [ qq(\@${dollar}${name}_a${r}[\$zero,\$one]\\n),
+              qq(\@${dollar}${name}_a${r}[\$zero,\$one]=(0, 1)\n)
+            ],
+            [ qq(\@${dollar}${name}_h${r}{'A',"B B"}\\n),
+              qq(\@${dollar}${name}_h${r}{'A',"B B"}=(111, 222)\n)
+            ],
+            )
+          }
+          (['',''], ['$','r'])
+        ),
+        map(
+          { my ($dollar, $r, $arrow) = @$_;
+            (
+            [ qq(\$${dollar}${name}_a${r}${arrow}[3]{C}{e}\\n),
+              qq(\$${dollar}${name}_a${r}${arrow}[3]{C}{e}=999\n)
+            ],
+            [ qq(\$${dollar}${name}_a${r}${arrow}[3]{C}->{e}\\n),
+              qq(\$${dollar}${name}_a${r}${arrow}[3]{C}->{e}=999\n)
+            ],
+            [ qq(\$${dollar}${name}_h${r}${arrow}{A}\\n),
+              qq(\$${dollar}${name}_h${r}${arrow}{A}=111\n)
+            ],
+            )
+          }
+          (['$','r',''], ['','r','->'])
+        ),
+        )
+      } 
+      qw(sublex toplex global subglobal maskedglobal localized),
+    )
   )
   {
     my ($dvis_input, $expected) = @$test;
+
+    #print "### $dvis_input\n";
+    { local $@;
+      my $ev = eval { "$dvis_input" };
+      die "Bad test string:$dvis_input\nPerl can't interpolate it: $@" if $@;
+    }
+
+    # For some reason we can't catch exceptions from inside dvis
+    # (undef is returned but $@ is not set!)
     my $actual = dvis $dvis_input;
-    #print $actual; { local $_; print "<no newline>\n" unless $actual =~ /\n\z/s; }
     confess "\ndvis test failed: input «${dvis_input}»\n"
-         ."Expected «${expected}»\n"
-         ."     Got «${actual}»\n"
+         ."Expected:\n${expected}«end»\n"
+         ."Got:\n${actual}«end»\n"
     unless $expected eq $actual;
 
     # Check Quotestyle options
