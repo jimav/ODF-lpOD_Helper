@@ -1,5 +1,5 @@
 use strict; use warnings; use utf8;
-our $VERSION = sprintf "%d.%03d", q$Revision: 1.20 $ =~ /(\d+)/g; 
+our $VERSION = sprintf "%d.%03d", q$Revision: 1.21 $ =~ /(\d+)/g; 
 
 # Copyright © Jim Avera 2012.  Released into the Public Domain 
 # by the copyright owner.  (james_avera AT yahoo đøţ ¢ÔḾ) 
@@ -24,10 +24,11 @@ our @EXPORT_OK = ('$Maxwidth', '$Quotestyle', '$Useqq', '$Debug');
 
 # Used by non-oo functions, and initial settings for oo constructors.
 our ($Maxwidth, $Quotestyle, $Useqq, $Debug);
-$Maxwidth   = 72   unless defined $Maxwidth;
-$Quotestyle = '"'  unless defined $Quotestyle;
+
+$Maxwidth   = undef   unless defined $Maxwidth; # undef to auto-detect terminal
+$Quotestyle = '"'     unless defined $Quotestyle;
 # $Useqq is undefined by default
-$Debug      = 0    unless defined $Debug;
+$Debug      = 0       unless defined $Debug;
 
 # Functional (non-oo) APIs
 sub vis(@)    { return __PACKAGE__->vnew(@_)->Dump; }
@@ -62,8 +63,39 @@ sub _sortkeys {
   ]
 }
 
+sub _unix_compatible_os() {
+  # There must be a better way...
+  (($^O !~ /win|dos/i && $^O =~ /ix$|ux$|bsd|svr|uni|osf|sv$/)
+   || $^O eq 'drawin'
+   || $^O eq 'cygwin'
+  )
+  && -w "/dev/null"
+}
+sub _get_default_width() {
+  local $_;
+  my $r;
+  if (_unix_compatible_os) {
+    if (-t STDERR) {
+      no warnings;
+      ($r = qx'tput cols') # N.B. linux tput prints 80 even if no tty
+      ||
+      (($r) = ((qx'stty -a'//"") =~ /.*; columns (\d+);/))
+      ;
+      chomp $r if $r;
+    }
+  }
+  # elsif(...) { ... }
+  else { 
+    warn "(fixme) Unrecognized OS $^O or no /dev/null" 
+  }
+  return $r || 80;
+}
+
 sub _config_defaults {
   my $self = shift;
+
+  $Maxwidth = _get_default_width() if ! defined $Maxwidth;
+
   $self->Quotekeys(0)->Sortkeys(\&_sortkeys)->Terse(1)->Indent(1)->
            Debug($Debug)->Maxwidth($Maxwidth)->Quotestyle($Quotestyle);
 
@@ -180,18 +212,20 @@ sub Dump {
   goto &DB::Vis_DB_DumpInterpolate
     if ($self->{VisType}//"") =~ /[sd]/;
 
-  my $debug = $self->{VisDebug};
+  $_ = $self->SUPER::Dump;
+
   my $maxwidth = $self->{Maxwidth};
 
-  $_ = $self->SUPER::Dump;
+  return $_ if $maxwidth == 0; # no condensation
+
+  my $debug = $self->{VisDebug};
 
   print "===== RAW =====\n${_}---------------\n" if $debug;
 
   # Split into logical lines, being careful to preserve newlines in strings. 
   # The "delimiter" is the whole (logical) line, including final newline,
   # which is returned because it is in a (capture group).
-  my $quotestyle = $self->Quotestyle();
-  my $split_re = ($quotestyle eq '"' || substr($quotestyle,1,1) eq "q")
+  my $split_re = $self->Useqq()
                  ? qr/( (?: "(?: [^"]++ |\\" )*" | [^"\n]+ )* \n )/xo
                  : qr/( (?: '(?: [^']++ |\\' )*' | [^'\n]+ )* \n )/xo ;
   my @lines = (grep {defined} split /$split_re/, $_);
@@ -307,30 +341,6 @@ sub Dump {
       s/[\]}]$/\)/ or confess "bug($_)";
     }
   }
-  if (/^['"]/) {
-    if ($quotestyle =~ /^["']/) {
-      # most common cases first.  Ok as-is.
-    }
-    elsif ($quotestyle =~ /^q([^q])(.)$/) { # q()
-      my ($L,$R) = ($1,$2);
-      die "bug" unless /^'/;   # should be 'single quoted'
-      $_ = substr($_,1,length($_)-2);
-      s/\\'/'/g;
-      s/(\Q${L}\E|\Q${R}\E)/\\$1/g;
-      $_ = "q${L}${_}${R}";
-    }
-    elsif ($quotestyle =~ /^qq(.)(.)/) {  # qq()<optional Useqq string>
-      my ($L,$R) = ($1,$2);
-      die "bug" unless /^"/;   # should be "double quoted"
-      $_ = substr($_,1,length($_)-2);
-      s/\\"/"/g;
-      s/(\Q${L}\E|\Q${R}\E)/\\$1/g;
-      $_ = "qq${L}${_}${R}";
-    }
-    else {
-      confess "Vis: Quotestyle set to illegal value <<${quotestyle}>>\n";
-    }
-  }
 
   return $_;
 }
@@ -359,8 +369,10 @@ sub qsh(;@) {
   @_ = ($_) if @_==0;  # format $_ if no args
   join " ",
        map {
-         (/[^-\w_\/:\.]/ || $_ eq "") ? forceqsh($_) : $_
-       } 
+         defined $_ 
+           ? (/[^-\w_\/:\.]/ || $_ eq "") ? forceqsh($_) : $_
+           : "undef";
+       }
        @_;
 }
 
@@ -380,6 +392,7 @@ sub Vis_DB_DumpInterpolate {
   () = caller 1;
   local *_ = \@DB::args;
 
+  my $quotestyle = $self->Quotestyle();
   my $debug = $self->{VisDebug};
   my $display_mode = $self->{VisType} eq 'd';
 
@@ -496,7 +509,32 @@ sub Vis_DB_DumpInterpolate {
           $self->Reset()->Values([\%hash])->{VisType} = 'a';
         }
         else { die "bug" }
-        $result .= $prefix.$self->Dump;
+        my $_ = $self->Dump;
+        if (/^['"]/) {
+          if ($quotestyle =~ /^["']/) {
+            # most common cases first.  Ok as-is.
+          }
+          elsif ($quotestyle =~ /^q([^q])(.)$/) { # q()
+            my ($L,$R) = ($1,$2);
+            die "bug" unless /^'/;   # should be 'single quoted'
+            $_ = substr($_,1,length($_)-2);
+            s/\\'/'/g;
+            s/(\Q${L}\E|\Q${R}\E)/\\$1/g;
+            $_ = "q${L}${_}${R}";
+          }
+          elsif ($quotestyle =~ /^qq(.)(.)/) {  # qq()<optional Useqq string>
+            my ($L,$R) = ($1,$2);
+            die "bug" unless /^"/;   # should be "double quoted"
+            $_ = substr($_,1,length($_)-2);
+            s/\\"/"/g;
+            s/(\Q${L}\E|\Q${R}\E)/\\$1/g;
+            $_ = "qq${L}${_}${R}";
+          }
+          else {
+            Carp::confess "Vis: Quotestyle set to illegal value <<${quotestyle}>>\n";
+          }
+        }
+        $result .= $prefix.$_;
       }
     }
     elsif ($act eq 't') {
@@ -536,15 +574,15 @@ Vis - Improve Data::Dumper to format arbitrary Perl data in messages
   my %hash = ( complicated => ['lengthy','stuff',1..20] );
   my $href = \%hash;
 
-  print "href=", vis($href), "\n";
-  print "ARGV=", avis(@ARGV), "\n";
   print svis 'href=$href\n hash=%hash\n ARGV=@ARGV\n'; # SINGLE quoted!
   print dvis 'Display of variables: $href %hash @ARGV\n'; 
+  print "href=", vis($href), "\n";
+  print "ARGV=", avis(@ARGV), "\n";
 
-  print "href=", Vis->vnew($href)->Quotestyle("'")->Maxlength(110)->Dump, "\n";
-  print "ARGV=", Vis->anew(@ARGV)->Dump, "\n";
-  print Vis->snew('href=$href\n')->Dump;
+  print Vis->snew('href=$href\n')->Quotestyle('qq{}')->Dump;
   print Vis->dnew('$href\n')->Dump;
+  print "href=", Vis->vnew($href)->Maxlength(110)->Dump, "\n";
+  print "ARGV=", Vis->anew(@ARGV)->Dump, "\n";
 
   print Dumper($href);                      # Data::Dumper API
   print Vis->new([$href],['$href'])->Dump;  # Data::Dumper API
@@ -557,19 +595,21 @@ Vis - Improve Data::Dumper to format arbitrary Perl data in messages
 
 =head1 DESCRIPTION
 
-The Vis package provides convenience interfaces to Data::Dumper
-to generate compact output optimized for error/diagnostic messages:
+The Vis package provides convenience interfaces to Data::Dumper,
+optimized for error/diagnostic messages.
+A condensed format is used for aggregate data.
 
 =over
 
 =item
 
-There is no final newline when using the new interfaces.
+A final newline is not automatically included when using the new interfaces.
 
 =item
 
 Multiple array and hash members are shown on the same line, subject to
-a maximum line length given by $Vis::Maxwidth or the Maxwidth() method.
+a maximum line length given by $Vis::Maxwidth or the Maxwidth() method
+(defaults to terminal width or 80).
 
 The first print statement above produces the following output:
 
@@ -579,40 +619,36 @@ The first print statement above produces the following output:
     ]
   }
 
+
 =item
 
-Hash heys are sorted, auto-detecting numeric "components".
+Different default Data::Dumper options are used:
+
+=over
+
+B<Quotekeys(0)> -- Don't quote hash keys unless necessary.
+
+B<Terse(1)> -- Don't assign to variables, just show the data.
+
+B<Sortkeys(smart sorting)>
+
+Numeric "components" in hash keys are auto-detected.
 For example: "A.20_999" "A.100_9" "A.100_80" "B" are shown in that order.
 
-=item
-
-By default, just the data items are shown, no variable assignments.
-
+=back
+  
 =back
 
 Vis is a subclass of Data::Dumper and is a drop-in replacement.  The old
-APIs work exactly as before but provide more compact output at the cost
-of additional overhead for re-formatting (Data::Dumper can still be called 
-directly to access the original implementation).
-A final newline is included when using the old APIs.  
-
-=head2 vis $item, ... 
-
-Format an arbitrary Perl data structure for printing, without a final newline.
-
-Multiple arguments are each formatted separately,
-separated by newlines.
-
-=head2 avis @array
-
-C<avis> formats an array or list in parenthesis: C<(arg1,arg2,arg3,...)>.
-This allows @arrays to be shown without taking a reference.
+APIs are all available but produce condensed output formatting.
+A final newline in included when using the old APIs.
 
 =head2 svis 'string to be interpolated',...
 
 Variables and escapes in the string(s) are interpolated as 
 in Perl double-quotish strings except that expression values 
-are formatted using vis() or avis() (for $ or @ expressions, respectively).
+are formatted using C<vis()> or C<avis()> (for $ or @ expressions, 
+respectively).  
 String values appear 'quoted' and complex data structures are shown in full.
 Multiple arguments are concatenated.
 
@@ -630,30 +666,54 @@ the name of the variable (or the expression).
 For example, S<dvis('$foo $i $ary[$i]\n')> 
 yields S<< "$foo=<value> $i=<value> $ary[$i]=<value><newline>". >>
 
+=head2 vis $item, ... 
+
+Format arbitrary Perl data for printing, without a final newline.
+
+Multiple arguments are each formatted separately,
+separated by newlines.
+
+=head2 avis @array
+
+C<avis> formats an array or list in parenthesis: C<(arg1,arg2,arg3,...)>.
+This allows @arrays to be shown without taking a reference.
+
 =head2 OO interfaces
 
-C<vnew>, C<anew>, C<snew>, and C<dnew> 
-are constructors which work analogously to 
-S<< Data::Dumper->new(...). >>   See SYNOPSIS above. 
+OO interfaces allow setting Configuration options on a case-by-case basis.
+
+B<< Vis->snew >>, B<< Vis->dnew >>, B<< Vis->vnew >> and B<< Vis->anew >>
+are constructors corresponding to the functions
+B<svis>, B<dvis>, B<vis> and B<avis>, respectively.  See SYNOPSIS above. 
+
+Additionally, B<< Vis->new >> provides the same API as Data::Dumper.
 
 =head2 Configuration Variables or Methods
 
-These work similarly to methods of Data::Dumper (which may also be used):
+Note: The Configuration methods of Data::Dumper may also be used.
 
 =over 4
 
 =item $Vis::Maxwidth  I<or>  I<$OBJ>->Maxwidth(I<[NEWVAL]>) 
 
 Sets or gets the maximum number of characters for formatted lines.
+If Maxwidth=0 then conensed output is disabled and aggregates are
+formatted as with Data::Dumper (but still sans final newline).
 
 =item $Vis::Quotestyle  I<or>  I<$OBJ>->Quotestyle(I<[NEWVAL]>) 
 
-This may be set to B<"'"> B<'"'> B<'q()'> or B<'qq()'> to indicate the style of
-quotes used for strings (any pair of delimiters may be specified for q or qq).
-
-Double-quotish styles (" or qq) use I<\n \t \r> escapes, whereas in 
+This may be set to B<"'"> B<'"'>.
+Double-quotish styles use I<\n \t \r> escapes, whereas in 
 single-quotish styles, newlines appear as themselves, etc.
 The default is '"'.
+
+Quotestyle may also be set to B<'q()'> or B<'qq()'> 
+(with any pair of delimiters) to use those forms for items
+interpolated by C<svis> or C<dvis>.  Currently, "interior" strings
+inside aggregates (and all strings from C<vis> or C<dvis>) are
+formatted with "'" or "'" when Quotestyle is set to q() or qq() respectively.
+In other words, q() and qq() do as you expect with C<svis> and C<dvis> 
+if none of no interpolated values are references.  
 
 Double-quotish styles may be appended with one of the special 
 (and officially unsupported) C<Usecc> values to control encoding,
@@ -662,8 +722,7 @@ See the Data/Dumper.pm source.
 
 =item $Vis::Useqq  I<or>  I<$OBJ>->Useqq(I<[NEWVAL]>) 
 
-You can use C<Quotestyle> instead;
-C<Useqq> is provided for compatibility with Data::Dumper.
+C<Useqq> is provided mainly for compatibility with Data::Dumper.
 
 Calling C<Useqq()> or C<Quotestyle()> automatically changes the 
 other to correspond (C<Useqq> will switch a previously-set
@@ -675,9 +734,9 @@ the initial Quotestyle is $Vis:Quotestyle modified as described previously.
 
 =back
 
-Changes to global variables should usually be localized, e.g.
+Changes to global variables should generally be localized, e.g.
 
- { local $Vis::Quotestyle = "'";
+ { local $Vis::Quotestyle = 'qq{}';
    ...code which uses vis() or avis()...
  }
 
@@ -685,33 +744,33 @@ Changes to global variables should usually be localized, e.g.
 
 =head2 qsh $data, ...
 
-The data items ($_ by default) are formatted and 'quoted' for /bin/sh 
-if necessary, and concatenated with a single space between each item.
+The data items ($_ by default) are 'quoted' if necessary for parsing 
+by /bin/sh (note that /bin/sh quoting rules differ from Perl's).  
+Multiple items are concatenated, separated by spaces.
 
-In other words, if an item is a non-empty string containing 
-only "safe" characters, then that item is returned unchanged, otherwise
-it will be 'quoted'.  
-References become something like S<<< C<< '[42, {key => 123}]' >>. >>>
+Strings which contain only "safe" characters are returned as-is, 
+omitting the 'quotes'.  
 
-Note that /bin/sh 'quoting' rules differ from Perl's.
+References are formatted as with C<vis()> and the resulting string quoted.
+Undefined values appear as C<undef> without quotes.
 
 =head2 forceqsh $data
 
-The string is 'quoted' for /bin/sh if even if not necessary.
+The argument is 'quoted' for /bin/sh if even if quotes are not necessary.
 
 Unlike C<qsh>, C<forceqsh> requires exactly one argument.
 
 =head1 PERFORMANCE
 
-Vis calls Data::Dumper and adds additional overhead to condense the output. 
-Also C<svis> and C<dvis> must parse the strings to be interpolated.  
+Vis calls Data::Dumper and then condenses the output. 
+C<svis> and C<dvis> must also parse the strings to be interpolated.  
 For most puposes performance is of no concern.
 
-Single-quotish Quotestyles run fastest because the underlying Data::Dumper 
+Single-quotish Quotestyles run faster because the underlying Data::Dumper 
 implementation uses XS (C code) when Useqq is off.
 
-For extremely high-volume applications, such as to serialize a large data set,
-call C<< Data::Dumper->new() >> directly.
+For high-volume applications, such as to serialize a large data set,
+C<< Data::Dumper->new() >> may be called directly.
 
 =head1 SEE ALSO
 
@@ -719,7 +778,7 @@ Data::Dumper
 
 =head1 AUTHOR
 
-Jim Avera (james_avera AT yahoo daht kom)
+Jim Avera (james_avera AT yahoo daht komm)
 
 =cut
 
@@ -789,8 +848,27 @@ our $localized_hr = \%localized_h;
 my $byte_str = join "",map { chr $_ } 10..30;
 my $unicode_str = join "",map {
         eval sprintf "\" \\N{U+%04X}\"",$_} (0x263A..0x2650);
-print "         unicode_str:$unicode_str\n";
 
+die "Expected initial Vis::Maxwidth to be undef" if defined $Vis::Maxwidth;
+if (Vis::_unix_compatible_os()) {
+  # We can't test auto-detection of terminal size because that will vary.
+  # However we can test the default width when there is no tty.
+  my $pid = fork();
+  if ($pid==0) {
+    require POSIX;
+    die "bug" unless POSIX::setsid()==$$;
+    POSIX::close 0;
+    POSIX::close 1;
+    POSIX::close 2;
+    vis(123); 
+    exit( $Vis::Maxwidth==80 ? 0 : 1 );
+  }
+  waitpid($pid,0);
+  die "Vis::Maxwidth did not default to 80 with no tty" unless $? == 0;
+}
+$Vis::Maxwidth = 72;
+
+print "         unicode_str:$unicode_str\n";
 { my $s = Vis->vnew($unicode_str)->Useqq('utf8')->Dump;
   $s =~ s/^"(.*)"\z/$1/ or die "bug";
   print "Vis with Useqq(utf8):$s\n";
