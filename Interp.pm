@@ -1,5 +1,5 @@
 use strict; use warnings; use utf8;
-our $VERSION = sprintf "%d.%03d", q$Revision: 1.23 $ =~ /(\d+)/g; 
+our $VERSION = sprintf "%d.%03d", q$Revision: 1.24 $ =~ /(\d+)/g; 
 
 # Copyright © Jim Avera 2012.  Released into the Public Domain 
 # by the copyright owner.  (james_avera AT yahoo đøţ ¢ÔḾ) 
@@ -634,8 +634,6 @@ Additionally, B<< Vis->new >> provides the same API as Data::Dumper.
 
 =head2 Configuration Variables or Methods
 
-Note: The Configuration methods of Data::Dumper may also be used.
-
 =over 4
 
 =item $Vis::Maxwidth  I<or>  I<$OBJ>->Maxwidth(I<[NEWVAL]>) 
@@ -652,7 +650,7 @@ The Configuration Methods of Data::Dumper may be called on Vis objects.
 
 Changes to global variables should generally be localized, e.g.
 
- { local $Vis::Useqq = 0;
+ { local $Vis::Maxwidth = 100;
    ...code which uses vis() or avis()...
  }
 
