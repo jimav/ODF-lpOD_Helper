@@ -1,5 +1,5 @@
 use strict; use warnings; use utf8;
-our $VERSION = sprintf "%d.%03d", q$Revision: 1.21 $ =~ /(\d+)/g; 
+our $VERSION = sprintf "%d.%03d", q$Revision: 1.22 $ =~ /(\d+)/g; 
 
 # Copyright © Jim Avera 2012.  Released into the Public Domain 
 # by the copyright owner.  (james_avera AT yahoo đøţ ¢ÔḾ) 
@@ -875,6 +875,13 @@ print "         unicode_str:$unicode_str\n";
   warn "WARNING: Useqq('utf8') is broken in your Data::Dumper.\n"
     unless $s eq $unicode_str;
 }
+{
+  local $Data::Dumper::Useqq = 'utf8';
+  for my $ctor (qw(vnew anew snew dnew new)) {
+    die "Data::Dumper::Useqq value is not preserved by Vis->$ctor"
+      unless Vis->$ctor(["test"])->Useqq() eq 'utf8';
+  }
+}
 
 $_ = "GroupA.GroupB";
 /(.*)\W(.*)/p or die "nomatch"; # set $1 and $2
@@ -891,104 +898,18 @@ $_ = "GroupA.GroupB";
 
 sub tf($) { $_[0] ? "true" : "false" }
 sub u($)  { defined $_[0] ? $_[0] : "undef" }
-sub upd_Qs_for_Uqq($$) {
-  my ($qs,$uqq) = @_;
-  if ($uqq) {
-    $qs =~ s/^q\b/qq/; $qs =~ s/^'$/"/;
-  } else {
-    $qs =~ s/^qq/q/; $qs =~ s/^"$/'/;
-  }
-  return $qs;
-}
-
-sub test_qs($$;$) {
-  my ($obj,$qs,$uqq) = @_;
-  my $uqqstr = u($uqq);
-  my $exp_useqqTruth = ($qs =~ /^("|qq)/);
-  my $act_useqq = $obj->Useqq();
-  confess "Quotestyle $qs (uqq=$uqqstr) bug: Wrong Useqq.  Expecting boolean ",tf($exp_useqqTruth),", got ",tf($act_useqq),"\n"
-    unless !!$exp_useqqTruth == !!$act_useqq;
-  if ($qs =~ /^(?:"|qq..)(..*)/) {
-    my $exp_useqq = $1;  # string appended to Quotestyle arg
-    confess "Quotestyle $qs (uqq=$uqqstr) bug: Wrong Useqq.  Expecting $exp_useqq, got ",u($act_useqq),"\n"
-      unless $exp_useqq eq $act_useqq;
-  }
-  my $str = $obj->Dump;
-  my $ok;
-  given ($qs) {
-    $ok = $str =~ /^qq${1}.*${2}$/ when /^qq(.)(.)$/;
-    $ok = $str =~ /^q${1}.*${2}$/  when /^q(.)(.)$/;
-    $ok = $str =~ /^'.*'$/         when "'";
-    $ok = $str =~ /^".*"$/         when '"';
-    die "bug[$qs]($1)($2)";
-  }
-  confess "Quotestyle $qs (uqq=$uqqstr) bug: Wrong result:«$str»\n" unless $ok;
-  my $rev_qs;
-  given ($qs) {
-    when(/^qq/) { ($rev_qs = $qs) =~ s/^qq/q/; }
-    when(/^q/)  { ($rev_qs = $qs) =~ s/^q/qq/; }
-    when("'")   { $rev_qs = '"'; }
-    when('"')   { $rev_qs = "'"; }
-  }
-  $obj->Quotestyle($rev_qs);
-  $act_useqq = $obj->Useqq();
-  confess "Quotestyle $qs (uqq=$uqqstr) bug: Setting reverse Quotestyle ($rev_qs) produces wrong Useqq:\n"
-     ."Expecting ",tf(! $exp_useqqTruth),", got ",tf($act_useqq),"\n"
-    unless tf(! $exp_useqqTruth) eq tf($act_useqq);
-}
-my $default_qs = $Vis::Quotestyle;
-for my $qs (qw{ ' " q{} q() qq// qq() }, 'qq!#') {
-  for my $uqq (0,$undef_as_false,1,'utf8') {
-    { local $Vis::Quotestyle = $qs;
-      local $Vis::Useqq = $uqq if defined $uqq;
-      my $obj = Vis->vnew("test string");
-      # $Vis::Useqq can not be usefully set to undef (unlike with the method)
-      my $eff_qs = (defined $uqq ? upd_Qs_for_Uqq($qs, $uqq) : $qs);
-      test_qs($obj, $eff_qs, $uqq);
-    }
-    if ($qs =~ /^("|qq)/ && $uqq) {
-      # Test appending special Useqq value to Quotestyle argument
-      local $Vis::Quotestyle = $qs.$uqq;
-      my $obj = Vis->vnew("test string");
-      my $eff_qs = upd_Qs_for_Uqq($qs, $uqq);
-      test_qs($obj, $eff_qs, $uqq);
-    }
-    my $obj2 = Vis->vnew("test string");
-    test_qs($obj2, $default_qs);
-    my $g = Vis->vnew("test string")->Quotestyle($qs);
-    test_qs($g, $qs);
-
-    # Test Useqq() interaction with Quotestyle()
-    my $obj3 = Vis->vnew("test string")->Quotestyle($qs)->Useqq($uqq);
-    my $eff_qs = upd_Qs_for_Uqq($qs, $uqq);
-    test_qs($obj3, $eff_qs, $uqq);
-  }
-};
 
 sub doquoting($$) {
-  my ($input, $qs) = @_;
+  my ($input, $useqq) = @_;
   my $quoted = $input;
-  given($qs) {
-    when ("'") {
-      $quoted =~ s/([\\'])/\\$1/gs;
-      $quoted = "'${quoted}'";
-    }
-    when ('q()') {
-      $quoted =~ s/([\\()])/\\$1/gs;
-      $quoted = "q(${quoted})";
-    }
-    when ('"') {
-      $quoted =~ s/([\$\@"\\])/\\$1/gs;
-      $quoted =~ s/\n/\\n/gs;
-      $quoted =~ s/\t/\\t/gs;
-      $quoted = "\"${quoted}\"";
-    }
-    when ('qq()') {
-      $quoted =~ s/([\$\@\\()])/\\$1/gs;
-      $quoted =~ s/\n/\\n/gs;
-      $quoted =~ s/\t/\\t/gs;
-      $quoted = "qq(${quoted})";
-    }
+  if ($useqq) {
+    $quoted =~ s/([\$\@"\\])/\\$1/gs;
+    $quoted =~ s/\n/\\n/gs;
+    $quoted =~ s/\t/\\t/gs;
+    $quoted = "\"${quoted}\"";
+  } else {
+    $quoted =~ s/([\\'])/\\$1/gs;
+    $quoted = "'${quoted}'";
   }
   return $quoted;
 }
@@ -1119,7 +1040,7 @@ sub f {
       die "Bad test string:$dvis_input\nPerl can't interpolate it: $@" if $@;
     }
 
-    # For some reason we can't catch exceptions from inside dvis
+    # For some reason we can't catch exceptions from inside package DB (dvis)
     # (undef is returned but $@ is not set!)
     my $actual = dvis $dvis_input;
     confess "\ndvis test failed: input «${dvis_input}»\n"
@@ -1127,12 +1048,12 @@ sub f {
          ."Got:\n${actual}«end»\n"
     unless $expected eq $actual;
 
-    # Check Quotestyle options
-    for my $qs (qw{ ' " q() qq() }) {
+    # Check Useqq 
+    for my $useqq (0, 1) {
       my $input = $expected.$dvis_input.'qqq@_(\(\))){\{\}\""'."'"; # gnarly
-      my $exp = doquoting($input, $qs);
-      my $act =  Vis->vnew($input)->Quotestyle($qs)->Dump;
-      die "\n\nQuotestyle $qs bug:\n"
+      my $exp = doquoting($input, $useqq);
+      my $act =  Vis->vnew($input)->Useqq($useqq)->Dump;
+      die "\n\nUseqq ",u($useqq)," bug:\n"
          ."   Input   «${input}»\n"
          ."  Expected «${exp}»\n"
          ."       Got «${act}»\n"
