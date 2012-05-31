@@ -1,5 +1,5 @@
 use strict; use warnings; use utf8;
-our $VERSION = sprintf "%d.%03d", q$Revision: 1.24 $ =~ /(\d+)/g; 
+our $VERSION = sprintf "%d.%03d", q$Revision: 1.25 $ =~ /(\d+)/g; 
 
 # Copyright © Jim Avera 2012.  Released into the Public Domain 
 # by the copyright owner.  (james_avera AT yahoo đøţ ¢ÔḾ) 
@@ -166,7 +166,7 @@ sub Maxwidth {
   @_ >= 2 ? (($s->{Maxwidth} = $v), return $s) : $s->{Maxwidth};
 }
 
-my $qstr_re = qr{ " ( [^"\\]++ | \\. ) " | ' ( [^'\\]++ | \\. ) ' }x;
+my $qstr_re = qr{ " (?: [^"\\]++ | \\. ) " | ' (?: [^'\\]++ | \\. ) ' }x;
 my $key_re  = qr{ \w+ | $qstr_re }x;
 
 sub Dump {
@@ -361,7 +361,7 @@ sub Vis_DB_DumpInterpolate {
   my $debug = $self->{VisDebug};
   my $display_mode = $self->{VisType} eq 'd';
 
-  state $expr_re = qr{ 
+  state $interior_re = qr{ 
     (
         [^"'{}()\[\]]+
       | $qstr_re
@@ -371,17 +371,17 @@ sub Vis_DB_DumpInterpolate {
     )*
   }x;
   state $scalar_index_re = qr{ 
-    ( (?:->)? (?: \{ $expr_re \} | \[ $expr_re \] ) )+ 
+    ( (?:->)? (?: \{ $interior_re \} | \[ $interior_re \] ) )+ 
   }x;
   state $slice_re = qr{ 
-    (?: \{ $expr_re \} | \[ $expr_re \] ) 
+    (?: \{ $interior_re \} | \[ $interior_re \] ) 
   }x;
   state $variable_re = qr/   # sigl could be $ or @
       \#?\w+(?:::\w+)*   # @name $pkg::name $#name $1
     | \#?\$\w+(?:::\w+)* # $$ref $#$ref
     | \^\w               # $^N   (control-character 'punctuation' variable)
     | [^\w\s\{\$]        # $^ $? (regular 'punctuation' variable)
-    | \{ $expr_re \}     # ${ref expression} or ${^SPECIALNAME}
+    | \{ $interior_re \} # ${ref expression} or ${^SPECIALNAME}
   /x;
 
   my @actions;
@@ -391,7 +391,7 @@ sub Vis_DB_DumpInterpolate {
     local $_ = join "", $self->Values();
     while (1) {
       if (
-        # Sigh.  \G does not work with (?|...) in Perl 5.12.4
+        # \G does not work with (?|...) in Perl 5.12.4
         # https://rt.perl.org/rt3//Public/Bug/Display.html?id=112894
 
         # $name $name[expr] $name->{expr} ${refexpr}->[expr] etc.
@@ -746,7 +746,7 @@ $. = 1234;
 $ENV{EnvVar} = "Test EnvVar Value";
 
 my %toplex_h = (A=>111,"B B"=>222,C=>{d=>888,e=>999},D=>{});
-my @toplex_a = (0,1,2,\%toplex_h,[],[0..9]);
+my @toplex_a = (0,1,"C",\%toplex_h,[],[0..9]);
 my $toplex_ar = \@toplex_a;
 my $toplex_hr = \%toplex_h;
 
@@ -765,11 +765,11 @@ our @localized_a = ("should never be seen");
 our $localized_ar = \@localized_a;
 our $localized_hr = \%localized_h;
 
-package Some::Other::Package;
-our %otherpack_h = %main::global_h;
-our @otherpack_a = @main::global_a;
-our $otherpack_ar = \@otherpack_a;
-our $otherpack_hr = \%otherpack_h;
+package A::B::C;
+our %ABC_h = %main::global_h;
+our @ABC_a = @main::global_a;
+our $ABC_ar = \@ABC_a;
+our $ABC_hr = \%ABC_h;
 
 package main;
 
@@ -899,7 +899,7 @@ sub f {
     [ q($ENV{EnvVar}\n), qq(\$ENV{EnvVar}=\"Test EnvVar Value\"\n) ],
     [ q($ENV{$EnvVarName}\n), qq(\$ENV{\$EnvVarName}=\"Test EnvVar Value\"\n) ],
     [ q($@\n), qq(\$\@=\"FAKE DEATH\\n\"\n) ],
-    [ q(@_\n), qq(\@_=( 42, [ 0, 1, 2, { A => 111, "B B" => 222,\n      C => {d => 888, e => 999}, D => {}\n    },\n    [], [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]\n  ]\n)\n) ],
+    [ q(@_\n), qq(\@_=( 42, [ 0, 1, "C", { A => 111, "B B" => 222,\n      C => {d => 888, e => 999}, D => {}\n    },\n    [], [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]\n  ]\n)\n) ],
     [ q($#_\n), qq(\$#_=1\n) ],
 
     (map
@@ -912,7 +912,7 @@ sub f {
               qq(\%${dollar}${name}_h${r}=(A => 111, "B B" => 222, C => {d => 888, e => 999}, D => {})\n)
             ],
             [ qq(\@${dollar}${name}_a${r}\\n),
-              qq(\@${dollar}${name}_a${r}=( 0, 1, 2, { A => 111, "B B" => 222, C => {d => 888, e => 999}, D => {}\n  },\n  [], [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]\n)\n)
+              qq(\@${dollar}${name}_a${r}=( 0, 1, "C", { A => 111, "B B" => 222,\n    C => {d => 888, e => 999}, D => {}\n  },\n  [], [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]\n)\n)
             ],
             [ qq(\$#${dollar}${name}_a${r}),    qq(\$#${dollar}${name}_a${r}=5)   ],
             [ qq(\$#${dollar}${name}_a${r}\\n), qq(\$#${dollar}${name}_a${r}=5\n) ],
@@ -941,6 +941,9 @@ sub f {
         map(
           { my ($dollar, $r, $arrow) = @$_;
             (
+            [ qq(\$${dollar}${name}_h${r}${arrow}{\$${name}_a[\$two]}{e}\\n),
+              qq(\$${dollar}${name}_h${r}${arrow}{\$${name}_a[\$two]}{e}=999\n)
+            ],
             [ qq(\$${dollar}${name}_a${r}${arrow}[3]{C}{e}\\n),
               qq(\$${dollar}${name}_a${r}${arrow}[3]{C}{e}=999\n)
             ],
@@ -956,8 +959,9 @@ sub f {
         ),
         )
       } 
-      qw( Some::Other::Package::otherpack
+      qw( 
           sublex toplex global subglobal maskedglobal localized
+          A::B::C::ABC
         ),
     )
   )
