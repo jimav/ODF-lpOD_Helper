@@ -1,5 +1,5 @@
 use strict; use warnings; use utf8;
-our $VERSION = sprintf "%d.%03d", q$Revision: 1.25 $ =~ /(\d+)/g; 
+our $VERSION = sprintf "%d.%03d", q$Revision: 1.26 $ =~ /(\d+)/g; 
 
 # Copyright © Jim Avera 2012.  Released into the Public Domain 
 # by the copyright owner.  (james_avera AT yahoo đøţ ¢ÔḾ) 
@@ -145,14 +145,13 @@ sub dnew {
 # Functionally compatible with Data::Dumper->new(), including final newline.
 # The differences include:
 #   * Condensed output format 
-#   * Defaults to Deepcopy(1)  
 #   * Defaults to Purity(1) 
 sub new {
   my $class = shift;
   bless($class->SUPER::new(@_), $class)
     ->_config_defaults()
     ->Terse(0)
-    ->Deepcopy(1)
+    ->Deepcopy(0)
     ->Purity(1)
     ;
 }
