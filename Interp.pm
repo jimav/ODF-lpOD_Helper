@@ -1,5 +1,5 @@
 use strict; use warnings; use utf8;
-our $VERSION = sprintf "%d.%03d", q$Revision: 1.26 $ =~ /(\d+)/g; 
+our $VERSION = sprintf "%d.%03d", q$Revision: 1.27 $ =~ /(\d+)/g; 
 
 # Copyright © Jim Avera 2012.  Released into the Public Domain 
 # by the copyright owner.  (james_avera AT yahoo đøţ ¢ÔḾ) 
@@ -15,17 +15,25 @@ use Carp;
 use feature qw(switch state);
 use POSIX qw(INT_MAX);
 sub debugvis($) 
-{chomp(my $s = Data::Dumper->new([shift])->Useqq('utf8')->Terse(1)->Indent(0)->Dump); $s;}
+{local $/="\n"; chomp(my $s = Data::Dumper->new([shift])->Useqq('utf8')->Terse(1)->Indent(0)->Dump); $s;}
 
 our @ISA       = qw(Exporter Data::Dumper);
 our @EXPORT    = qw(vis avis svis dvis Dumper qsh forceqsh);
-our @EXPORT_OK = ('u', '$Maxwidth', '$Debug');
+our @EXPORT_OK = qw(u $Maxwidth $Debug
+                    $Useqq $Quotekeys $Sortkeys $Terse  $Indent);
 
 # Used by non-oo functions, and initial settings for oo constructors.
-our ($Maxwidth, $Debug);
+our ($Maxwidth, $Debug, $Useqq, $Quotekeys, $Sortkeys, $Terse, $Indent);
 
-$Maxwidth   = undef   unless defined $Maxwidth; # undef to auto-detect terminal
-$Debug      = 0       unless defined $Debug;
+$Maxwidth   = undef       unless defined $Maxwidth; # undef to auto-detect tty width
+$Debug      = 0           unless defined $Debug;
+
+# The following Vis defaults override Data::Dumper defaults
+$Useqq      = 1           unless defined $Useqq;
+$Quotekeys  = 0           unless defined $Quotekeys;
+$Sortkeys   = \&_sortkeys unless defined $Sortkeys;
+$Terse      = 1           unless defined $Terse;
+$Indent     = 1           unless defined $Indent;
 
 # Functional (non-oo) APIs
 sub u(@)      { map { defined $_ ? $_ : "undef" } @_ }
@@ -79,7 +87,8 @@ sub _get_default_width() {
       ||
       (($r) = ((qx'stty -a'//"") =~ /.*; columns (\d+);/))
       ;
-      chomp $r if $r;
+      { local $/ = "\n"; chomp $r if $r; }
+      print "## Vis detected terminal width is ",u($r),"\n" if $Debug;
     }
   }
   # elsif(...) { ... }
@@ -99,11 +108,12 @@ sub _config_defaults {
   $Maxwidth = _get_default_width() if ! defined $Maxwidth;
 
   $self
-    ->Quotekeys(0)
-    ->Sortkeys(\&_sortkeys)
-    ->Terse(1)
-    ->Indent(1)
+    ->Quotekeys($Quotekeys)
+    ->Sortkeys($Sortkeys)
+    ->Terse($Terse)
+    ->Indent($Indent)
     ->Debug($Debug)
+    ->Useqq($Useqq)
     ->Maxwidth($Maxwidth);
 }
 
@@ -165,7 +175,7 @@ sub Maxwidth {
   @_ >= 2 ? (($s->{Maxwidth} = $v), return $s) : $s->{Maxwidth};
 }
 
-my $qstr_re = qr{ " (?: [^"\\]++ | \\. ) " | ' (?: [^'\\]++ | \\. ) ' }x;
+my $qstr_re = qr{ " (?: [^"\\]++ | \\. )* " | ' (?: [^'\\]++ | \\. )* ' }x;
 my $key_re  = qr{ \w+ | $qstr_re }x;
 
 sub Dump {
@@ -485,16 +495,18 @@ sub Vis_DB_DumpInterpolate {
       }
       print "### PLAIN «$text»\n" if $debug;
       { local $@;
-        chomp (my $value = eval qq{<<"ViSEoF"
+        my $value = eval qq{<<"ViSEoF"
 $text
 ViSEoF
-});
+};
         Carp::confess "Unexpected eval faulre ($text): $@" if $@;
+        $value =~ s/\n\z//;  # don't use chomp(): $/ may have been changed
         $result .= $value;  # plain text
       }
     } else {
       die "bug";
     }
+    print "### After act '$act' : result=«${result}»\n" if $Debug;
   }
   return $result;
 }
@@ -641,11 +653,26 @@ Sets or gets the maximum number of characters for formatted lines.
 If Maxwidth=0 then conensed output is disabled and aggregates are
 formatted as with Data::Dumper (but still sans final newline).
 
-=item Data::Dumper Configuration methods
+=back
 
-The Configuration Methods of Data::Dumper may be called on Vis objects.
+The following Configuration Methods have the same meaning as in Data::Dumper
+
+=over 4
+
+=item $Vis::Useqq  I<or>  I<$OBJ>->Useqq(I<[NEWVAL]>) 
+
+=item $Vis::Quotekeys  I<or>  I<$OBJ>->Quotekeys(I<[NEWVAL]>) 
+
+=item $Vis::Sortkeys  I<or>  I<$OBJ>->Sortkeys(I<[NEWVAL]>) 
+
+=item $Vis::Terse  I<or>  I<$OBJ>->Terse(I<[NEWVAL]>) 
+
+=item $Vis::Indent  I<or>  I<$OBJ>->Indent(I<[NEWVAL]>) 
 
 =back
+
+Data::Dumper Configuration variables (or methods) other than the above
+may also be set.
 
 Changes to global variables should generally be localized, e.g.
 
@@ -710,9 +737,14 @@ use English qw( -no_match_vars );;
 #use lib "$ENV{HOME}/lib/perl";
 use Vis;
 
+sub tf($) { $_[0] ? "true" : "false" }
+sub u($)  { defined $_[0] ? $_[0] : "undef" }
+
 binmode STDOUT, 'utf8';
 binmode STDERR, 'utf8';
 select STDERR; $|=1; select STDOUT; $|=1;
+
+# ---------- Check stuff other than formatting or interpolation --------
 
 for my $varname (qw(PREMATCH MATCH POSTMATCH)) {
   $_ = "test"; /(\w+)/;
@@ -722,11 +754,66 @@ for my $varname (qw(PREMATCH MATCH POSTMATCH)) {
   die "EVAL ERR: $@ " if $@;
 }
 
+my $byte_str = join "",map { chr $_ } 10..30;
+my $unicode_str = join "",map {
+        eval sprintf "\" \\N{U+%04X}\"",$_} (0x263A..0x2650);
+
+die "Expected initial Vis::Maxwidth to be undef" if defined $Vis::Maxwidth;
+if (Vis::_unix_compatible_os()) {
+  # We can't test auto-detection of terminal size because that will vary.
+  # However we can test the default width when there is no tty.
+  my $pid = fork();
+  if ($pid==0) {
+    require POSIX;
+    die "bug" unless POSIX::setsid()==$$;
+    POSIX::close 0;
+    POSIX::close 1;
+    POSIX::close 2;
+    vis(123); 
+    exit( $Vis::Maxwidth==80 ? 0 : 1 );
+  }
+  waitpid($pid,0);
+  die "Vis::Maxwidth did not default to 80 with no tty" unless $? == 0;
+}
+$Vis::Maxwidth = 72;
+
 my $undef_as_false = undef;
-if (! ref Data::Dumper->new([1])->Useqq(undef)) {
+if (! ref Vis->new([1])->Useqq(undef)) {
   warn "WARNING: Your Data::Dumper has not been fixed to accept undef boolean args.\n";
   $undef_as_false = 0;
 }
+
+print "         unicode_str:$unicode_str\n";
+{ my $s = Vis->vnew($unicode_str)->Useqq('utf8')->Dump;
+  $s =~ s/^"(.*)"\z/$1/ or die "bug";
+  print "Vis with Useqq(utf8):$s\n";
+  warn "WARNING: Useqq('utf8') is broken in your Data::Dumper.\n"
+    unless $s eq $unicode_str;
+}
+foreach ( ['Quotekeys',0,1],
+          ['Sortkeys',0,1,sub{return sort keys %{shift @_}}],
+          ['Terse',0,1],
+          ['Indent',0,1,2,3],
+          ['Useqq',0,1,'utf8'],
+          ['Maxwidth',0,1,80,9999],
+          ['Debug',undef,0,1],
+        )
+{
+  my ($name, @values) = @$_;
+  foreach my $value (@values) {
+    foreach my $ctor (qw(vnew anew snew dnew)) {
+      my $v = eval "{ local \$Vis::$name = \$value;
+                      Vis->\$ctor([\"test\"])->$name();
+                    }";
+      die "bug:$@ " if $@;
+      die "Vis::$name value is not preserved by Vis->$ctor\n",
+          "(Set \$Vis::$name = ",u($value)," but $name() returned ",u($v),")\n"
+       unless (! defined $v && ! defined $value) || ($v eq $value);
+    }
+  }
+}
+
+# ---------- Check formatting or interpolation --------
 
 sub check($$$) {
   my ($code, $expected, $actual) = @_;
@@ -744,7 +831,7 @@ sub check($$$) {
 $. = 1234;
 $ENV{EnvVar} = "Test EnvVar Value";
 
-my %toplex_h = (A=>111,"B B"=>222,C=>{d=>888,e=>999},D=>{});
+my %toplex_h = ("" => "Emp", A=>111,"B B"=>222,C=>{d=>888,e=>999},D=>{});
 my @toplex_a = (0,1,"C",\%toplex_h,[],[0..9]);
 my $toplex_ar = \@toplex_a;
 my $toplex_hr = \%toplex_h;
@@ -772,44 +859,6 @@ our $ABC_hr = \%ABC_h;
 
 package main;
 
-my $byte_str = join "",map { chr $_ } 10..30;
-my $unicode_str = join "",map {
-        eval sprintf "\" \\N{U+%04X}\"",$_} (0x263A..0x2650);
-
-die "Expected initial Vis::Maxwidth to be undef" if defined $Vis::Maxwidth;
-if (Vis::_unix_compatible_os()) {
-  # We can't test auto-detection of terminal size because that will vary.
-  # However we can test the default width when there is no tty.
-  my $pid = fork();
-  if ($pid==0) {
-    require POSIX;
-    die "bug" unless POSIX::setsid()==$$;
-    POSIX::close 0;
-    POSIX::close 1;
-    POSIX::close 2;
-    vis(123); 
-    exit( $Vis::Maxwidth==80 ? 0 : 1 );
-  }
-  waitpid($pid,0);
-  die "Vis::Maxwidth did not default to 80 with no tty" unless $? == 0;
-}
-$Vis::Maxwidth = 72;
-
-print "         unicode_str:$unicode_str\n";
-{ my $s = Vis->vnew($unicode_str)->Useqq('utf8')->Dump;
-  $s =~ s/^"(.*)"\z/$1/ or die "bug";
-  print "Vis with Useqq(utf8):$s\n";
-  warn "WARNING: Useqq('utf8') is broken in your Data::Dumper.\n"
-    unless $s eq $unicode_str;
-}
-{
-  local $Data::Dumper::Useqq = 'utf8';
-  for my $ctor (qw(vnew anew snew dnew new)) {
-    die "Data::Dumper::Useqq value is not preserved by Vis->$ctor"
-      unless Vis->$ctor(["test"])->Useqq() eq 'utf8';
-  }
-}
-
 $_ = "GroupA.GroupB";
 /(.*)\W(.*)/p or die "nomatch"; # set $1 and $2
 
@@ -822,9 +871,6 @@ $_ = "GroupA.GroupB";
 { my $code = 'dvis(q($_ con),q(caten),q(ated\n))';
   check $code, "\$_=\"${_}\" concatenated\n", eval $code;
 }
-
-sub tf($) { $_[0] ? "true" : "false" }
-sub u($)  { defined $_[0] ? $_[0] : "undef" }
 
 sub doquoting($$) {
   my ($input, $useqq) = @_;
@@ -898,71 +944,70 @@ sub f {
     [ q($ENV{EnvVar}\n), qq(\$ENV{EnvVar}=\"Test EnvVar Value\"\n) ],
     [ q($ENV{$EnvVarName}\n), qq(\$ENV{\$EnvVarName}=\"Test EnvVar Value\"\n) ],
     [ q($@\n), qq(\$\@=\"FAKE DEATH\\n\"\n) ],
-    [ q(@_\n), qq(\@_=( 42, [ 0, 1, "C", { A => 111, "B B" => 222,\n      C => {d => 888, e => 999}, D => {}\n    },\n    [], [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]\n  ]\n)\n) ],
+    [ q(@_\n), qq(\@_=( 42, [ 0, 1, "C", { "" => "Emp", A => 111, "B B" => 222,\n      C => {d => 888, e => 999}, D => {}\n    },\n    [], [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]\n  ]\n)\n) ],
     [ q($#_\n), qq(\$#_=1\n) ],
-
-    (map
-      { my $name = $_;
-        (
-        map(
-          { my ($dollar, $r) = @$_;
-            (
-            [ qq(%${dollar}${name}_h${r}\\n),
-              qq(\%${dollar}${name}_h${r}=(A => 111, "B B" => 222, C => {d => 888, e => 999}, D => {})\n)
-            ],
-            [ qq(\@${dollar}${name}_a${r}\\n),
-              qq(\@${dollar}${name}_a${r}=( 0, 1, "C", { A => 111, "B B" => 222,\n    C => {d => 888, e => 999}, D => {}\n  },\n  [], [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]\n)\n)
-            ],
-            [ qq(\$#${dollar}${name}_a${r}),    qq(\$#${dollar}${name}_a${r}=5)   ],
-            [ qq(\$#${dollar}${name}_a${r}\\n), qq(\$#${dollar}${name}_a${r}=5\n) ],
-            [ qq(\$${dollar}${name}_a${r}[3]{C}{e}\\n),
-              qq(\$${dollar}${name}_a${r}[3]{C}{e}=999\n)
-            ],
-            [ qq(\$${dollar}${name}_a${r}[3]->{C}{e}\\n),
-              qq(\$${dollar}${name}_a${r}[3]->{C}{e}=999\n)
-            ],
-            [ qq(\$${dollar}${name}_a${r}[3]{C}->{e}\\n),
-              qq(\$${dollar}${name}_a${r}[3]{C}->{e}=999\n)
-            ],
-            [ qq(\$${dollar}${name}_a${r}[3]->{C}->{e}\\n),
-              qq(\$${dollar}${name}_a${r}[3]->{C}->{e}=999\n)
-            ],
-            [ qq(\@${dollar}${name}_a${r}[\$zero,\$one]\\n),
-              qq(\@${dollar}${name}_a${r}[\$zero,\$one]=(0, 1)\n)
-            ],
-            [ qq(\@${dollar}${name}_h${r}{'A',"B B"}\\n),
-              qq(\@${dollar}${name}_h${r}{'A',"B B"}=(111, 222)\n)
-            ],
-            )
-          }
-          (['',''], ['$','r'])
-        ),
-        map(
-          { my ($dollar, $r, $arrow) = @$_;
-            (
-            [ qq(\$${dollar}${name}_h${r}${arrow}{\$${name}_a[\$two]}{e}\\n),
-              qq(\$${dollar}${name}_h${r}${arrow}{\$${name}_a[\$two]}{e}=999\n)
-            ],
-            [ qq(\$${dollar}${name}_a${r}${arrow}[3]{C}{e}\\n),
-              qq(\$${dollar}${name}_a${r}${arrow}[3]{C}{e}=999\n)
-            ],
-            [ qq(\$${dollar}${name}_a${r}${arrow}[3]{C}->{e}\\n),
-              qq(\$${dollar}${name}_a${r}${arrow}[3]{C}->{e}=999\n)
-            ],
-            [ qq(\$${dollar}${name}_h${r}${arrow}{A}\\n),
-              qq(\$${dollar}${name}_h${r}${arrow}{A}=111\n)
-            ],
-            )
-          }
-          (['$','r',''], ['','r','->'])
-        ),
-        )
-      } 
-      qw( 
-          sublex toplex global subglobal maskedglobal localized
-          A::B::C::ABC
-        ),
-    )
+    map({ 
+      my ($LQ,$RQ) = (/^(.*)(.)$/) or die "bug";
+      map({ 
+        my $name = $_;
+        map({ 
+          my ($dollar, $r) = @$_;
+          [ qq(%${dollar}${name}_h${r}\\n),
+            qq(\%${dollar}${name}_h${r}=( "" => "Emp", A => 111, "B B" => 222,\n  C => {d => 888, e => 999}, D => {}\n)\n)
+          ],
+          [ qq(\@${dollar}${name}_a${r}\\n),
+            qq(\@${dollar}${name}_a${r}=( 0, 1, "C", { "" => "Emp", A => 111, "B B" => 222,\n    C => {d => 888, e => 999}, D => {}\n  },\n  [], [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]\n)\n)
+          ],
+          [ qq(\$#${dollar}${name}_a${r}),    qq(\$#${dollar}${name}_a${r}=5)   ],
+          [ qq(\$#${dollar}${name}_a${r}\\n), qq(\$#${dollar}${name}_a${r}=5\n) ],
+          [ qq(\$${dollar}${name}_a${r}[3]{C}{e}\\n),
+            qq(\$${dollar}${name}_a${r}[3]{C}{e}=999\n)
+          ],
+          [ qq(\$${dollar}${name}_a${r}[3]{C}{e}\\n),
+            qq(\$${dollar}${name}_a${r}[3]{C}{e}=999\n)
+          ],
+          [ qq(\$${dollar}${name}_a${r}[3]->{A}\\n),
+            qq(\$${dollar}${name}_a${r}[3]->{A}=111\n)
+          ],
+          [ qq(\$${dollar}${name}_a${r}[3]->{$LQ$RQ}\\n),
+            qq(\$${dollar}${name}_a${r}[3]->{$LQ$RQ}="Emp"\n)
+          ],
+          [ qq(\$${dollar}${name}_a${r}[3]{C}->{e}\\n),
+            qq(\$${dollar}${name}_a${r}[3]{C}->{e}=999\n)
+          ],
+          [ qq(\$${dollar}${name}_a${r}[3]->{C}->{e}\\n),
+            qq(\$${dollar}${name}_a${r}[3]->{C}->{e}=999\n)
+          ],
+          [ qq(\@${dollar}${name}_a${r}[\$zero,\$one]\\n),
+            qq(\@${dollar}${name}_a${r}[\$zero,\$one]=(0, 1)\n)
+          ],
+          [ qq(\@${dollar}${name}_h${r}{${LQ}A${RQ},${LQ}B B${RQ}}\\n),
+            qq(\@${dollar}${name}_h${r}{${LQ}A${RQ},${LQ}B B${RQ}}=(111, 222)\n)
+          ],
+        } (['',''], ['$','r'])
+        ), #map [$dollar,$r]
+        map({ 
+          my ($dollar, $r, $arrow) = @$_;
+          [ qq(\$${dollar}${name}_h${r}${arrow}{\$${name}_a[\$two]}{e}\\n),
+            qq(\$${dollar}${name}_h${r}${arrow}{\$${name}_a[\$two]}{e}=999\n)
+          ],
+          [ qq(\$${dollar}${name}_a${r}${arrow}[3]{C}{e}\\n),
+            qq(\$${dollar}${name}_a${r}${arrow}[3]{C}{e}=999\n)
+          ],
+          [ qq(\$${dollar}${name}_a${r}${arrow}[3]{C}->{e}\\n),
+            qq(\$${dollar}${name}_a${r}${arrow}[3]{C}->{e}=999\n)
+          ],
+          [ qq(\$${dollar}${name}_h${r}${arrow}{A}\\n),
+            qq(\$${dollar}${name}_h${r}${arrow}{A}=111\n)
+          ],
+        } (['$','r',''], ['','r','->'])
+        ), #map [$dollar,$r,$arrow]
+        }
+        qw(sublex toplex global subglobal maskedglobal localized
+           A::B::C::ABC)
+      ), #map $name
+      } ('""', "''")
+    ), #map ($LQ,$RQ)
   )
   {
     my ($dvis_input, $expected) = @$test;
