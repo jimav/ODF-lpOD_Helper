@@ -1,5 +1,5 @@
 use strict; use warnings; use utf8;
-our $VERSION = sprintf "%d.%03d", q$Revision: 1.27 $ =~ /(\d+)/g; 
+our $VERSION = sprintf "%d.%03d", q$Revision: 1.28 $ =~ /(\d+)/g; 
 
 # Copyright © Jim Avera 2012.  Released into the Public Domain 
 # by the copyright owner.  (james_avera AT yahoo đøţ ¢ÔḾ) 
@@ -36,7 +36,12 @@ $Terse      = 1           unless defined $Terse;
 $Indent     = 1           unless defined $Indent;
 
 # Functional (non-oo) APIs
-sub u(@)      { map { defined $_ ? $_ : "undef" } @_ }
+sub u(@);
+sub u(@)      { @_ == 1 
+                  ? defined($_[0]) ? $_[0] : "undef"
+                  : (map { u($_) } @_)
+              }
+#sub u($)      { defined($_[0]) ? $_[0] : "undef" }
 sub vis(@)    { return __PACKAGE__->vnew(@_)->Dump; }
 sub avis(@)   { return __PACKAGE__->anew(@_)->Dump; }
 sub svis(@)   { @_ = (__PACKAGE__->snew(@_)); goto &DB::Vis_DB_DumpInterpolate }
@@ -389,7 +394,7 @@ sub Vis_DB_DumpInterpolate {
       \#?\w+(?:::\w+)*   # @name $pkg::name $#name $1
     | \#?\$\w+(?:::\w+)* # $$ref $#$ref
     | \^\w               # $^N   (control-character 'punctuation' variable)
-    | [^\w\s\{\$]        # $^ $? (regular 'punctuation' variable)
+    | \#?[^\w\s\{\$]     # $#- $^ $? (regular 'punctuation' variable)
     | \{ $interior_re \} # ${ref expression} or ${^SPECIALNAME}
   /x;
 
@@ -397,7 +402,7 @@ sub Vis_DB_DumpInterpolate {
   {
     # Localize $_ while running regexprs to preserve the caller's $1 etc.
     # N.B. The evals are executed after $_ is restored.
-    local $_ = join "", $self->Values();
+    local $_ = join "", map {defined($_) ? $_ : '<undef arg>'} $self->Values();
     while (1) {
       if (
         # \G does not work with (?|...) in Perl 5.12.4
@@ -871,6 +876,10 @@ $_ = "GroupA.GroupB";
 { my $code = 'dvis(q($_ con),q(caten),q(ated\n))';
   check $code, "\$_=\"${_}\" concatenated\n", eval $code;
 }
+{ my $code = 'avis(undef)'; check $code, "(undef)", eval $code; }
+{ my $code = 'vis(undef)'; check $code, "undef", eval $code; }
+{ my $code = 'svis("foo",undef)'; check $code, "foo<undef arg>", eval $code; }
+{ my $code = 'dvis("foo",undef)'; check $code, "foo<undef arg>", eval $code; }
 
 sub doquoting($$) {
   my ($input, $useqq) = @_;
@@ -933,8 +942,8 @@ sub f {
     [ q($[\n), qq(\$[=0\n) ],
     [ q($^N\n), qq(\$^N=\"GroupB\"\n) ],
     [ q($+\n), qq(\$+=\"GroupB\"\n) ],
-    [ q(@+\n), qq(\@+=(13, 6, 13)\n) ],
-    [ q(@-\n), qq(\@-=(0, 0, 7)\n) ],
+    [ q(@+ $#+\n), qq(\@+=(13, 6, 13) \$#+=2\n) ],
+    [ q(@- $#-\n), qq(\@-=(0, 0, 7) \$#-=2\n) ],
     [ q($;\n), qq(\$;=\"\\34\"\n) ],
     [ q($1\n), qq(\$1=\"GroupA\"\n) ],
     [ q($2\n), qq(\$2=\"GroupB\"\n) ],
