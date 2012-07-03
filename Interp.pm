@@ -1,5 +1,5 @@
 use strict; use warnings; use utf8;
-our $VERSION = sprintf "%d.%03d", q$Revision: 1.28 $ =~ /(\d+)/g; 
+our $VERSION = sprintf "%d.%03d", q$Revision: 1.29 $ =~ /(\d+)/g; 
 
 # Copyright © Jim Avera 2012.  Released into the Public Domain 
 # by the copyright owner.  (james_avera AT yahoo đøţ ¢ÔḾ) 
@@ -19,8 +19,8 @@ sub debugvis($)
 
 our @ISA       = qw(Exporter Data::Dumper);
 our @EXPORT    = qw(vis avis svis dvis Dumper qsh forceqsh);
-our @EXPORT_OK = qw(u $Maxwidth $Debug
-                    $Useqq $Quotekeys $Sortkeys $Terse  $Indent);
+our @EXPORT_OK = qw(u 
+                    $Maxwidth $Debug $Useqq $Quotekeys $Sortkeys $Terse $Indent);
 
 # Used by non-oo functions, and initial settings for oo constructors.
 our ($Maxwidth, $Debug, $Useqq, $Quotekeys, $Sortkeys, $Terse, $Indent);
@@ -476,7 +476,11 @@ sub Vis_DB_DumpInterpolate {
             if $@ =~ s/ at \(eval.*//;
         }
         #my $prefix = $display_mode ? ($sigl eq '$' ? "":$sigl)."$rhs=" : "";
-        my $prefix = $display_mode ? "$sigl$rhs=" : "";
+        # Don't show initial $ if it's a non-special scalar variable name
+        my $prefix = ($display_mode 
+                       ? (($sigl eq '$' && $rhs =~ /^[A-Za-z]/) ? "" : $sigl).$rhs."="
+                       : ""
+                     );
         if ($sigl eq '$') {
           $self->Reset()->Values([$items[0]])->{VisType} = 'v';
         }
@@ -543,6 +547,7 @@ Vis - Improve Data::Dumper to format arbitrary Perl data in messages
   print Dumper($href);                      # Data::Dumper API
   print Vis->new([$href],['$href'])->Dump;  # Data::Dumper API
 
+  use Vis qw(u);
   $value = undef;
   print "Value is ",u($value),"\n";
 
@@ -623,8 +628,8 @@ C<svis> interpolates C<< %name >> into S<<< C<< (key => value ...) >> >>>
 ('d' is for 'debug display').  C<dvis> is identical to C<svis>
 except that interpolated expressions are prefixed by
 the name of the variable (or the expression).  
-For example, S<dvis('$foo $i $ary[$i]\n')> 
-yields S<< "$foo=<value> $i=<value> $ary[$i]=<value><newline>". >>
+For example, S<dvis('$foo $i $ary[$i] @ary %hash\n')> 
+yields S<< "foo=<value> i=<value> ary[i]=<value> @ary=(<value>,...) %hash=(<key> => <value>,...)<newline>". >>
 
 =head2 vis $item, ... 
 
@@ -688,7 +693,7 @@ Changes to global variables should generally be localized, e.g.
 =head2 u $data, ...
 
 The argument(s) are returned unchanged, except that undefined argument(s)
-are replaced by the string "undef".
+are replaced by the string "undef".  Refs are not stringified.
 C<u()> is not exported by default.
 
 =head2 qsh 
@@ -924,13 +929,13 @@ sub f {
 
   for my $test (
     [ q(aaa\\\\bbb), q(aaa\bbb) ],
-    [ q($unicode_str\n), qq(\$unicode_str=\" \\x{263a} \\x{263b} \\x{263c} \\x{263d} \\x{263e} \\x{263f} \\x{2640} \\x{2641} \\x{2642} \\x{2643} \\x{2644} \\x{2645} \\x{2646} \\x{2647} \\x{2648} \\x{2649} \\x{264a} \\x{264b} \\x{264c} \\x{264d} \\x{264e} \\x{264f} \\x{2650}\"\n) ],
-    [ q($byte_str\n), qq(\$byte_str=\"\\n\\13\\f\\r\\16\\17\\20\\21\\22\\23\\24\\25\\26\\27\\30\\31\\32\\e\\34\\35\\36\"\n) ],
+    [ q($unicode_str\n), qq(unicode_str=\" \\x{263a} \\x{263b} \\x{263c} \\x{263d} \\x{263e} \\x{263f} \\x{2640} \\x{2641} \\x{2642} \\x{2643} \\x{2644} \\x{2645} \\x{2646} \\x{2647} \\x{2648} \\x{2649} \\x{264a} \\x{264b} \\x{264c} \\x{264d} \\x{264e} \\x{264f} \\x{2650}\"\n) ],
+    [ q($byte_str\n), qq(byte_str=\"\\n\\13\\f\\r\\16\\17\\20\\21\\22\\23\\24\\25\\26\\27\\30\\31\\32\\e\\34\\35\\36\"\n) ],
     [ q($_\n), qq(\$_=\"GroupA.GroupB\"\n) ],
-    [ q($flex\n), qq(\$flex=\"Lexical in sub f\"\n) ],
+    [ q($flex\n), qq(flex=\"Lexical in sub f\"\n) ],
     [ q($$flex_ref\n), qq(\$\$flex_ref=\"Lexical in sub f\"\n) ],
     [ q($.\n), qq(\$.=1234\n) ],
-    [ q($NR\n), qq(\$NR=1234\n) ],
+    [ q($NR\n), qq(NR=1234\n) ],
     [ q($/\n), qq(\$/=\"\\n\"\n) ],
     [ q($\\\n), qq(\$\\=undef\n) ],
     [ q($"\n), qq(\$\"=\" \"\n) ],
@@ -950,17 +955,18 @@ sub f {
     [ q($3\n), qq(\$3=undef\n) ],
     [ q(${^MATCH}\n), qq(\${^MATCH}=\"GroupA.GroupB\"\n) ],
     [ q(@ARGV\n), qq(\@ARGV=(\"fake\", \"argv\")\n) ],
-    [ q($ENV{EnvVar}\n), qq(\$ENV{EnvVar}=\"Test EnvVar Value\"\n) ],
-    [ q($ENV{$EnvVarName}\n), qq(\$ENV{\$EnvVarName}=\"Test EnvVar Value\"\n) ],
+    [ q($ENV{EnvVar}\n), qq(ENV{EnvVar}=\"Test EnvVar Value\"\n) ],
+    [ q($ENV{$EnvVarName}\n), qq(ENV{\$EnvVarName}=\"Test EnvVar Value\"\n) ],
     [ q($@\n), qq(\$\@=\"FAKE DEATH\\n\"\n) ],
     [ q(@_\n), qq(\@_=( 42, [ 0, 1, "C", { "" => "Emp", A => 111, "B B" => 222,\n      C => {d => 888, e => 999}, D => {}\n    },\n    [], [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]\n  ]\n)\n) ],
     [ q($#_\n), qq(\$#_=1\n) ],
-    map({ 
+    map({
       my ($LQ,$RQ) = (/^(.*)(.)$/) or die "bug";
       map({ 
         my $name = $_;
         map({ 
           my ($dollar, $r) = @$_;
+          my $dolname_scalar = ($dollar ? "\$$dollar" : "").$name;
           [ qq(%${dollar}${name}_h${r}\\n),
             qq(\%${dollar}${name}_h${r}=( "" => "Emp", A => 111, "B B" => 222,\n  C => {d => 888, e => 999}, D => {}\n)\n)
           ],
@@ -970,22 +976,22 @@ sub f {
           [ qq(\$#${dollar}${name}_a${r}),    qq(\$#${dollar}${name}_a${r}=5)   ],
           [ qq(\$#${dollar}${name}_a${r}\\n), qq(\$#${dollar}${name}_a${r}=5\n) ],
           [ qq(\$${dollar}${name}_a${r}[3]{C}{e}\\n),
-            qq(\$${dollar}${name}_a${r}[3]{C}{e}=999\n)
+            qq(${dolname_scalar}_a${r}[3]{C}{e}=999\n)
           ],
           [ qq(\$${dollar}${name}_a${r}[3]{C}{e}\\n),
-            qq(\$${dollar}${name}_a${r}[3]{C}{e}=999\n)
+            qq(${dolname_scalar}_a${r}[3]{C}{e}=999\n)
           ],
           [ qq(\$${dollar}${name}_a${r}[3]->{A}\\n),
-            qq(\$${dollar}${name}_a${r}[3]->{A}=111\n)
+            qq(${dolname_scalar}_a${r}[3]->{A}=111\n)
           ],
           [ qq(\$${dollar}${name}_a${r}[3]->{$LQ$RQ}\\n),
-            qq(\$${dollar}${name}_a${r}[3]->{$LQ$RQ}="Emp"\n)
+            qq(${dolname_scalar}_a${r}[3]->{$LQ$RQ}="Emp"\n)
           ],
           [ qq(\$${dollar}${name}_a${r}[3]{C}->{e}\\n),
-            qq(\$${dollar}${name}_a${r}[3]{C}->{e}=999\n)
+            qq(${dolname_scalar}_a${r}[3]{C}->{e}=999\n)
           ],
           [ qq(\$${dollar}${name}_a${r}[3]->{C}->{e}\\n),
-            qq(\$${dollar}${name}_a${r}[3]->{C}->{e}=999\n)
+            qq(${dolname_scalar}_a${r}[3]->{C}->{e}=999\n)
           ],
           [ qq(\@${dollar}${name}_a${r}[\$zero,\$one]\\n),
             qq(\@${dollar}${name}_a${r}[\$zero,\$one]=(0, 1)\n)
@@ -997,17 +1003,18 @@ sub f {
         ), #map [$dollar,$r]
         map({ 
           my ($dollar, $r, $arrow) = @$_;
+          my $dolname_scalar = ($dollar ? "\$$dollar" : "").$name;
           [ qq(\$${dollar}${name}_h${r}${arrow}{\$${name}_a[\$two]}{e}\\n),
-            qq(\$${dollar}${name}_h${r}${arrow}{\$${name}_a[\$two]}{e}=999\n)
+            qq(${dolname_scalar}_h${r}${arrow}{\$${name}_a[\$two]}{e}=999\n)
           ],
           [ qq(\$${dollar}${name}_a${r}${arrow}[3]{C}{e}\\n),
-            qq(\$${dollar}${name}_a${r}${arrow}[3]{C}{e}=999\n)
+            qq(${dolname_scalar}_a${r}${arrow}[3]{C}{e}=999\n)
           ],
           [ qq(\$${dollar}${name}_a${r}${arrow}[3]{C}->{e}\\n),
-            qq(\$${dollar}${name}_a${r}${arrow}[3]{C}->{e}=999\n)
+            qq(${dolname_scalar}_a${r}${arrow}[3]{C}->{e}=999\n)
           ],
           [ qq(\$${dollar}${name}_h${r}${arrow}{A}\\n),
-            qq(\$${dollar}${name}_h${r}${arrow}{A}=111\n)
+            qq(${dolname_scalar}_h${r}${arrow}{A}=111\n)
           ],
         } (['$','r',''], ['','r','->'])
         ), #map [$dollar,$r,$arrow]
