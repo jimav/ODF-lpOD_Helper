@@ -1,5 +1,5 @@
 use strict; use warnings; use utf8;
-our $VERSION = sprintf "%d.%03d", q$Revision: 1.29 $ =~ /(\d+)/g; 
+our $VERSION = sprintf "%d.%03d", q$Revision: 1.30 $ =~ /(\d+)/g; 
 
 # Copyright © Jim Avera 2012.  Released into the Public Domain 
 # by the copyright owner.  (james_avera AT yahoo đøţ ¢ÔḾ) 
@@ -206,8 +206,8 @@ sub Dump {
   # The "delimiter" is the whole (logical) line, including final newline,
   # which is returned because it is in a (capture group).
   my $split_re = $self->Useqq()
-                 ? qr/( (?: "(?: [^"]++ |\\" )*" | [^"\n]+ )* \n )/xo
-                 : qr/( (?: '(?: [^']++ |\\' )*' | [^'\n]+ )* \n )/xo ;
+                 ? qr/( (?: "(?: [^"]++ |\\" )*+" | [^"\n]++ )* \n )/xo
+                 : qr/( (?: '(?: [^']++ |\\' )*+' | [^'\n]++ )* \n )/xo ;
   my @lines = (grep {defined} split /$split_re/, $_);
 
   # Data::Dumper output with Indent(1) is very structured, with a 
