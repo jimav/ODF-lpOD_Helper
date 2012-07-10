@@ -1,5 +1,5 @@
 use strict; use warnings; use utf8;
-our $VERSION = sprintf "%d.%03d", q$Revision: 1.30 $ =~ /(\d+)/g; 
+our $VERSION = sprintf "%d.%03d", q$Revision: 1.31 $ =~ /(\d+)/g; 
 
 # Copyright © Jim Avera 2012.  Released into the Public Domain 
 # by the copyright owner.  (james_avera AT yahoo đøţ ¢ÔḾ) 
@@ -196,7 +196,7 @@ sub Dump {
 
   my $maxwidth = $self->{Maxwidth};
 
-  return $_ if $maxwidth == 0; # no condensation
+  #return $_ if $maxwidth == 0; # no condensation
 
   my $debug = $self->{VisDebug};
 
@@ -660,8 +660,8 @@ Additionally, B<< Vis->new >> provides the same API as Data::Dumper.
 =item $Vis::Maxwidth  I<or>  I<$OBJ>->Maxwidth(I<[NEWVAL]>) 
 
 Sets or gets the maximum number of characters for formatted lines.
-If Maxwidth=0 then conensed output is disabled and aggregates are
-formatted as with Data::Dumper (but still sans final newline).
+If Maxwidth=0 produces output similar to Data::Dumper 
+(but still sans final newline).
 
 =back
 
