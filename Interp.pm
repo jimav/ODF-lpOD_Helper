@@ -1,5 +1,5 @@
 use strict; use warnings; use utf8;
-our $VERSION = sprintf "%d.%03d", q$Revision: 1.31 $ =~ /(\d+)/g; 
+our $VERSION = sprintf "%d.%03d", q$Revision: 1.32 $ =~ /(\d+)/g; 
 
 # Copyright © Jim Avera 2012.  Released into the Public Domain 
 # by the copyright owner.  (james_avera AT yahoo đøţ ¢ÔḾ) 
@@ -18,7 +18,7 @@ sub debugvis($)
 {local $/="\n"; chomp(my $s = Data::Dumper->new([shift])->Useqq('utf8')->Terse(1)->Indent(0)->Dump); $s;}
 
 our @ISA       = qw(Exporter Data::Dumper);
-our @EXPORT    = qw(vis avis svis dvis Dumper qsh forceqsh);
+our @EXPORT    = qw(vis visq visqq avis svis dvis Dumper qsh forceqsh);
 our @EXPORT_OK = qw(u 
                     $Maxwidth $Debug $Useqq $Quotekeys $Sortkeys $Terse $Indent);
 
@@ -43,6 +43,8 @@ sub u(@)      { @_ == 1
               }
 #sub u($)      { defined($_[0]) ? $_[0] : "undef" }
 sub vis(@)    { return __PACKAGE__->vnew(@_)->Dump; }
+sub visqq(@)  { return __PACKAGE__->vnew(@_)->Useqq(1)->Dump; }
+sub visq(@)   { return __PACKAGE__->vnew(@_)->Useqq(0)->Dump; }
 sub avis(@)   { return __PACKAGE__->anew(@_)->Dump; }
 sub svis(@)   { @_ = (__PACKAGE__->snew(@_)); goto &DB::Vis_DB_DumpInterpolate }
 sub dvis(@)   { @_ = (__PACKAGE__->dnew(@_)); goto &DB::Vis_DB_DumpInterpolate }
@@ -330,7 +332,7 @@ sub forceqsh($) {
   # inside '...'.  Therefore the quoting has to be interrupted for any
   # embedded single-quotes so they can be contatenated as \' or "'"
   # 
-  # Vis with Useqq(0) will format ' and \ as \' and \\ respectively. 
+  # N.B. vis with Useqq(0) will format ' as \' and \ as \\
 
   local $_ = __PACKAGE__->vnew(shift)->Useqq(0)->Dump;
 
@@ -537,6 +539,7 @@ Vis - Improve Data::Dumper to format arbitrary Perl data in messages
   print svis 'href=$href\n hash=%hash\n ARGV=@ARGV\n'; # SINGLE quoted!
   print dvis 'Display of variables: $href %hash @ARGV\n'; 
   print "href=", vis($href), "\n";
+  print "href=", visq($href), "\n"; # show strings single-quoted 
   print "ARGV=", avis(@ARGV), "\n";
 
   print Vis->snew('href=$href\n')->Useqq(0)->Dump;
