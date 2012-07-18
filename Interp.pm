@@ -1,5 +1,5 @@
 use strict; use warnings; use utf8;
-our $VERSION = sprintf "%d.%03d", q$Revision: 1.32 $ =~ /(\d+)/g; 
+our $VERSION = sprintf "%d.%03d", q$Revision: 1.33 $ =~ /(\d+)/g;
 
 # Copyright © Jim Avera 2012.  Released into the Public Domain 
 # by the copyright owner.  (james_avera AT yahoo đøţ ¢ÔḾ) 
@@ -18,7 +18,9 @@ sub debugvis($)
 {local $/="\n"; chomp(my $s = Data::Dumper->new([shift])->Useqq('utf8')->Terse(1)->Indent(0)->Dump); $s;}
 
 our @ISA       = qw(Exporter Data::Dumper);
-our @EXPORT    = qw(vis visq visqq avis svis dvis Dumper qsh forceqsh);
+our @EXPORT    = qw(vis  avis  svis  dvis 
+                    visq avisq svisq dvisq
+                    Dumper qsh forceqsh qshpath);
 our @EXPORT_OK = qw(u 
                     $Maxwidth $Debug $Useqq $Quotekeys $Sortkeys $Terse $Indent);
 
@@ -43,11 +45,14 @@ sub u(@)      { @_ == 1
               }
 #sub u($)      { defined($_[0]) ? $_[0] : "undef" }
 sub vis(@)    { return __PACKAGE__->vnew(@_)->Dump; }
-sub visqq(@)  { return __PACKAGE__->vnew(@_)->Useqq(1)->Dump; }
-sub visq(@)   { return __PACKAGE__->vnew(@_)->Useqq(0)->Dump; }
 sub avis(@)   { return __PACKAGE__->anew(@_)->Dump; }
 sub svis(@)   { @_ = (__PACKAGE__->snew(@_)); goto &DB::Vis_DB_DumpInterpolate }
 sub dvis(@)   { @_ = (__PACKAGE__->dnew(@_)); goto &DB::Vis_DB_DumpInterpolate }
+
+sub visq(@)   { return __PACKAGE__->vnew(@_)->Useqq(0)->Dump; }
+sub avisq(@)  { return __PACKAGE__->anew(@_)->Useqq(0)->Dump; }
+sub svisq(@)  { @_ = (__PACKAGE__->snew(@_)->Useqq(0)); goto &DB::Vis_DB_DumpInterpolate }
+sub dvisq(@)   { @_ = (__PACKAGE__->dnew(@_)->Useqq(0)); goto &DB::Vis_DB_DumpInterpolate }
 
 # Provide Data::Dumper non-oo APIs 
 sub Dumper(@) { return __PACKAGE__->Dump([@_]); }
@@ -358,6 +363,22 @@ sub qsh(;@) {
        @_;
 }
 
+# Quote paths for shell: Like qsh but doesn't quote an initial ~ or ~username
+sub qshpath(;@) {
+  @_ = ($_) if @_==0;  # format $_ if no args
+  join " ",
+       map {
+         defined $_ 
+           ? do {
+               local $_ = $_;
+               my ($tilde_prefix, $rest) = /(^~[^\/\\]*\/?)?(.*)/;
+               $rest eq "" ? $tilde_prefix : ($tilde_prefix // "").qsh($rest);
+             }
+           : "undef";
+       }
+       @_;
+}
+
 package DB;
 
 # These are aliases for forced-globals, so we have to do this for them
@@ -539,8 +560,9 @@ Vis - Improve Data::Dumper to format arbitrary Perl data in messages
   print svis 'href=$href\n hash=%hash\n ARGV=@ARGV\n'; # SINGLE quoted!
   print dvis 'Display of variables: $href %hash @ARGV\n'; 
   print "href=", vis($href), "\n";
-  print "href=", visq($href), "\n"; # show strings single-quoted 
   print "ARGV=", avis(@ARGV), "\n";
+
+  print "href=", visq($href), "\n";  # show strings single-quoted 
 
   print Vis->snew('href=$href\n')->Useqq(0)->Dump;
   print Vis->dnew('$href\n')->Dump;
@@ -550,7 +572,7 @@ Vis - Improve Data::Dumper to format arbitrary Perl data in messages
   print Dumper($href);                      # Data::Dumper API
   print Vis->new([$href],['$href'])->Dump;  # Data::Dumper API
 
-  use Vis qw(u);
+  use Vis qw(u);  # or qw(:DEFAULT u);
   $value = undef;
   print "Value is ",u($value),"\n";
 
@@ -617,7 +639,7 @@ Variables and escapes in the string(s) are interpolated as
 in Perl double-quotish strings except that expression values 
 are formatted using C<vis()> or C<avis()> (for $ or @ expressions, 
 respectively).  
-String values appear 'quoted' and complex data structures are shown in full.
+String values appear "quoted" and complex data structures are shown in full.
 Multiple arguments are concatenated.
 
 The input string(s) should written SINGLE QUOTED so Perl will not 
@@ -630,7 +652,7 @@ C<svis> interpolates C<< %name >> into S<<< C<< (key => value ...) >> >>>
 
 ('d' is for 'debug display').  C<dvis> is identical to C<svis>
 except that interpolated expressions are prefixed by
-the name of the variable (or the expression).  
+the name of the variable or the expression.  
 For example, S<dvis('$foo $i $ary[$i] @ary %hash\n')> 
 yields S<< "foo=<value> i=<value> ary[i]=<value> @ary=(<value>,...) %hash=(<key> => <value>,...)<newline>". >>
 
@@ -643,8 +665,12 @@ separated by newlines.
 
 =head2 avis @array
 
-C<avis> formats an array or list in parenthesis: C<(arg1,arg2,arg3,...)>.
+Format an array or list in parenthesis: C<(arg1,arg2,arg3,...)>.
 This allows @arrays to be shown without taking a reference.
+
+=head2 svisq, dvisq, visq, and avisq
+
+These alternatives use 'single quotes' when formatting strings. 
 
 =head2 OO interfaces
 
@@ -654,7 +680,7 @@ B<< Vis->snew >>, B<< Vis->dnew >>, B<< Vis->vnew >> and B<< Vis->anew >>
 are constructors corresponding to the functions
 B<svis>, B<dvis>, B<vis> and B<avis>, respectively.  See SYNOPSIS above. 
 
-Additionally, B<< Vis->new >> provides the same API as Data::Dumper.
+Additionally, B<< Vis->new >> provides the same API as Data::Dumper->new.
 
 =head2 Configuration Variables or Methods
 
@@ -701,19 +727,23 @@ C<u()> is not exported by default.
 
 =head2 qsh 
 
-=head2 qsh $data, ...
+=head2 qsh $word, ...
 
-The data items ($_ by default) are 'quoted' if necessary for parsing 
+=head2 qshpath $path_with_tilde_prefix, ...
+
+The "words" ($_ by default) are 'quoted' if necessary for parsing 
 by /bin/sh (note that /bin/sh quoting rules differ from Perl's).  
 Multiple items are concatenated, separated by spaces.
 
-Strings which contain only "safe" characters are returned as-is, 
-omitting the 'quotes'.  
+Items which contain only "safe" characters are returned without 'quotes'.
 
 References are formatted as with C<vis()> and the resulting string quoted.
 Undefined values appear as C<undef> without quotes.
 
-=head2 forceqsh $data
+C<qshpath> is like C<qsh> except that an initial ~ or ~username is left
+unquoted.  Useful with shells such as bash or csh.
+
+=head2 forceqsh $word
 
 The argument is 'quoted' for /bin/sh if even if quotes are not necessary.
 
