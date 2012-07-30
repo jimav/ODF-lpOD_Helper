@@ -1,5 +1,5 @@
 use strict; use warnings; use utf8;
-our $VERSION = sprintf "%d.%03d", q$Revision: 1.33 $ =~ /(\d+)/g;
+our $VERSION = sprintf "%d.%03d", q$Revision: 1.34 $ =~ /(\d+)/g;
 
 # Copyright © Jim Avera 2012.  Released into the Public Domain 
 # by the copyright owner.  (james_avera AT yahoo đøţ ¢ÔḾ) 
@@ -97,7 +97,7 @@ sub _get_default_width() {
       no warnings;
       ($r = qx'tput cols') # N.B. linux tput prints 80 even if no tty
       ||
-      (($r) = ((qx'stty -a'//"") =~ /.*; columns (\d+);/))
+      (($r) = ((qx'stty -a'//"") =~ /.*; columns (\d+);/s))
       ;
       { local $/ = "\n"; chomp $r if $r; }
       print "## Vis detected terminal width is ",u($r),"\n" if $Debug;
@@ -249,10 +249,10 @@ sub Dump {
       while ($lines[$J] eq "") { next LOOP if ++$J > $#lines; }
       while ($lines[$I] eq "") { next LOOP if ++$I >= $J; }
 
-      my ($Iprefix,$Icode) = ($lines[$I] =~ /^(\s*)(.*)/);
+      my ($Iprefix,$Icode) = ($lines[$I] =~ /^(\s*)(.*)/s);
       my $Iindent = length($Iprefix);
 
-      my ($Jprefix,$Jcode) = ($lines[$J] =~ /^(\s*)(.*)/);
+      my ($Jprefix,$Jcode) = ($lines[$J] =~ /^(\s*)(.*)/s);
       my $Jindent = length($Jprefix);
 
       if ($debug) {
@@ -271,7 +271,7 @@ sub Dump {
       if ($Iindent <= $Jindent
           && $Jcode !~ /[\[\{]$/s # J isn't opening a new aggregate
           && $Icode !~ /^[\]\}]/s # I isn't closing an aggregate
-          && ($Icode =~ /(?:,|[\[\{])$/ || $Jcode =~ /^[\]\}]/)
+          && ($Icode =~ /(?:,|[\[\{])$/s || $Jcode =~ /^[\]\}]/s)
          )
       {
         # The lines are elegible to be joined, if there is enough space
@@ -371,7 +371,7 @@ sub qshpath(;@) {
          defined $_ 
            ? do {
                local $_ = $_;
-               my ($tilde_prefix, $rest) = /(^~[^\/\\]*\/?)?(.*)/;
+               my ($tilde_prefix, $rest) = /(^~[^\/\\]*\/?)?(.*)/s;
                $rest eq "" ? $tilde_prefix : ($tilde_prefix // "").qsh($rest);
              }
            : "undef";
@@ -461,8 +461,9 @@ sub Vis_DB_DumpInterpolate {
       }
       else {
         if (/\G./) {
-          die "Vis bug: next:",substr($_,pos,4),
-              "... pos=",pos," in:\n$_\n".(" "x pos)."^\n "
+          my $tmp = $_; $tmp =~ s/[^\x{20}-\x{7E}]/?/g;
+          die "Vis bug: next:",substr($tmp,pos,4),
+              "... pos=",pos," in:\n$tmp\n".(" "x pos)."^\n "
         }
         last;
       }
@@ -828,7 +829,7 @@ if (! ref Vis->new([1])->Useqq(undef)) {
 
 print "         unicode_str:$unicode_str\n";
 { my $s = Vis->vnew($unicode_str)->Useqq('utf8')->Dump;
-  $s =~ s/^"(.*)"\z/$1/ or die "bug";
+  $s =~ s/^"(.*)"\z/$1/s or die "bug";
   print "Vis with Useqq(utf8):$s\n";
   warn "WARNING: Useqq('utf8') is broken in your Data::Dumper.\n"
     unless $s eq $unicode_str;
@@ -903,7 +904,7 @@ our $ABC_hr = \%ABC_h;
 package main;
 
 $_ = "GroupA.GroupB";
-/(.*)\W(.*)/p or die "nomatch"; # set $1 and $2
+/(.*)\W(.*)/sp or die "nomatch"; # set $1 and $2
 
 { my $code = 'vis($_)'; check $code, "\"${_}\"", eval $code; }
 { my $code = 'avis($_,1,2,3)'; check $code, "(\"${_}\", 1, 2, 3)", eval $code; }
