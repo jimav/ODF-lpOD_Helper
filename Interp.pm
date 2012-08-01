@@ -1,5 +1,5 @@
 use strict; use warnings; use utf8;
-our $VERSION = sprintf "%d.%03d", q$Revision: 1.34 $ =~ /(\d+)/g;
+# Version string is after sub Vis_Eval.
 
 # Copyright © Jim Avera 2012.  Released into the Public Domain 
 # by the copyright owner.  (james_avera AT yahoo đøţ ¢ÔḾ) 
@@ -7,8 +7,50 @@ our $VERSION = sprintf "%d.%03d", q$Revision: 1.34 $ =~ /(\d+)/g;
 
 # Documentation is at the end
 
+# The following must appear before any global variables are declared,
+# so that nothing is visible when evaluating user-provided expressions.
+
+package DB;
+
+# This must appear before any variable declarations, to avoid accidentally
+# masking the user's variables in the eval below.
+#
+sub Vis_Eval {   # Many ideas here were stolen from perl5db.pl
+  { package Vis;
+    our ($evalarg) = $_[0] =~ /(.*)/s;  # untaint
+    our ($pkg) = caller 1;  # the user's context
+  }
+  local *_ = \@DB::args;  # make user's @_ accessible
+
+  # At this point, none of our own variables are in scope
+
+  @Vis::result = eval '($@, $!, $^E, $,, $/, $\, $^W) = @Vis::saved;' 
+                     ."package $Vis::pkg; $Vis::evalarg";
+
+  package Vis;
+  our (@saved, $evalarg, @result);
+
+  my $at = $@;
+
+  # Because of tied variables, we may have just executed user code.
+  # Save possible changes to punctuation vars and reset sane values,
+  # except for $@ which we do not want to save.  By localizing $saved[0]
+  # here, the value saved by &SaveAndResetPunct call will be forgotten
+  # when we exit, and the original value restored.
+  local $saved[0];
+  &Vis::SaveAndResetPunct;
+
+  if ($at) {
+    $at =~ s/ at \(eval.*//;
+    Carp::croak("Error interpolating '$evalarg':\n $at"); 
+  } 
+
+  return @result;
+}
+
 package Vis;
 
+our $VERSION = sprintf "%d.%03d", q$Revision: 1.35 $ =~ /(\d+)/g;
 use Exporter;
 use Data::Dumper ();
 use Carp;
@@ -46,15 +88,17 @@ sub u(@)      { @_ == 1
 #sub u($)      { defined($_[0]) ? $_[0] : "undef" }
 sub vis(@)    { return __PACKAGE__->vnew(@_)->Dump; }
 sub avis(@)   { return __PACKAGE__->anew(@_)->Dump; }
-sub svis(@)   { @_ = (__PACKAGE__->snew(@_)); goto &DB::Vis_DB_DumpInterpolate }
-sub dvis(@)   { @_ = (__PACKAGE__->dnew(@_)); goto &DB::Vis_DB_DumpInterpolate }
-
 sub visq(@)   { return __PACKAGE__->vnew(@_)->Useqq(0)->Dump; }
 sub avisq(@)  { return __PACKAGE__->anew(@_)->Useqq(0)->Dump; }
-sub svisq(@)  { @_ = (__PACKAGE__->snew(@_)->Useqq(0)); goto &DB::Vis_DB_DumpInterpolate }
-sub dvisq(@)   { @_ = (__PACKAGE__->dnew(@_)->Useqq(0)); goto &DB::Vis_DB_DumpInterpolate }
 
-# Provide Data::Dumper non-oo APIs 
+# These ultimately run code in package DB which needs the closest non-DB
+# context to be the user's context.  Hence the use of goto.
+sub svis(@)   { @_ = __PACKAGE__->snew(@_); goto &Dump; }
+sub dvis(@)   { @_ = __PACKAGE__->dnew(@_); goto &Dump; }
+sub svisq(@)  { @_ = __PACKAGE__->snew(@_)->Useqq(0); goto &Dump; }
+sub dvisq(@)  { @_ = __PACKAGE__->dnew(@_)->Useqq(0); goto &Dump; }
+
+# Provide Data::Dumper non-oo APIs
 sub Dumper(@) { return __PACKAGE__->Dump([@_]); }
 sub Dumpf(@)  { return __PACKAGE__->Dump([@_]); }
 sub Dumpp(@)  { print __PACKAGE__->Dump(@_); }
@@ -192,14 +236,13 @@ my $key_re  = qr{ \w+ | $qstr_re }x;
 
 sub Dump {
   my ($self) = @_;
-  local $_; # preserve caller's $1 etc.
 
   $self = $self->new(@_[1..$#_]) unless ref $self;
 
-  goto &DB::Vis_DB_DumpInterpolate
+  goto &DB::DB_Vis_Interpolate
     if ($self->{VisType}//"") =~ /[sd]/;
 
-  $_ = $self->SUPER::Dump;
+  local $_ = $self->SUPER::Dump;
 
   my $maxwidth = $self->{Maxwidth};
 
@@ -379,24 +422,28 @@ sub qshpath(;@) {
        @_;
 }
 
+our @saved;
+sub SaveAndResetPunct {
+  # Save things which will later be restored, and reset to sane values.
+  our @saved = ( $@, $!, $^E, $,, $/, $\, $^W );
+  $,  = "";      # output field separator is null string
+  $/  = "\n";    # input record separator is newline
+  $\  = "";      # output record separator is null string
+  $^W = 0;       # warnings are off
+}
+
 package DB;
 
-# These are aliases for forced-globals, so we have to do this for them
-# to be visible in eval "..." in package DB. 
-use English qw( -no_match_vars ) ;
+# Interpolate strings for svis and dvis.   This must be in package
+# DB, and called by goto & from the outer function, so that
+# the closest scope not in package DB is the user's context.
+sub DB_Vis_Interpolate {
 
-# Implement Dump() method for svis and dvis styles
-# This must be in package DB so that eval "" uses the caller's context
-sub Vis_DB_DumpInterpolate {
+  &Vis::SaveAndResetPunct;
+
   my ($self) = @_;
-
-  # This allows the caller's @_ to be interpolated
-  # See https://rt.perl.org/rt3//Public/Bug/Display.html?id=112896
-  () = caller 1;
-  local *_ = \@DB::args;
-
   my $debug = $self->{VisDebug};
-  my $display_mode = $self->{VisType} eq 'd';
+  my $display_mode = ($self->{VisType} eq 'd');
 
   state $interior_re = qr{ 
     (
@@ -423,8 +470,7 @@ sub Vis_DB_DumpInterpolate {
 
   my @actions;
   {
-    # Localize $_ while running regexprs to preserve the caller's $1 etc.
-    # N.B. The evals are executed after $_ is restored.
+    # N.B. The evals are executed below after $_ is restored.
     local $_ = join "", map {defined($_) ? $_ : '<undef arg>'} $self->Values();
     while (1) {
       if (
@@ -478,64 +524,50 @@ sub Vis_DB_DumpInterpolate {
     my $act = $action->[0];
     if ($act eq 'e') {
       my ($sigl, $rhs) = @$action[1,2];
-      # $sigl$rhs is a Perl expression giving the desired value.  
+      # "$sigl$rhs" is a Perl expression giving the desired value.  
       # Note that the curlies were dropped from ${name} in the string
       # (because braces can not be used that way in expressions, only strings)
-      print "### EVAL $sigl$rhs\n" if $debug;
-      { local $@ = $@;
-        my @items;
-        if ($rhs eq '@' && $sigl eq '$') {
-          # Special case--we can't see caller's $@ inside another eval!
-          @items = ($@);
-        } else {
-          if (($rhs eq 'PREMATCH' || $rhs eq 'MATCH' || $rhs eq 'POSTMATCH')
-               && $sigl eq '$') {
-            # we normally don't import these to avoid a performance hit
-            local $_;  # defensive programming
-            English->import("$sigl$rhs");
-          }
-          @items = eval "($sigl$rhs);";
-          Carp::confess "($sigl$rhs)$@" if $@ && $debug;
-          Carp::croak("Error interpolating '$sigl$rhs': $@") 
-            if $@ =~ s/ at \(eval.*//;
-        }
-        #my $prefix = $display_mode ? ($sigl eq '$' ? "":$sigl)."$rhs=" : "";
+
+      my @items = Vis_Eval("$sigl$rhs");
+      
+      my $prefix = "";
+      if ($display_mode) {
         # Don't show initial $ if it's a non-special scalar variable name
-        my $prefix = ($display_mode 
-                       ? (($sigl eq '$' && $rhs =~ /^[A-Za-z]/) ? "" : $sigl).$rhs."="
-                       : ""
-                     );
-        if ($sigl eq '$') {
-          $self->Reset()->Values([$items[0]])->{VisType} = 'v';
-        }
-        elsif ($sigl eq '@') {
-          $self->Reset()->Values([\@items])->{VisType} = 'a';
-        }
-        elsif ($sigl eq '%') {
-          my %hash = @items;
-          $self->Reset()->Values([\%hash])->{VisType} = 'a';
-        }
-        else { die "bug" }
-        $result .= $prefix . $self->Dump;
+        $prefix = (($sigl eq '$' && $rhs =~ /^[A-Za-z]/) ? "" : $sigl)
+                  . $rhs . "=" ;
       }
+      if ($sigl eq '$') {
+        $self->Reset()->Values([$items[0]])->{VisType} = 'v';
+      }
+      elsif ($sigl eq '@') {
+        $self->Reset()->Values([\@items])->{VisType} = 'a';
+      }
+      elsif ($sigl eq '%') {
+        my %hash = @items;
+        $self->Reset()->Values([\%hash])->{VisType} = 'a';
+      }
+      else { die "bug" }
+      $result .= $prefix . $self->Dump;
     }
     elsif ($act eq 't') {
-      # Interpolate \n etc.
+      # DB_Vis_Interpolate \n etc.
       my $text = $action->[1];
       if ($text =~ /\b((?:ARRAY|HASH)\(0x[^\)]*\))/) {
         state $warned=0;
         Carp::carp "Warning: String passed to svis or dvis may have been interpolated by Perl\n(use 'single quotes' to avoid this)\n" unless $warned++;
       }
       print "### PLAIN «$text»\n" if $debug;
-      { local $@;
+      my $saved_eval_err = $@;
+      { #local $@;
         my $value = eval qq{<<"ViSEoF"
 $text
 ViSEoF
 };
-        Carp::confess "Unexpected eval faulre ($text): $@" if $@;
+        Carp::confess "bug($text)$@" if $@;
         $value =~ s/\n\z//;  # don't use chomp(): $/ may have been changed
         $result .= $value;  # plain text
       }
+      $@ = $saved_eval_err;
     } else {
       die "bug";
     }
