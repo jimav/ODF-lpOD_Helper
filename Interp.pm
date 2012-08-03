@@ -16,32 +16,36 @@ package DB;
 # masking the user's variables in the eval below.
 #
 sub Vis_Eval {   # Many ideas here were stolen from perl5db.pl
-  { package Vis;
-    our ($evalarg) = $_[0] =~ /(.*)/s;  # untaint
-    our ($pkg) = caller 1;  # the user's context
-  }
+  { ($Vis::evalarg) = $_[0] =~ /(.*)/s; }  # untaint
+  ($Vis::pkg) = caller 2;  # the user's context
   local *_ = \@DB::args;  # make user's @_ accessible
 
   # At this point, none of our own variables are in scope
 
+  # Before executing <evalarg> restore $@ etc. from values saved at entry
+  # The space after $Vis::evalarg is essential in case it's $;
   @Vis::result = eval '($@, $!, $^E, $,, $/, $\, $^W) = @Vis::saved;' 
-                     ."package $Vis::pkg; $Vis::evalarg";
+                     ."package $Vis::pkg; $Vis::evalarg ";
 
   package Vis;
   our (@saved, $evalarg, @result);
 
   my $at = $@;
 
-  # Because of tied variables, we may have just executed user code.
-  # Save possible changes to punctuation vars and reset sane values,
-  # except for $@ which we do not want to save.  By localizing $saved[0]
-  # here, the value saved by &SaveAndResetPunct call will be forgotten
-  # when we exit, and the original value restored.
+  # Now save the possibly-modified values of punctuation variables.
+  # Because of tied variables, we may have just executed user code!
+  #
+  # However we don't want to re-save $@; instead we want the originally-saved
+  # $@ from the user to be kept (and ultimately restored later).
+  # By localizing $saved[0] here, the effect of the following call to
+  # &SaveAndResetPunct be un-done when we return, restoring the 
+  # originally-saved value for $@.
   local $saved[0];
   &Vis::SaveAndResetPunct;
 
   if ($at) {
-    $at =~ s/ at \(eval.*//;
+    ##$at =~ s/ at \(eval.*//;
+    push @DB::CARP_NOT, 'Vis';
     Carp::croak("Error interpolating '$evalarg':\n $at"); 
   } 
 
@@ -50,7 +54,7 @@ sub Vis_Eval {   # Many ideas here were stolen from perl5db.pl
 
 package Vis;
 
-our $VERSION = sprintf "%d.%03d", q$Revision: 1.35 $ =~ /(\d+)/g;
+our $VERSION = sprintf "%d.%03d", q$Revision: 1.36 $ =~ /(\d+)/g;
 use Exporter;
 use Data::Dumper ();
 use Carp;
@@ -234,6 +238,7 @@ sub Maxwidth {
 my $qstr_re = qr{ " (?: [^"\\]++ | \\. )* " | ' (?: [^'\\]++ | \\. )* ' }x;
 my $key_re  = qr{ \w+ | $qstr_re }x;
 
+package Vis;
 sub Dump {
   my ($self) = @_;
 
@@ -292,10 +297,10 @@ sub Dump {
       while ($lines[$J] eq "") { next LOOP if ++$J > $#lines; }
       while ($lines[$I] eq "") { next LOOP if ++$I >= $J; }
 
-      my ($Iprefix,$Icode) = ($lines[$I] =~ /^(\s*)(.*)/s);
+      my ($Iprefix,$Icode) = ($lines[$I] =~ /^(\s*)(.*)/);
       my $Iindent = length($Iprefix);
 
-      my ($Jprefix,$Jcode) = ($lines[$J] =~ /^(\s*)(.*)/s);
+      my ($Jprefix,$Jcode) = ($lines[$J] =~ /^(\s*)(.*)/);
       my $Jindent = length($Jprefix);
 
       if ($debug) {
@@ -312,8 +317,8 @@ sub Dump {
       }
 
       if ($Iindent <= $Jindent
-          && $Jcode !~ /[\[\{]$/s # J isn't opening a new aggregate
-          && $Icode !~ /^[\]\}]/s # I isn't closing an aggregate
+          && $Jcode !~ /[\[\{]$/ # J isn't opening a new aggregate
+          && $Icode !~ /^[\]\}]/ # I isn't closing an aggregate
           && ($Icode =~ /(?:,|[\[\{])$/s || $Jcode =~ /^[\]\}]/s)
          )
       {
@@ -573,6 +578,7 @@ ViSEoF
     }
     print "### After act '$act' : result=«${result}»\n" if $Debug;
   }
+  ( $@, $!, $^E, $,, $/, $\, $^W ) = @saved;
   return $result;
 }
 
