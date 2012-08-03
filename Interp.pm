@@ -54,7 +54,7 @@ sub Vis_Eval {   # Many ideas here were stolen from perl5db.pl
 
 package Vis;
 
-our $VERSION = sprintf "%d.%03d", q$Revision: 1.36 $ =~ /(\d+)/g;
+our $VERSION = sprintf "%d.%03d", q$Revision: 1.37 $ =~ /(\d+)/g;
 use Exporter;
 use Data::Dumper ();
 use Carp;
@@ -826,6 +826,8 @@ binmode STDOUT, 'utf8';
 binmode STDERR, 'utf8';
 select STDERR; $|=1; select STDOUT; $|=1;
 
+warn "### TODO: Test that \$, \$/ \$\ and \$^W are preserved !\n";
+
 # ---------- Check stuff other than formatting or interpolation --------
 
 for my $varname (qw(PREMATCH MATCH POSTMATCH)) {
@@ -933,6 +935,9 @@ our @localized_a = ("should never be seen");
 our $localized_ar = \@localized_a;
 our $localized_hr = \%localized_h;
 
+our $a = "global-a";  # used specially used by sort()
+our $b = "global-b";
+
 package A::B::C;
 our %ABC_h = %main::global_h;
 our @ABC_a = @main::global_a;
@@ -957,6 +962,11 @@ $_ = "GroupA.GroupB";
 { my $code = 'vis(undef)'; check $code, "undef", eval $code; }
 { my $code = 'svis("foo",undef)'; check $code, "foo<undef arg>", eval $code; }
 { my $code = 'dvis("foo",undef)'; check $code, "foo<undef arg>", eval $code; }
+{ my $code = 'dvisq("foo",undef)'; check $code, "foo<undef arg>", eval $code; }
+
+{ my $code = q/my $s; my @a=sort{ $s=dvis('$a $b'); $a<=>$b }(3,2); "@a $s"/ ;
+  check $code, '2 3 a=3 b=2', eval $code; 
+}
 
 sub doquoting($$) {
   my ($input, $useqq) = @_;
@@ -1003,7 +1013,9 @@ sub f {
     [ q(aaa\\\\bbb), q(aaa\bbb) ],
     [ q($unicode_str\n), qq(unicode_str=\" \\x{263a} \\x{263b} \\x{263c} \\x{263d} \\x{263e} \\x{263f} \\x{2640} \\x{2641} \\x{2642} \\x{2643} \\x{2644} \\x{2645} \\x{2646} \\x{2647} \\x{2648} \\x{2649} \\x{264a} \\x{264b} \\x{264c} \\x{264d} \\x{264e} \\x{264f} \\x{2650}\"\n) ],
     [ q($byte_str\n), qq(byte_str=\"\\n\\13\\f\\r\\16\\17\\20\\21\\22\\23\\24\\25\\26\\27\\30\\31\\32\\e\\34\\35\\36\"\n) ],
-    [ q($_\n), qq(\$_=\"GroupA.GroupB\"\n) ],
+    [ q($_ $ARG\n), qq(\$_=\"GroupA.GroupB\" ARG=\"GroupA.GroupB\"\n) ],
+    [ q($a\n), qq(a=\"global-a\"\n) ],
+    [ q($b\n), qq(b=\"global-b\"\n) ],
     [ q($flex\n), qq(flex=\"Lexical in sub f\"\n) ],
     [ q($$flex_ref\n), qq(\$\$flex_ref=\"Lexical in sub f\"\n) ],
     [ q($.\n), qq(\$.=1234\n) ],
