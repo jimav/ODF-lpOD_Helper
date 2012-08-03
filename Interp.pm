@@ -16,9 +16,22 @@ package DB;
 # masking the user's variables in the eval below.
 #
 sub Vis_Eval {   # Many ideas here were stolen from perl5db.pl
+
   { ($Vis::evalarg) = $_[0] =~ /(.*)/s; }  # untaint
-  ($Vis::pkg) = caller 2;  # the user's context
-  local *_ = \@DB::args;  # make user's @_ accessible
+
+  # The call stack:
+  #   0: Our current running context, right here
+  #   1: DB::DB_Vis_Interpolate calling us
+  #   2: User calling DB_Vis_Interpolate (via trampoline)
+  #   3: (possibly) Caller of user's sub, providing @_
+  ($Vis::pkg) = caller 2;  # package with the user's immediate call
+  ($Vis::UserIsInSub) = caller 3;  # Set @DB::args to user's @_ if in a sub
+
+  # make user's @_ accessible, if the user is in a sub (otherwise we can't)
+  local *_ = 
+    $Vis::UserIsInSub ? \@DB::args : ['<Sorry, outer @_ is not visible>'];
+
+  #warn "### Vis_Eval: pgk=$Vis::pkg UIIS=",Vis::u($Vis::UserIsInSub), " local \@_=(@_)\n";
 
   # At this point, none of our own variables are in scope
 
@@ -52,9 +65,16 @@ sub Vis_Eval {   # Many ideas here were stolen from perl5db.pl
   return @result;
 }
 
+sub DB_Vis_svis(@)  { DB_Vis_Interpolate(Vis->snew(@_)); }
+sub DB_Vis_dvis(@)  { DB_Vis_Interpolate(Vis->dnew(@_)); }
+sub DB_Vis_svisq(@) { DB_Vis_Interpolate(Vis->snew(@_)->Useqq(0)); }
+sub DB_Vis_dvisq(@) { DB_Vis_Interpolate(Vis->dnew(@_)->Useqq(0)); }
+sub DB_Vis_Dump     { DB_Vis_Interpolate($_[0]); }
+
+
 package Vis;
 
-our $VERSION = sprintf "%d.%03d", q$Revision: 1.37 $ =~ /(\d+)/g;
+our $VERSION = sprintf "%d.%03d", q$Revision: 1.38 $ =~ /(\d+)/g;
 use Exporter;
 use Data::Dumper ();
 use Carp;
@@ -95,12 +115,12 @@ sub avis(@)   { return __PACKAGE__->anew(@_)->Dump; }
 sub visq(@)   { return __PACKAGE__->vnew(@_)->Useqq(0)->Dump; }
 sub avisq(@)  { return __PACKAGE__->anew(@_)->Useqq(0)->Dump; }
 
-# These ultimately run code in package DB which needs the closest non-DB
-# context to be the user's context.  Hence the use of goto.
-sub svis(@)   { @_ = __PACKAGE__->snew(@_); goto &Dump; }
-sub dvis(@)   { @_ = __PACKAGE__->dnew(@_); goto &Dump; }
-sub svisq(@)  { @_ = __PACKAGE__->snew(@_)->Useqq(0); goto &Dump; }
-sub dvisq(@)  { @_ = __PACKAGE__->dnew(@_)->Useqq(0); goto &Dump; }
+# We have to put all this code in package DB so that the closest non-DB
+# call frame is the user's context, so that $variables eval correctly.
+sub svis(@)   { goto &DB::DB_Vis_svis }
+sub dvis(@)   { goto &DB::DB_Vis_dvis }
+sub svisq(@)  { goto &DB::DB_Vis_svisq }
+sub dvisq(@)  { goto &DB::DB_Vis_dvisq }
 
 # Provide Data::Dumper non-oo APIs
 sub Dumper(@) { return __PACKAGE__->Dump([@_]); }
@@ -238,14 +258,14 @@ sub Maxwidth {
 my $qstr_re = qr{ " (?: [^"\\]++ | \\. )* " | ' (?: [^'\\]++ | \\. )* ' }x;
 my $key_re  = qr{ \w+ | $qstr_re }x;
 
-package Vis;
 sub Dump {
   my ($self) = @_;
 
-  $self = $self->new(@_[1..$#_]) unless ref $self;
-
-  goto &DB::DB_Vis_Interpolate
-    if ($self->{VisType}//"") =~ /[sd]/;
+  if (! ref $self) {
+    $self = $self->new(@_[1..$#_]);
+  } else {
+    goto &DB::DB_Vis_Dump if ($self->{VisType}//"") =~ /[sd]/;
+  } 
 
   local $_ = $self->SUPER::Dump;
 
@@ -440,10 +460,12 @@ sub SaveAndResetPunct {
 package DB;
 
 # Interpolate strings for svis and dvis.   This must be in package
-# DB, and called by goto & from the outer function, so that
-# the closest scope not in package DB is the user's context.
+# DB and the closest scope not in package DB must be the user's context.
+# 
+# To accomplish this, interface functions in package Vis goto a 
+# trampoline in package DB, which in turn calls us.
+#
 sub DB_Vis_Interpolate {
-
   &Vis::SaveAndResetPunct;
 
   my ($self) = @_;
@@ -555,7 +577,7 @@ sub DB_Vis_Interpolate {
       $result .= $prefix . $self->Dump;
     }
     elsif ($act eq 't') {
-      # DB_Vis_Interpolate \n etc.
+      # Interpolate \n etc.
       my $text = $action->[1];
       if ($text =~ /\b((?:ARRAY|HASH)\(0x[^\)]*\))/) {
         state $warned=0;
@@ -968,6 +990,18 @@ $_ = "GroupA.GroupB";
   check $code, '2 3 a=3 b=2', eval $code; 
 }
 
+# There was a bug for s/dvis called direct from outer scope, so don't use eval:
+check 'global divs %toplex_h', 
+      qq(\%toplex_h=( "" => "Emp", A => 111, "B B" => 222,\n  C => {d => 888, e => 999}, D => {}\n)\n),
+      dvis('%toplex_h\n'); 
+check 'global divs @ARGV', q(@ARGV=("fake", "argv")), dvis('@ARGV'); 
+check 'global divs $.', q($.=1234), dvis('$.'); 
+check 'global divs $ENV{EnvVar}', q("Test EnvVar Value"), svis('$ENV{EnvVar}'); 
+sub func {
+  check 'func args', q(@_=(1, 2, 3)), dvis('@_'); 
+}
+func(1,2,3);
+
 sub doquoting($$) {
   my ($input, $useqq) = @_;
   my $quoted = $input;
@@ -1013,11 +1047,16 @@ sub f {
     [ q(aaa\\\\bbb), q(aaa\bbb) ],
     [ q($unicode_str\n), qq(unicode_str=\" \\x{263a} \\x{263b} \\x{263c} \\x{263d} \\x{263e} \\x{263f} \\x{2640} \\x{2641} \\x{2642} \\x{2643} \\x{2644} \\x{2645} \\x{2646} \\x{2647} \\x{2648} \\x{2649} \\x{264a} \\x{264b} \\x{264c} \\x{264d} \\x{264e} \\x{264f} \\x{2650}\"\n) ],
     [ q($byte_str\n), qq(byte_str=\"\\n\\13\\f\\r\\16\\17\\20\\21\\22\\23\\24\\25\\26\\27\\30\\31\\32\\e\\34\\35\\36\"\n) ],
+    [ q($flex\n), qq(flex=\"Lexical in sub f\"\n) ],
+    [ q($$flex_ref\n), qq(\$\$flex_ref=\"Lexical in sub f\"\n) ],
     [ q($_ $ARG\n), qq(\$_=\"GroupA.GroupB\" ARG=\"GroupA.GroupB\"\n) ],
     [ q($a\n), qq(a=\"global-a\"\n) ],
     [ q($b\n), qq(b=\"global-b\"\n) ],
-    [ q($flex\n), qq(flex=\"Lexical in sub f\"\n) ],
-    [ q($$flex_ref\n), qq(\$\$flex_ref=\"Lexical in sub f\"\n) ],
+    [ q($1\n), qq(\$1=\"GroupA\"\n) ],
+    [ q($2\n), qq(\$2=\"GroupB\"\n) ],
+    [ q($3\n), qq(\$3=undef\n) ],
+    [ q($&\n), qq(\$&=\"GroupA.GroupB\"\n) ],
+    [ q(${^MATCH}\n), qq(\${^MATCH}=\"GroupA.GroupB\"\n) ],
     [ q($.\n), qq(\$.=1234\n) ],
     [ q($NR\n), qq(NR=1234\n) ],
     [ q($/\n), qq(\$/=\"\\n\"\n) ],
@@ -1034,16 +1073,12 @@ sub f {
     [ q(@+ $#+\n), qq(\@+=(13, 6, 13) \$#+=2\n) ],
     [ q(@- $#-\n), qq(\@-=(0, 0, 7) \$#-=2\n) ],
     [ q($;\n), qq(\$;=\"\\34\"\n) ],
-    [ q($1\n), qq(\$1=\"GroupA\"\n) ],
-    [ q($2\n), qq(\$2=\"GroupB\"\n) ],
-    [ q($3\n), qq(\$3=undef\n) ],
-    [ q(${^MATCH}\n), qq(\${^MATCH}=\"GroupA.GroupB\"\n) ],
     [ q(@ARGV\n), qq(\@ARGV=(\"fake\", \"argv\")\n) ],
     [ q($ENV{EnvVar}\n), qq(ENV{EnvVar}=\"Test EnvVar Value\"\n) ],
     [ q($ENV{$EnvVarName}\n), qq(ENV{\$EnvVarName}=\"Test EnvVar Value\"\n) ],
-    [ q($@\n), qq(\$\@=\"FAKE DEATH\\n\"\n) ],
     [ q(@_\n), qq(\@_=( 42, [ 0, 1, "C", { "" => "Emp", A => 111, "B B" => 222,\n      C => {d => 888, e => 999}, D => {}\n    },\n    [], [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]\n  ]\n)\n) ],
     [ q($#_\n), qq(\$#_=1\n) ],
+    [ q($@\n), qq(\$\@=\"FAKE DEATH\\n\"\n) ],
     map({
       my ($LQ,$RQ) = (/^(.*)(.)$/) or die "bug";
       map({ 
