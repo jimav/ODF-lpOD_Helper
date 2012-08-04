@@ -66,7 +66,7 @@ sub Vis_Eval {   # Many ideas here were stolen from perl5db.pl
 
 package Vis;
 
-our $VERSION = sprintf "%d.%03d", q$Revision: 1.39 $ =~ /(\d+)/g;
+our $VERSION = sprintf "%d.%03d", q$Revision: 1.40 $ =~ /(\d+)/g;
 use Exporter;
 use Data::Dumper ();
 use Carp;
@@ -652,28 +652,36 @@ Vis - Improve Data::Dumper to format arbitrary Perl data in messages
 
   use Vis;
 
-  my %hash = ( complicated => ['lengthy','stuff',[1..20]] );
-  my $href = \%hash;
+  my %hash = ( complicated => ['lengthy', 'stuff', [1..20]] );
+  my $ref = \%hash;
 
-  print "href=", vis($href), "\n"; 
-  print "ARGV=", avis(@ARGV), "\n";
-  print svis 'href=$href\n hash=%hash\n ARGV=@ARGV\n'; # SINGLE quoted!  
-  print dvis 'Display of variables: $href %hash @ARGV\n';
+  # Interpolate strings, stingifying aggregates
+  print svis 'ref=$ref\n hash=%hash\n ARGV=@ARGV\n'; # SINGLE quoted!  
+  print dvis 'FYI $ref %hash @ARGV\n';  
 
-  print "href=", visq($href), "\n";  # show strings single-quoted 
+  # Format one item at a time (sans final newline)
+  print "ref=", vis($ref), "\n";
+  print "ARGV=", avis(@ARGV), "\n";  # (array,values,in,parens)
 
-  print Vis->snew('href=$href\n')->Useqq(0)->Dump;
-  print Vis->dnew('$href\n')->Maxlevels($levels)->Dump;
-  print "href=", Vis->vnew($href)->Maxwidth(110)->Dump, "\n";
-  print "ARGV=", Vis->anew(@ARGV)->Dump, "\n";
+  # Equivalent OO APIs, allow using configuration methods
+  # (corresponding globals $Vis::xxx are also available)
+  print Vis->snew('Howdy! var=$var ary=@ary hash=%hash\n')
+             ->Maxlevels($levels)
+             ->Maxwidth(120)
+             ->Dump;                                  # like svis()
+  print Vis->dnew('Howdy! $var @ary %hash\n')->Dump;  # like dvis()
+  print Vis->vnew($scalar)->Dump, "\n";               # like vis()
+  print Vis->anew(@array)->Dump, "\n";                # like avis()
 
-  print Dumper($href);                      # Data::Dumper API
-  print Vis->new([$href],['$href'])->Dump;  # Data::Dumper API
+  print Dumper($ref);                                 # Data::Dumper 
+  print Vis->new([$ref],['$ref'])->Dump;              #  compatible APIs
 
+  # Just change undef to "undef", nothing else
   use Vis qw(u);  # or qw(:DEFAULT u);
-  $value = undef;
-  print "Value is ",u($value),"\n";
+  my $value;
+  print u($value),"\n";
 
+  # Quote arguments for the shell
   foreach ($ENV{HOME}, "/dir/safe", "Uck!", 
            "My Documents", "Qu'ote", 'Qu"ote') 
   {
@@ -701,20 +709,20 @@ Multiple array and hash members are shown on the same line.
 
 Inner portions of deep structures are replaced by "...".
 
-The first print statement above produces the following output:
+The print statement B<print "ref=", vis($ref), "\n";> produces
 
-  href={ complicated => [ "lengthy", "stuff",
+  ref={ complicated => [ "lengthy", "stuff",
       [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]
     ]
   }
 
-and C<$Vis::Maxlevels = 2; print vis($href), "\n";>  produces
+and with B<$Vis::Maxlevels = 2>  you get
 
   {complicated => [ "lengthy", "stuff", [...] ]}
 
 =item *
 
-Different Data::Dumper defaults are used:
+Default settings are different than with Data::Dumper :
 
 =over
 
@@ -725,7 +733,7 @@ B<Terse(1)> -- Don't assign to variables, just show the data.
 B<Sortkeys(smart sorting)>
 
 Numeric "components" in hash keys are auto-detected.
-For example: "A.20_999" "A.100_9" "A.100_80" "B" sort in that order.
+For example: "A.20_999" "A.100_9" "A.100_80" and "B" sort in that order.
 
 =back
   
@@ -747,8 +755,8 @@ Multiple arguments are concatenated.
 The input string(s) should written SINGLE QUOTED so Perl will not 
 interpolate them before passing to svis().
 
-In addition to all the forms recognized by Perl in double-quotish strings,
-C<svis> interpolates C<< %name >> into S<<< C<< (key => value ...) >> >>>
+In addition, C<svis> interpolates C<< %name >> 
+into S<<< C<< (key => value ...) >> >>>
 
 =head2 dvis 'string to be interpolated',...
 
@@ -756,11 +764,11 @@ C<svis> interpolates C<< %name >> into S<<< C<< (key => value ...) >> >>>
 except that interpolated expressions are prefixed by
 the name of the variable or the expression.  
 For example, S<dvis('$foo $i $ary[$i] @ary %hash\n')> 
-yields S<< "foo=<value> i=<value> ary[i]=<value> @ary=(<value>,...) %hash=(<key> => <value>,...)<newline>". >>
+yields S<< "foo=<value> i=<value> ary[i]=<value> @ary=(<value>,...) %hash=(key => <value>)\n". >>
 
 =head2 vis $item, ... 
 
-Format arbitrary Perl data for printing, without a final newline.
+Format a scalar for printing, without a final newline.
 
 Multiple arguments are each formatted separately,
 separated by newlines.
@@ -791,13 +799,14 @@ Additionally, B<< Vis->new >> provides the same API as Data::Dumper->new.
 =item $Vis::Maxlevels  I<or>  I<$OBJ>->Maxlevels(I<[NEWVAL]>) 
 
 Sets or gets the maximum number of structural levels to be displayed.
-If non-zero, deeper levels are not shown and "..." is shown instead.
+Deeper levels are replaced with "...".  Default is 0 (disabled).
 
 =item $Vis::Maxwidth  I<or>  I<$OBJ>->Maxwidth(I<[NEWVAL]>) 
 
 Sets or gets the maximum number of characters for formatted lines.
-If Maxwidth=0 produces output similar to Data::Dumper 
-(but still sans final newline).
+Default is the terminal width or 80 if output is not a terminal.
+If Maxwidth=0 output is not folded, appearing similar to Data::Dumper 
+(but still without a final newline).
 
 =back
 
@@ -846,7 +855,7 @@ unquoted.  Useful with shells such as bash or csh.
 
 =head2 forceqsh $word
 
-The argument is 'quoted' for /bin/sh if even if quotes are not necessary.
+The argument is 'quoted' for /bin/sh even if quoting is not necessary.
 
 Unlike C<qsh>, C<forceqsh> requires exactly one argument.
 
