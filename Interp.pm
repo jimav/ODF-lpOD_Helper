@@ -22,21 +22,19 @@ sub Vis_Eval {   # Many ideas here were stolen from perl5db.pl
   # The call stack:
   #   0: Our current running context, right here
   #   1: DB::DB_Vis_Interpolate calling us
-  #   2: User calling DB_Vis_Interpolate (via trampoline)
-  #   3: (possibly) Caller of user's sub, providing @_
-  ($Vis::pkg) = caller 2;  # package with the user's immediate call
+  #   2: Trampoline calling DB::DB_Vis_Interpolate
+  #   3: User calling the trampoline (via goto from interface function) 
+  ($Vis::pkg) = caller 2;  # name of package containing user's call
   ($Vis::UserIsInSub) = caller 3;  # Set @DB::args to user's @_ if in a sub
 
   # make user's @_ accessible, if the user is in a sub (otherwise we can't)
   local *_ = 
     $Vis::UserIsInSub ? \@DB::args : ['<Sorry, outer @_ is not visible>'];
 
-  #warn "### Vis_Eval: pgk=$Vis::pkg UIIS=",Vis::u($Vis::UserIsInSub), " local \@_=(@_)\n";
-
-  # At this point, none of our own variables are in scope
+  # At this point, nothing is in scope except the name of this sub
 
   # Before executing <evalarg> restore $@ etc. from values saved at entry
-  # The space after $Vis::evalarg is essential in case it's $;
+  # The space after $evalarg is essential in case it is $;
   @Vis::result = eval '($@, $!, $^E, $,, $/, $\, $^W) = @Vis::saved;' 
                      ."package $Vis::pkg; $Vis::evalarg ";
 
@@ -47,11 +45,12 @@ sub Vis_Eval {   # Many ideas here were stolen from perl5db.pl
 
   # Now save the possibly-modified values of punctuation variables.
   # Because of tied variables, we may have just executed user code!
+  # So save some special variables and reset them to sane values.
   #
   # However we don't want to re-save $@; instead we want the originally-saved
   # $@ from the user to be kept (and ultimately restored later).
   # By localizing $saved[0] here, the effect of the following call to
-  # &SaveAndResetPunct be un-done when we return, restoring the 
+  # &SaveAndResetPunct will be un-done when we return, restoring the 
   # originally-saved value for $@.
   local $saved[0];
   &Vis::SaveAndResetPunct;
@@ -65,16 +64,9 @@ sub Vis_Eval {   # Many ideas here were stolen from perl5db.pl
   return @result;
 }
 
-sub DB_Vis_svis(@)  { DB_Vis_Interpolate(Vis->snew(@_)); }
-sub DB_Vis_dvis(@)  { DB_Vis_Interpolate(Vis->dnew(@_)); }
-sub DB_Vis_svisq(@) { DB_Vis_Interpolate(Vis->snew(@_)->Useqq(0)); }
-sub DB_Vis_dvisq(@) { DB_Vis_Interpolate(Vis->dnew(@_)->Useqq(0)); }
-sub DB_Vis_Dump     { DB_Vis_Interpolate($_[0]); }
-
-
 package Vis;
 
-our $VERSION = sprintf "%d.%03d", q$Revision: 1.38 $ =~ /(\d+)/g;
+our $VERSION = sprintf "%d.%03d", q$Revision: 1.39 $ =~ /(\d+)/g;
 use Exporter;
 use Data::Dumper ();
 use Carp;
@@ -88,12 +80,16 @@ our @EXPORT    = qw(vis  avis  svis  dvis
                     visq avisq svisq dvisq
                     Dumper qsh forceqsh qshpath);
 our @EXPORT_OK = qw(u 
-                    $Maxwidth $Debug $Useqq $Quotekeys $Sortkeys $Terse $Indent);
+                    $Maxwidth $Maxlevels
+                    $Debug $Useqq $Quotekeys $Sortkeys $Terse $Indent);
 
 # Used by non-oo functions, and initial settings for oo constructors.
-our ($Maxwidth, $Debug, $Useqq, $Quotekeys, $Sortkeys, $Terse, $Indent);
+our ($Maxwidth, $Maxlevels, $Debug, $Useqq, $Quotekeys, $Sortkeys, 
+     $Terse, $Indent);
 
-$Maxwidth   = undef       unless defined $Maxwidth; # undef to auto-detect tty width
+$Maxwidth   = undef       unless defined $Maxwidth; # undef to auto-detect tty 
+$Maxlevels  = 0;
+my $Maxlevels_compiled = undef;
 $Debug      = 0           unless defined $Debug;
 
 # The following Vis defaults override Data::Dumper defaults
@@ -194,7 +190,8 @@ sub _config_defaults {
     ->Indent($Indent)
     ->Debug($Debug)
     ->Useqq($Useqq)
-    ->Maxwidth($Maxwidth);
+    ->Maxwidth($Maxwidth)
+    ->Maxlevels($Maxlevels);
 }
 
 # vnew(items...)                
@@ -254,9 +251,17 @@ sub Maxwidth {
   my($s, $v) = @_;
   @_ >= 2 ? (($s->{Maxwidth} = $v), return $s) : $s->{Maxwidth};
 }
+sub Maxlevels {
+  my($s, $v) = @_;
+  @_ >= 2 ? (($s->{Maxlevels} = $v), return $s) : $s->{Maxlevels};
+}
 
-my $qstr_re = qr{ " (?: [^"\\]++ | \\. )* " | ' (?: [^'\\]++ | \\. )* ' }x;
+#my $qstr_re = qr{ " (?: [^"\\]++ | \\. )* " | ' (?: [^'\\]++ | \\. )* ' }x;
+my $qstr_re = qr{ " (?: [^"\\]++ | \\. )*+ " | ' (?: [^'\\]++ | \\. )*+ ' }x;
+
 my $key_re  = qr{ \w+ | $qstr_re }x;
+
+sub ddvis(@)  { Vis->dnew(@_)->Debug(0)->Maxlevels(0)->Useqq(0)->Dump }
 
 sub Dump {
   my ($self) = @_;
@@ -267,15 +272,40 @@ sub Dump {
     goto &DB::DB_Vis_Dump if ($self->{VisType}//"") =~ /[sd]/;
   } 
 
+  my ($debug, $maxwidth, $maxlevels) = @$self{qw/VisDebug Maxwidth Maxlevels/};
+
   local $_ = $self->SUPER::Dump;
 
-  my $maxwidth = $self->{Maxwidth};
+  print "===== RAW =====\n${_}---------------\n" if $debug;
+
+  if ($maxlevels > 0) {
+    my $start_elide;
+    for (my $cnt=0; ;) {
+      /\G (?: [^"'{}()\[\]]++ | $qstr_re )*+ /xsgc;
+      if (/\G[\[\{\(]/gc) {
+        if (++$cnt==$maxlevels) { $start_elide = pos }
+      }
+      elsif (/\G[\]\}\)]/gc) {
+        if ($cnt-- == $maxlevels) { 
+          my $len = pos()-1 - $start_elide;
+          #warn "ELIDE: $start_elide [$len]\n";
+          if ($len > 4) {
+            substr($_,$start_elide,$len) = "...";
+            pos = $start_elide+4;
+          }
+        }
+      }
+      elsif (pos() == length($_)) {
+        last;
+      }
+      else {
+        die "Vis Maxlevels bug: next:",substr($_,pos,4),
+            "... length=",length($_)," pos=",pos," in:\n$_\n".(" "x pos)."^\n "
+      }
+    }
+  }
 
   #return $_ if $maxwidth == 0; # no condensation
-
-  my $debug = $self->{VisDebug};
-
-  print "===== RAW =====\n${_}---------------\n" if $debug;
 
   # Split into logical lines, being careful to preserve newlines in strings. 
   # The "delimiter" is the whole (logical) line, including final newline,
@@ -459,11 +489,18 @@ sub SaveAndResetPunct {
 
 package DB;
 
+# Trampolines
+sub DB_Vis_svis(@)  { DB_Vis_Interpolate(Vis->snew(@_)); }
+sub DB_Vis_dvis(@)  { DB_Vis_Interpolate(Vis->dnew(@_)); }
+sub DB_Vis_svisq(@) { DB_Vis_Interpolate(Vis->snew(@_)->Useqq(0)); }
+sub DB_Vis_dvisq(@) { DB_Vis_Interpolate(Vis->dnew(@_)->Useqq(0)); }
+sub DB_Vis_Dump     { DB_Vis_Interpolate($_[0]); }
+
 # Interpolate strings for svis and dvis.   This must be in package
 # DB and the closest scope not in package DB must be the user's context.
 # 
-# To accomplish this, interface functions in package Vis goto a 
-# trampoline in package DB, which in turn calls us.
+# To accomplish this, interface functions in package Vis goto a trampoline, 
+# which in turn calls us.
 #
 sub DB_Vis_Interpolate {
   &Vis::SaveAndResetPunct;
@@ -476,9 +513,9 @@ sub DB_Vis_Interpolate {
     (
         [^"'{}()\[\]]+
       | $qstr_re
-      | \{ (?-1) \}
-      | \( (?-1) \)
-      | \[ (?-1) \]
+      | \{ (?-1)+ \}
+      | \( (?-1)+ \)
+      | \[ (?-1)+ \]
     )*
   }x;
   state $scalar_index_re = qr{ 
@@ -615,19 +652,19 @@ Vis - Improve Data::Dumper to format arbitrary Perl data in messages
 
   use Vis;
 
-  my %hash = ( complicated => ['lengthy','stuff',1..20] );
+  my %hash = ( complicated => ['lengthy','stuff',[1..20]] );
   my $href = \%hash;
 
-  print svis 'href=$href\n hash=%hash\n ARGV=@ARGV\n'; # SINGLE quoted!
-  print dvis 'Display of variables: $href %hash @ARGV\n'; 
-  print "href=", vis($href), "\n";
+  print "href=", vis($href), "\n"; 
   print "ARGV=", avis(@ARGV), "\n";
+  print svis 'href=$href\n hash=%hash\n ARGV=@ARGV\n'; # SINGLE quoted!  
+  print dvis 'Display of variables: $href %hash @ARGV\n';
 
   print "href=", visq($href), "\n";  # show strings single-quoted 
 
   print Vis->snew('href=$href\n')->Useqq(0)->Dump;
-  print Vis->dnew('$href\n')->Dump;
-  print "href=", Vis->vnew($href)->Maxlength(110)->Dump, "\n";
+  print Vis->dnew('$href\n')->Maxlevels($levels)->Dump;
+  print "href=", Vis->vnew($href)->Maxwidth(110)->Dump, "\n";
   print "ARGV=", Vis->anew(@ARGV)->Dump, "\n";
 
   print Dumper($href);                      # Data::Dumper API
@@ -650,28 +687,32 @@ which may be more convenient for error/debug messages
 (and a few related utilities).
 A condensed format is used for aggregate data.
 
-=over
+=over 2
 
-=item
+=item *
 
 A final newline is not automatically included when using the new interfaces.
 
-=item
+=item *
 
-Multiple array and hash members are shown on the same line, subject to
-a maximum line length given by $Vis::Maxwidth or the Maxwidth() method
-(defaults to terminal width or 80).
+Multiple array and hash members are shown on the same line.
+
+=item *
+
+Inner portions of deep structures are replaced by "...".
 
 The first print statement above produces the following output:
 
-  href={
-    complicated => [ "lengthy", "stuff", 1, 2, 3, 4, 5, 6, 7,
-      8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20
+  href={ complicated => [ "lengthy", "stuff",
+      [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]
     ]
   }
 
+and C<$Vis::Maxlevels = 2; print vis($href), "\n";>  produces
 
-=item
+  {complicated => [ "lengthy", "stuff", [...] ]}
+
+=item *
 
 Different Data::Dumper defaults are used:
 
@@ -684,7 +725,7 @@ B<Terse(1)> -- Don't assign to variables, just show the data.
 B<Sortkeys(smart sorting)>
 
 Numeric "components" in hash keys are auto-detected.
-For example: "A.20_999" "A.100_9" "A.100_80" "B" are shown in that order.
+For example: "A.20_999" "A.100_9" "A.100_80" "B" sort in that order.
 
 =back
   
@@ -747,6 +788,11 @@ Additionally, B<< Vis->new >> provides the same API as Data::Dumper->new.
 
 =over 4
 
+=item $Vis::Maxlevels  I<or>  I<$OBJ>->Maxlevels(I<[NEWVAL]>) 
+
+Sets or gets the maximum number of structural levels to be displayed.
+If non-zero, deeper levels are not shown and "..." is shown instead.
+
 =item $Vis::Maxwidth  I<or>  I<$OBJ>->Maxwidth(I<[NEWVAL]>) 
 
 Sets or gets the maximum number of characters for formatted lines.
@@ -773,12 +819,6 @@ The following Configuration Methods have the same meaning as in Data::Dumper
 
 Data::Dumper Configuration variables (or methods) other than the above
 may also be set.
-
-Changes to global variables should generally be localized, e.g.
-
- { local $Vis::Maxwidth = 100;
-   ...code which uses vis() or avis()...
- }
 
 =head2 u $data, ...
 
@@ -1182,4 +1222,3 @@ sub g($) {
 print "Tests passed.\n";
 exit 0;
 # End Tester
-
