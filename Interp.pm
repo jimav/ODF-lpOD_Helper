@@ -66,7 +66,7 @@ sub Vis_Eval {   # Many ideas here were stolen from perl5db.pl
 
 package Vis;
 
-our $VERSION = sprintf "%d.%03d", q$Revision: 1.40 $ =~ /(\d+)/g;
+our $VERSION = sprintf "%d.%03d", q$Revision: 1.41 $ =~ /(\d+)/g;
 use Exporter;
 use Data::Dumper ();
 use Carp;
@@ -80,16 +80,14 @@ our @EXPORT    = qw(vis  avis  svis  dvis
                     visq avisq svisq dvisq
                     Dumper qsh forceqsh qshpath);
 our @EXPORT_OK = qw(u 
-                    $Maxwidth $Maxlevels
+                    $Maxwidth 
                     $Debug $Useqq $Quotekeys $Sortkeys $Terse $Indent);
 
 # Used by non-oo functions, and initial settings for oo constructors.
-our ($Maxwidth, $Maxlevels, $Debug, $Useqq, $Quotekeys, $Sortkeys, 
+our ($Maxwidth, $Debug, $Useqq, $Quotekeys, $Sortkeys, 
      $Terse, $Indent);
 
 $Maxwidth   = undef       unless defined $Maxwidth; # undef to auto-detect tty 
-$Maxlevels  = 0;
-my $Maxlevels_compiled = undef;
 $Debug      = 0           unless defined $Debug;
 
 # The following Vis defaults override Data::Dumper defaults
@@ -191,7 +189,6 @@ sub _config_defaults {
     ->Debug($Debug)
     ->Useqq($Useqq)
     ->Maxwidth($Maxwidth)
-    ->Maxlevels($Maxlevels);
 }
 
 # vnew(items...)                
@@ -251,17 +248,13 @@ sub Maxwidth {
   my($s, $v) = @_;
   @_ >= 2 ? (($s->{Maxwidth} = $v), return $s) : $s->{Maxwidth};
 }
-sub Maxlevels {
-  my($s, $v) = @_;
-  @_ >= 2 ? (($s->{Maxlevels} = $v), return $s) : $s->{Maxlevels};
-}
 
 #my $qstr_re = qr{ " (?: [^"\\]++ | \\. )* " | ' (?: [^'\\]++ | \\. )* ' }x;
 my $qstr_re = qr{ " (?: [^"\\]++ | \\. )*+ " | ' (?: [^'\\]++ | \\. )*+ ' }x;
 
 my $key_re  = qr{ \w+ | $qstr_re }x;
 
-sub ddvis(@)  { Vis->dnew(@_)->Debug(0)->Maxlevels(0)->Useqq(0)->Dump }
+sub ddvis(@)  { Vis->dnew(@_)->Debug(0)->Useqq(0)->Dump }
 
 sub Dump {
   my ($self) = @_;
@@ -272,38 +265,14 @@ sub Dump {
     goto &DB::DB_Vis_Dump if ($self->{VisType}//"") =~ /[sd]/;
   } 
 
-  my ($debug, $maxwidth, $maxlevels) = @$self{qw/VisDebug Maxwidth Maxlevels/};
+  my ($debug, $maxwidth) = @$self{qw/VisDebug Maxwidth/};
+  my $pad = $self->SUPER::Pad();
 
   local $_ = $self->SUPER::Dump;
 
   print "===== RAW =====\n${_}---------------\n" if $debug;
 
-  if ($maxlevels > 0) {
-    my $start_elide;
-    for (my $cnt=0; ;) {
-      /\G (?: [^"'{}()\[\]]++ | $qstr_re )*+ /xsgc;
-      if (/\G[\[\{\(]/gc) {
-        if (++$cnt==$maxlevels) { $start_elide = pos }
-      }
-      elsif (/\G[\]\}\)]/gc) {
-        if ($cnt-- == $maxlevels) { 
-          my $len = pos()-1 - $start_elide;
-          #warn "ELIDE: $start_elide [$len]\n";
-          if ($len > 4) {
-            substr($_,$start_elide,$len) = "...";
-            pos = $start_elide+4;
-          }
-        }
-      }
-      elsif (pos() == length($_)) {
-        last;
-      }
-      else {
-        die "Vis Maxlevels bug: next:",substr($_,pos,4),
-            "... length=",length($_)," pos=",pos," in:\n$_\n".(" "x pos)."^\n "
-      }
-    }
-  }
+  s/^\Q${pad}\E//mg if $pad;
 
   #return $_ if $maxwidth == 0; # no condensation
 
@@ -422,10 +391,12 @@ sub Dump {
   if ($self->{VisType}) {
     s/\s+\z//s;  # omit final newline except when emulating Data::Dumper
     if ($self->{VisType} eq 'a') {
-      s/^[\[{]/\(/ or confess "bug($_)"; # convert to "(list,of,args)"
+      s/^( *)[\[{]/$1\(/ or confess "bug($_)"; # convert to "(list,of,args)"
       s/[\]}]$/\)/ or confess "bug($_)";
     }
   }
+
+  s/^/$pad/meg if $pad;
 
   return $_;
 }
@@ -506,8 +477,9 @@ sub DB_Vis_Interpolate {
   &Vis::SaveAndResetPunct;
 
   my ($self) = @_;
-  my $debug = $self->{VisDebug};
+  my ($debug, $maxwidth) = @$self{'VisDebug','Maxwidth'};
   my $display_mode = ($self->{VisType} eq 'd');
+  my $pad; { package Vis; $pad = $self->SUPER::Pad(); }
 
   state $interior_re = qr{ 
     (
@@ -583,7 +555,7 @@ sub DB_Vis_Interpolate {
   # $_ and $1 etc. have now been restored to the caller's values
   # DO NOT use regex with (capture groups) between here and the eval below!
 
-  my $result = "";
+  my $result = $pad;
   foreach my $action (@actions) {
     my $act = $action->[0];
     if ($act eq 'e') {
@@ -594,42 +566,62 @@ sub DB_Vis_Interpolate {
 
       my @items = Vis_Eval("$sigl$rhs");
       
-      my $prefix = "";
+      my $varlabel = "";
       if ($display_mode) {
         # Don't show initial $ if it's a non-special scalar variable name
-        $prefix = (($sigl eq '$' && $rhs =~ /^[A-Za-z]/) ? "" : $sigl)
-                  . $rhs . "=" ;
+        $varlabel = (($sigl eq '$' && $rhs =~ /^[A-Za-z]/) ? "" : $sigl)
+                        . $rhs . "=" ;
       }
+
+      my $extra_padlen;
+      { $result =~ /([^\n]*)\z/s;  # already includes user's Pad 
+        $extra_padlen = length($1) - length($pad) + length($varlabel);
+        # Wrap if we're getting ridiculous
+        if ($extra_padlen > $maxwidth-15 && length($1) > length($pad)
+            && $maxwidth > 0) {
+          $result .= "<wrapped>\n$pad";
+          redo;
+        }
+      }
+
+      my $autopad = $pad.(" " x $extra_padlen);
       if ($sigl eq '$') {
-        $self->Reset()->Values([$items[0]])->{VisType} = 'v';
+        $self->Reset()->Pad($autopad)->Values([$items[0]])->{VisType}='v';
       }
       elsif ($sigl eq '@') {
-        $self->Reset()->Values([\@items])->{VisType} = 'a';
+        $self->Reset()->Pad($autopad)->Values([\@items])->{VisType} = 'a';
       }
       elsif ($sigl eq '%') {
         my %hash = @items;
-        $self->Reset()->Values([\%hash])->{VisType} = 'a';
+        $self->Reset()->Pad($autopad)->Values([\%hash])->{VisType} = 'a';
       }
       else { die "bug" }
-      $result .= $prefix . $self->Dump;
+
+      my $s = $self->Dump;
+      #print "### Dump result:\n«$s»\n";
+      substr($s, 0, length($autopad)) = $varlabel;
+      $result .= $s;
     }
     elsif ($act eq 't') {
       # Interpolate \n etc.
-      my $text = $action->[1];
-      if ($text =~ /\b((?:ARRAY|HASH)\(0x[^\)]*\))/) {
+      my $rawtext = $action->[1];
+      if ($rawtext =~ /\b((?:ARRAY|HASH)\(0x[^\)]*\))/) {
         state $warned=0;
         Carp::carp "Warning: String passed to svis or dvis may have been interpolated by Perl\n(use 'single quotes' to avoid this)\n" unless $warned++;
       }
-      print "### PLAIN «$text»\n" if $debug;
+      print "### PLAIN «$rawtext»\n" if $debug;
       my $saved_eval_err = $@;
+      #??? WHY ARENT WE USING local $@ HERE???
       { #local $@;
-        my $value = eval qq{<<"ViSEoF"
-$text
+        my $itext = eval qq{<<"ViSEoF"
+$rawtext
 ViSEoF
 };
-        Carp::confess "bug($text)$@" if $@;
-        $value =~ s/\n\z//;  # don't use chomp(): $/ may have been changed
-        $result .= $value;  # plain text
+        Carp::confess "bug($rawtext)$@ " if $@;
+        #??? $/ is now reset by SaveAndResetPunct, should be ok to use chomp
+        $itext =~ s/\n\z//;  # don't use chomp(): $/ may have been changed
+        $itext =~ s/\n(?!\z)/"\n$pad"/seg if $pad;
+        $result .= $itext;  # plain text
       }
       $@ = $saved_eval_err;
     } else {
@@ -646,7 +638,7 @@ __END__
 
 =head1 NAME 
 
-Vis - Improve Data::Dumper to format arbitrary Perl data in messages
+Vis - Improve Data::Dumper for use in messages
 
 =head1 SYNOPSIS
 
@@ -655,7 +647,7 @@ Vis - Improve Data::Dumper to format arbitrary Perl data in messages
   my %hash = ( complicated => ['lengthy', 'stuff', [1..20]] );
   my $ref = \%hash;
 
-  # Interpolate strings, stingifying aggregates
+  # Interpolate strings, stingifying aggregates with auto-indenting
   print svis 'ref=$ref\n hash=%hash\n ARGV=@ARGV\n'; # SINGLE quoted!  
   print dvis 'FYI $ref %hash @ARGV\n';  
 
@@ -663,11 +655,13 @@ Vis - Improve Data::Dumper to format arbitrary Perl data in messages
   print "ref=", vis($ref), "\n";
   print "ARGV=", avis(@ARGV), "\n";  # (array,values,in,parens)
 
-  # Equivalent OO APIs, allow using configuration methods
-  # (corresponding globals $Vis::xxx are also available)
+  dvisq(), svisq(), visq(), and avisq() show strings 'single quoted'
+
+  # Equivalent OO APIs allow using configuration methods
   print Vis->snew('Howdy! var=$var ary=@ary hash=%hash\n')
-             ->Maxlevels($levels)
              ->Maxwidth(120)
+             ->Maxdepth($levels)
+             ->Pad("| ")
              ->Dump;                                  # like svis()
   print Vis->dnew('Howdy! $var @ary %hash\n')->Dump;  # like dvis()
   print Vis->vnew($scalar)->Dump, "\n";               # like vis()
@@ -692,7 +686,7 @@ Vis - Improve Data::Dumper to format arbitrary Perl data in messages
 
 The Vis package provides additional interfaces to Data::Dumper
 which may be more convenient for error/debug messages 
-(and a few related utilities).
+(plus a few related utilities).
 A condensed format is used for aggregate data.
 
 =over 2
@@ -705,20 +699,12 @@ A final newline is not automatically included when using the new interfaces.
 
 Multiple array and hash members are shown on the same line.
 
-=item *
-
-Inner portions of deep structures are replaced by "...".
-
-The print statement B<print "ref=", vis($ref), "\n";> produces
+For example  B<print "ref=", vis($ref), "\n";>  produces
 
   ref={ complicated => [ "lengthy", "stuff",
       [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]
     ]
   }
-
-and with B<$Vis::Maxlevels = 2>  you get
-
-  {complicated => [ "lengthy", "stuff", [...] ]}
 
 =item *
 
@@ -740,23 +726,22 @@ For example: "A.20_999" "A.100_9" "A.100_80" and "B" sort in that order.
 =back
 
 Vis is a subclass of Data::Dumper and is a drop-in replacement.  The old
-APIs are all available but produce condensed output formatting.
-A final newline in included when using the old APIs.
+APIs are all available through Vis but produce condensed output formatting.
+Data::Dumper may also be called directly (see "PERFORMANCE").
 
 =head2 svis 'string to be interpolated',...
 
 Variables and escapes in the string(s) are interpolated as 
-in Perl double-quotish strings except that expression values 
-are formatted using C<vis()> or C<avis()> (for $ or @ expressions, 
-respectively).  
-String values appear "quoted" and complex data structures are shown in full.
+in Perl double-quotish strings except that values are formatted
+using C<vis()> or C<avis()> (for $ or @ expressions, respectively).
+Therefore complex data structures are shown in full 
+(possibly subject to B<Maxdepth()>).  String values
+appear unambiguously "quoted".  
+In addition, C<%name> is interpolated as S<<< C<< (key => value ...) >> >>>.
 Multiple arguments are concatenated.
 
 The input string(s) should written SINGLE QUOTED so Perl will not 
 interpolate them before passing to svis().
-
-In addition, C<svis> interpolates C<< %name >> 
-into S<<< C<< (key => value ...) >> >>>
 
 =head2 dvis 'string to be interpolated',...
 
@@ -765,6 +750,8 @@ except that interpolated expressions are prefixed by
 the name of the variable or the expression.  
 For example, S<dvis('$foo $i $ary[$i] @ary %hash\n')> 
 yields S<< "foo=<value> i=<value> ary[i]=<value> @ary=(<value>,...) %hash=(key => <value>)\n". >>
+
+C<svis> and C<dvis> should not be called from package DB.
 
 =head2 vis $item, ... 
 
@@ -796,11 +783,6 @@ Additionally, B<< Vis->new >> provides the same API as Data::Dumper->new.
 
 =over 4
 
-=item $Vis::Maxlevels  I<or>  I<$OBJ>->Maxlevels(I<[NEWVAL]>) 
-
-Sets or gets the maximum number of structural levels to be displayed.
-Deeper levels are replaced with "...".  Default is 0 (disabled).
-
 =item $Vis::Maxwidth  I<or>  I<$OBJ>->Maxwidth(I<[NEWVAL]>) 
 
 Sets or gets the maximum number of characters for formatted lines.
@@ -810,24 +792,68 @@ If Maxwidth=0 output is not folded, appearing similar to Data::Dumper
 
 =back
 
-The following Configuration Methods have the same meaning as in Data::Dumper
+The following Methods have the same meaning as in Data::Dumper except that
+default values come from global variables in package Vis :
 
 =over 4
 
-=item $Vis::Useqq  I<or>  I<$OBJ>->Useqq(I<[NEWVAL]>) 
+=item $Vis::Useqq               I<or>  I<$OBJ>->Useqq(I<[NEWVAL]>) 
 
-=item $Vis::Quotekeys  I<or>  I<$OBJ>->Quotekeys(I<[NEWVAL]>) 
+=item $Vis::Quotekeys           I<or>  I<$OBJ>->Quotekeys(I<[NEWVAL]>) 
 
-=item $Vis::Sortkeys  I<or>  I<$OBJ>->Sortkeys(I<[NEWVAL]>) 
+=item $Vis::Sortkeys            I<or>  I<$OBJ>->Sortkeys(I<[NEWVAL]>) 
 
-=item $Vis::Terse  I<or>  I<$OBJ>->Terse(I<[NEWVAL]>) 
+=item $Vis::Terse               I<or>  I<$OBJ>->Terse(I<[NEWVAL]>) 
 
-=item $Vis::Indent  I<or>  I<$OBJ>->Indent(I<[NEWVAL]>) 
+=item $Vis::Indent              I<or>  I<$OBJ>->Indent(I<[NEWVAL]>) 
 
 =back
 
-Data::Dumper Configuration variables (or methods) other than the above
-may also be set.
+Other inherited methods may also be used, with default values
+from global variables in Data::Dumper .  Here is a partial list:
+
+=over 4
+
+=item $Data::Dumper::Deepcopy   I<or>  I<$OBJ>->Deepcopy(I<[NEWVAL]>) 
+
+=item $Data::Dumper::Deparse    I<or>  I<$OBJ>->Deparse(I<[NEWVAL]>) 
+
+=item $Data::Dumper::Freezer    I<or>  I<$OBJ>->Freezer(I<[NEWVAL]>) 
+
+=item $Data::Dumper::Maxdepth   I<or>  I<$OBJ>->Maxdepth(I<[NEWVAL]>) 
+
+=item $Data::Dumper::Pad        I<or>  I<$OBJ>->Pad(I<[NEWVAL]>) 
+
+=item $Data::Dumper::Purity     I<or>  I<$OBJ>->Purity(I<[NEWVAL]>) 
+
+=item $Data::Dumper::Quotekeys  I<or>  I<$OBJ>->Quotekeys(I<[NEWVAL]>) 
+
+=item $Data::Dumper::Sortkeys   I<or>  I<$OBJ>->Sortkeys(I<[NEWVAL]>) 
+
+=item $Data::Dumper::Toaster    I<or>  I<$OBJ>->Toaster(I<[NEWVAL]>) 
+
+=item $Data::Dumper::Useqq      I<or>  I<$OBJ>->Useqq(I<[NEWVAL]>) 
+
+=item $Data::Dumper::Varname    I<or>  I<$OBJ>->Varname(I<[NEWVAL]>) 
+
+Note that the B<Useqq(0)> is called implicitly 
+by B<svisq>, B<dvisq>, B<visq>, and B<avisq>.
+
+=back
+
+The following inherited methods should be used carefully, if at all,
+because Vis makes certain assumptions about their settings:
+
+=over 4
+
+=item $Data::Dumper::Pair       I<or>  I<$OBJ>->Pair(I<[NEWVAL]>) 
+
+=item $Data::Dumper::Indent     I<or>  I<$OBJ>->Indent(I<[NEWVAL]>) 
+
+=item $Data::Dumper::Terse      I<or>  I<$OBJ>->Terse(I<[NEWVAL]>) 
+
+=back
+
 
 =head2 u $data, ...
 
@@ -863,7 +889,7 @@ Unlike C<qsh>, C<forceqsh> requires exactly one argument.
 
 Vis calls Data::Dumper and then condenses the output. 
 C<svis> and C<dvis> must also parse the strings to be interpolated.  
-For most puposes performance is of no concern.
+For most purposes performance is of no concern.
 
 Single-quote style (C<Useqq(0)>) runs faster because 
 the underlying Data::Dumper implementation uses XS (C code).
