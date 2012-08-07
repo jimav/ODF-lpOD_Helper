@@ -1,8 +1,8 @@
 use strict; use warnings; use utf8;
 # Version string is after sub Vis_Eval.
 
-# Copyright © Jim Avera 2012.  Released into the Public Domain 
-# by the copyright owner.  (james_avera AT yahoo đøţ ¢ÔḾ) 
+# Copyright © Jim Avera 2012.  Released into the Public Domain
+# by the copyright owner.  (james_avera AT yahoo đøţ ¢ÔḾ)
 # Please retain the preceeding attribution in any copies or derivitives.
 
 # Documentation is at the end
@@ -23,19 +23,17 @@ sub Vis_Eval {   # Many ideas here were stolen from perl5db.pl
   #   0: Our current running context, right here
   #   1: DB::DB_Vis_Interpolate calling us
   #   2: Trampoline calling DB::DB_Vis_Interpolate
-  #   3: User calling the trampoline (via goto from interface function) 
+  #   3: User calling the trampoline (via goto from interface function)
   ($Vis::pkg) = caller 2;  # name of package containing user's call
   ($Vis::UserIsInSub) = caller 3;  # Set @DB::args to user's @_ if in a sub
 
   # make user's @_ accessible, if the user is in a sub (otherwise we can't)
-  local *_ = 
+  local *_ =
     $Vis::UserIsInSub ? \@DB::args : ['<Sorry, outer @_ is not visible>'];
 
   # At this point, nothing is in scope except the name of this sub
 
-  # Before executing <evalarg> restore $@ etc. from values saved at entry
-  # The space after $evalarg is essential in case it is $;
-  @Vis::result = eval '($@, $!, $^E, $,, $/, $\, $^W) = @Vis::saved;' 
+  @Vis::result = eval '($@, $!, $^E, $,, $/, $\, $^W) = @Vis::saved;'
                      ."package $Vis::pkg; $Vis::evalarg ";
 
   package Vis;
@@ -50,7 +48,7 @@ sub Vis_Eval {   # Many ideas here were stolen from perl5db.pl
   # However we don't want to re-save $@; instead we want the originally-saved
   # $@ from the user to be kept (and ultimately restored later).
   # By localizing $saved[0] here, the effect of the following call to
-  # &SaveAndResetPunct will be un-done when we return, restoring the 
+  # &SaveAndResetPunct will be un-done when we return, restoring the
   # originally-saved value for $@.
   local $saved[0];
   &Vis::SaveAndResetPunct;
@@ -58,36 +56,42 @@ sub Vis_Eval {   # Many ideas here were stolen from perl5db.pl
   if ($at) {
     ##$at =~ s/ at \(eval.*//;
     push @DB::CARP_NOT, 'Vis';
-    Carp::croak("Error interpolating '$evalarg':\n $at"); 
-  } 
+    Carp::croak("Error interpolating '$evalarg':\n $at");
+  }
 
   return @result;
 }
 
 package Vis;
 
-our $VERSION = sprintf "%d.%03d", q$Revision: 1.41 $ =~ /(\d+)/g;
+our $VERSION = sprintf "%d.%03d", q$Revision: 1.42 $ =~ /(\d+)/g;
 use Exporter;
 use Data::Dumper ();
 use Carp;
 use feature qw(switch state);
 use POSIX qw(INT_MAX);
-sub debugvis($) 
-{local $/="\n"; chomp(my $s = Data::Dumper->new([shift])->Useqq('utf8')->Terse(1)->Indent(0)->Dump); $s;}
+
+sub debugvis(@) {  # for our internal debug messages
+  confess "multiple args not supported in debugvis" if @_ != 1;
+  local $/ = "\n";
+  my $s = Data::Dumper->new([shift])->Useqq(0)->Terse(1)->Indent(1)->Dump;
+  chomp $s;
+  return $s;
+}
 
 our @ISA       = qw(Exporter Data::Dumper);
-our @EXPORT    = qw(vis  avis  svis  dvis 
+our @EXPORT    = qw(vis  avis  svis  dvis
                     visq avisq svisq dvisq
                     Dumper qsh forceqsh qshpath);
-our @EXPORT_OK = qw(u 
-                    $Maxwidth 
+our @EXPORT_OK = qw(u
+                    $Maxwidth
                     $Debug $Useqq $Quotekeys $Sortkeys $Terse $Indent);
 
 # Used by non-oo functions, and initial settings for oo constructors.
-our ($Maxwidth, $Debug, $Useqq, $Quotekeys, $Sortkeys, 
+our ($Maxwidth, $Debug, $Useqq, $Quotekeys, $Sortkeys,
      $Terse, $Indent);
 
-$Maxwidth   = undef       unless defined $Maxwidth; # undef to auto-detect tty 
+$Maxwidth   = undef       unless defined $Maxwidth; # undef to auto-detect tty
 $Debug      = 0           unless defined $Debug;
 
 # The following Vis defaults override Data::Dumper defaults
@@ -99,7 +103,7 @@ $Indent     = 1           unless defined $Indent;
 
 # Functional (non-oo) APIs
 sub u(@);
-sub u(@)      { @_ == 1 
+sub u(@)      { @_ == 1
                   ? defined($_[0]) ? $_[0] : "undef"
                   : (map { u($_) } @_)
               }
@@ -118,21 +122,21 @@ sub dvisq(@)  { goto &DB::DB_Vis_dvisq }
 
 # Provide Data::Dumper non-oo APIs
 sub Dumper(@) { return __PACKAGE__->Dump([@_]); }
-sub Dumpf(@)  { return __PACKAGE__->Dump([@_]); }
+sub Dumpf(@)  { return __PACKAGE__->Dump(@_); }
 sub Dumpp(@)  { print __PACKAGE__->Dump(@_); }
 
 # Note: All Data::Dumper methods can be called on Vis objects
 
-# Split keys into "components" (e.g. 2_16.A has 3 components) and sort each 
+# Split keys into "components" (e.g. 2_16.A has 3 components) and sort each
 # component numerically if the corresponding items are both numbers.
 sub _sortkeys {
   my $hash = shift;
   return [
-    sort { my @a = split /([_\W])/,$a; 
-           my @b = split /([_\W])/,$b; 
+    sort { my @a = split /([_\W])/,$a;
+           my @b = split /([_\W])/,$b;
            for (my $i=0; $i <= $#a; ++$i) {
              return 1 if $i > $#b;  # a is longer
-             my $r = ($a[$i] =~ /^\d+$/ && $b[$i] =~ /^\d+$/) 
+             my $r = ($a[$i] =~ /^\d+$/ && $b[$i] =~ /^\d+$/)
                       ? ($a[$i] <=> $b[$i]) : ($a[$i] cmp $b[$i]) ;
              return $r if $r != 0;
            }
@@ -152,7 +156,7 @@ sub _unix_compatible_os() {
   && -w "/dev/null"
 }
 sub _get_default_width() {
-  local $_;
+  local ($_, $!, $^E);
   my $r;
   if (_unix_compatible_os) {
     if (-t STDERR) {
@@ -166,8 +170,8 @@ sub _get_default_width() {
     }
   }
   # elsif(...) { ... }
-  else { 
-    warn "(fixme) Unrecognized OS $^O or no /dev/null" 
+  else {
+    warn "(fixme) Unrecognized OS $^O or no /dev/null"
   }
   return $r || 80;
 }
@@ -175,7 +179,7 @@ sub _get_default_width() {
 sub _config_defaults {
   my $self = shift;
 
-  # Set double-quote style, but preserve any special 
+  # Set double-quote style, but preserve any special
   # $Data::Dumper::Useqq setting, e.g. 'utf8'
   $self->Useqq(1) unless $self->Useqq();
 
@@ -191,10 +195,10 @@ sub _config_defaults {
     ->Maxwidth($Maxwidth)
 }
 
-# vnew(items...)                
-# anew(items...)              
-# snew(strings...)             
-# dnew(strings...)             
+# vnew(items...)
+# anew(items...)
+# snew(strings...)
+# dnew(strings...)
 sub vnew {
   my $class = shift;
   my $obj = (bless($class->SUPER::new(\@_), $class))->_config_defaults();
@@ -210,10 +214,10 @@ sub anew {
 sub snew {
   my $class = shift;
   # The string we pass here to the Dumper constructor (which, by the way,
-  # the user can get or replace via the inherited Value method) will not 
+  # the user can get or replace via the inherited Value method) will not
   # actually be formatted as-is.  Instead, our overload Dump() method
-  # will parse the string and then re-use the dumper object to format 
-  # each interpolated $varname etc. separately, thereby using any 
+  # will parse the string and then re-use the dumper object to format
+  # each interpolated $varname etc. separately, thereby using any
   # configurations (such as Useqq or Indent) set by the user.
   my $obj = (bless($class->SUPER::new([@_]), $class))->_config_defaults();
   $obj->{VisType} = 's';
@@ -225,11 +229,11 @@ sub dnew {
   $obj;
 }
 
-# new([items...],[names...])  
+# new([items...],[names...])
 # Functionally compatible with Data::Dumper->new(), including final newline.
 # The differences include:
-#   * Condensed output format 
-#   * Defaults to Purity(1) 
+#   * Condensed output format
+#   * Defaults to Purity(1)
 sub new {
   my $class = shift;
   bless($class->SUPER::new(@_), $class)
@@ -249,12 +253,32 @@ sub Maxwidth {
   @_ >= 2 ? (($s->{Maxwidth} = $v), return $s) : $s->{Maxwidth};
 }
 
-#my $qstr_re = qr{ " (?: [^"\\]++ | \\. )* " | ' (?: [^'\\]++ | \\. )* ' }x;
 my $qstr_re = qr{ " (?: [^"\\]++ | \\. )*+ " | ' (?: [^'\\]++ | \\. )*+ ' }x;
 
-my $key_re  = qr{ \w+ | $qstr_re }x;
+# Match one balanced block (NOTE: Uses one capture group)
+my $balanced_re = qr{
+     (
+          \{ (?: [^"'{}()\[\]]++ | (?>$qstr_re) | (?-1)++ )*+ \}
+        | \[ (?: [^"'{}()\[\]]++ | (?>$qstr_re) | (?-1)++ )*+ \]
+        | \( (?: [^"'{}()\[\]]++ | (?>$qstr_re) | (?-1)++ )*+ \)
+     )
+   }x;
+my $balanced_squished_re = qr{  # match [a,...  but not [ a,...
+     (
+          \{ (?!\ ) (?: [^"'{}()\[\]]++ | (?>$qstr_re) | (?-1)++ )*+ \}
+        | \[ (?!\ ) (?: [^"'{}()\[\]]++ | (?>$qstr_re) | (?-1)++ )*+ \]
+        | \( (?!\ ) (?: [^"'{}()\[\]]++ | (?>$qstr_re) | (?-1)++ )*+ \)
+     )
+   }x;
 
-sub ddvis(@)  { Vis->dnew(@_)->Debug(0)->Useqq(0)->Dump }
+# This matches innocous stuff and/or balanced blocks
+my $balanced_or_safe_re = qr{
+     #(?{ print "### START balanced_or_safe_re at $+[0]\n"; })
+     (?: [^"'{}()\[\]]+ | $qstr_re | $balanced_re)*
+     #(?{ print "### END balanced_or_safe_re at $+[0] $^N\n"; })
+   }x;
+
+my $key_re  = qr{ \w+ | $qstr_re }x;
 
 sub Dump {
   my ($self) = @_;
@@ -263,10 +287,10 @@ sub Dump {
     $self = $self->new(@_[1..$#_]);
   } else {
     goto &DB::DB_Vis_Dump if ($self->{VisType}//"") =~ /[sd]/;
-  } 
+  }
 
   my ($debug, $maxwidth) = @$self{qw/VisDebug Maxwidth/};
-  my $pad = $self->SUPER::Pad();
+  my $pad = $self->Pad();
 
   local $_ = $self->SUPER::Dump;
 
@@ -276,15 +300,16 @@ sub Dump {
 
   #return $_ if $maxwidth == 0; # no condensation
 
-  # Split into logical lines, being careful to preserve newlines in strings. 
+  # Split into logical lines, being careful to preserve newlines in strings.
   # The "delimiter" is the whole (logical) line, including final newline,
   # which is returned because it is in a (capture group).
   my $split_re = $self->Useqq()
-                 ? qr/( (?: "(?: [^"]++ |\\" )*+" | [^"\n]++ )* \n )/xo
-                 : qr/( (?: '(?: [^']++ |\\' )*+' | [^'\n]++ )* \n )/xo ;
-  my @lines = (grep {defined} split /$split_re/, $_);
+       ? qr/( (?: "(?:[^"\\]++|\\.)*+" | [^"\n]++ )* \n)/xs
+       : qr/( (?: '(?:[^'\\]++|\\['\\]|\\(?=[^'\\]))*+' | [^'\n]++ )* \n)/xs;
+  my @lines = (grep {defined($_) && $_ ne ""} split /$split_re/, $_);
+  #print "### Useqq=",$self->Useqq()," split_re=/$split_re/ lines:\n  ",debugvis(\@lines),"\n";
 
-  # Data::Dumper output with Indent(1) is very structured, with a 
+  # Data::Dumper output with Indent(1) is very structured, with a
   # fixed 2-space indent increment:
   # [
   #   value,
@@ -301,18 +326,18 @@ sub Dump {
   #   },
   #   value
   # ]
-  
+
   # Combine appropriate lines to make it more "horizontal"
   my $restart = 0;
-  while ($restart < $#lines) 
+  while ($restart < $#lines)
   {
     print "RESTART at $restart \n" if $debug;
     LOOP:
     for (my $I=$restart, my $J=$restart+1, $restart=INT_MAX-1;
-         $J <= $#lines; 
-         $I=$J, $J=$I+1) 
+         $J <= $#lines;
+         $I=$J, $J=$I+1)
     {
-      # Find next pair of lines which haven't been "deleted" yet
+      # Find the next pair of lines which haven't been "deleted" yet
       while ($lines[$J] eq "") { next LOOP if ++$J > $#lines; }
       while ($lines[$I] eq "") { next LOOP if ++$I >= $J; }
 
@@ -330,55 +355,62 @@ sub Dump {
           printf "[%${nd}d] ", $ix;
           print($ix==$I ? "I" : " ");
           print($ix==$J ? "J" : " ");
-          print ":",($lines[$ix] eq "" ? "(empty)":debugvis($lines[$ix])),"\n";
+          print ":",($lines[$ix] eq "" ? "(empty)":debugvis($lines[$ix])), "\n";
         }
         print "--------------------\n";
       }
 
-      if ($Iindent <= $Jindent
-          && $Jcode !~ /[\[\{]$/ # J isn't opening a new aggregate
+      if (($Iindent <= $Jindent)
           && $Icode !~ /^[\]\}]/ # I isn't closing an aggregate
-          && ($Icode =~ /(?:,|[\[\{])$/s || $Jcode =~ /^[\]\}]/s)
+
+          # && $Jcode !~ /[\[\{]$/ # [FIXME:???] J isn't opening a new aggregate
+
+          # J does not end with an un-closed block (we only join atoms or
+          # [whole blocks]).  This prevents hard-to-read forms like
+          #    { "KEY" => [ 1, 2, 3, 4,
+          #      "five", "six", 7 ], "KEY2" => ... }
+          && $Jcode !~ /
+                ^(?: [^"'{}()\[\]]++ | ${qstr_re} | ${balanced_re} )*+
+                 # [\{\[] .*  ,$
+                 [\{\[]
+             /x
+          # # I is an open sequence we can append to, or J is closing a [block]
+          # && ($Icode =~ /(?:,|[\[\{])$/s || $Jcode =~ /^[\]\}]/s)
          )
       {
         # The lines are elegible to be joined, if there is enough space
-
         my $Ilen = $Iindent + length($Icode);
+        my $Jlen = length($Jcode);
 
-        my $squish = (($Icode =~ /^\[ / && $Jcode =~ /^\]/) ||
-                      ($Icode =~ /^\{ / && $Jcode =~ /^\}/) ||
-                      ($Icode =~ /^${key_re} => \{ / && $Jcode =~ /^\}/)
-                     ) ? 2:0;     
-
-        print "Ilen=$Ilen squish=$squish len(Jcode)=",length($Jcode),
-              " calc=",
-              ($Ilen + length($Jcode) + 1 - $squish),
-              " mw=$maxwidth\n" if $debug;
-
-        if ($Ilen + length($Jcode) + 1 - $squish <= $maxwidth) {
-          # Join the lines
-          substr($lines[$I],$Ilen  ,1) = ' ';
-          substr($lines[$I],$Ilen+1  ) = substr($lines[$J], $Jindent);
-          if ($squish) {
-            # Change [ 1, 2 ] -> [1, 2]  and  { K => val } -> {K => val}
-            # This is very imperfect.  Only simple cases are squished.
-            die "bug" if substr($lines[$I],$Ilen,1) ne " ";
-            substr($lines[$I],$Ilen,1)="";
-            $lines[$I] =~ s/^( *(?:[\[\(]|(?:${key_re} => )?\{)) /$1/ or "die";
+        print "[Ilen=$Ilen Jlen=$Jlen"," mw=$maxwidth]\n" if $debug;
+        if ($Ilen + $Jlen - 2 <= $maxwidth) {
+          # It may be possible, after squishing [ 1, 2 ] -> [1, 2]
+          my $saved_Iend =
+            substr($lines[$I],$Ilen,INT_MAX, ' '.substr($lines[$J], $Jindent));
+          if ($lines[$I] =~ /\ \],?$/) {
+            $lines[$I] =~ s/ # nb $balanced_squished_re uses a (capture group)
+    ^( (?: ${balanced_squished_re} | [^"'{}()\[\]]++ | ${qstr_re} )*+ )
+     \[\ (.*)\ \]/$1\[$3\]/x or $Jcode =~ /\[\],?$/ or die "\nbug"
           }
-          $lines[$J] = "";
-
-          #$restart = $I if $I < $restart;
-          $restart = 0 if $I < $restart;
-          last LOOP if ++$J > $#lines;
-          redo LOOP;
+          elsif ($lines[$I] =~ /\ \},?$/) {
+            $lines[$I] =~ s/
+    ^( (?: ${balanced_squished_re} | [^"'{}()\[\]]++ | ${qstr_re} )*+ )
+     \{\ (.*)\ \}/$1\{$3\}/x or $Jcode =~ /\{\},?$/ or die "\nbug"
+          }
+          if (length($lines[$I])-1 <= $maxwidth) {
+            $lines[$J] = "";
+            #$restart = $I if $I < $restart;
+            $restart = 0 if $I < $restart;
+            last LOOP if ++$J > $#lines;
+            redo LOOP;
+          } else {
+            print "MARGINALLY TOO LONG (could not squish anything)\n",
+                  debugvis($lines[$I]),"\n"
+              if $debug;
+            substr($lines[$I],$Ilen,INT_MAX) = $saved_Iend;
+          }
         } else {
-          # Not joined, but could have if the line wasn't too long.
           print "NO ROOM\n" if $debug;
-
-          #if ($Jcode =~ /^(?:${key_re} => )?[\{\[]/) {
-          #  indent rest of this block by $Ilen+length($sep)-$Jindent;
-          #}
         }
       } else {
         print "NOT ELEGIBLE\n" if $debug;
@@ -402,10 +434,10 @@ sub Dump {
 }
 
 sub forceqsh($) {
-  # Unlike Perl, the bourne shell does not recognize backslash escapes 
+  # Unlike Perl, the bourne shell does not recognize backslash escapes
   # inside '...'.  Therefore the quoting has to be interrupted for any
   # embedded single-quotes so they can be contatenated as \' or "'"
-  # 
+  #
   # N.B. vis with Useqq(0) will format ' as \' and \ as \\
 
   local $_ = __PACKAGE__->vnew(shift)->Useqq(0)->Dump;
@@ -425,7 +457,7 @@ sub qsh(;@) {
   @_ = ($_) if @_==0;  # format $_ if no args
   join " ",
        map {
-         defined $_ 
+         defined $_
            ? (/[^-\w_\/:\.]/ || $_ eq "") ? forceqsh($_) : $_
            : "undef";
        }
@@ -437,7 +469,7 @@ sub qshpath(;@) {
   @_ = ($_) if @_==0;  # format $_ if no args
   join " ",
        map {
-         defined $_ 
+         defined $_
            ? do {
                local $_ = $_;
                my ($tilde_prefix, $rest) = /(^~[^\/\\]*\/?)?(.*)/s;
@@ -469,8 +501,8 @@ sub DB_Vis_Dump     { DB_Vis_Interpolate($_[0]); }
 
 # Interpolate strings for svis and dvis.   This must be in package
 # DB and the closest scope not in package DB must be the user's context.
-# 
-# To accomplish this, interface functions in package Vis goto a trampoline, 
+#
+# To accomplish this, interface functions in package Vis goto a trampoline,
 # which in turn calls us.
 #
 sub DB_Vis_Interpolate {
@@ -479,22 +511,15 @@ sub DB_Vis_Interpolate {
   my ($self) = @_;
   my ($debug, $maxwidth) = @$self{'VisDebug','Maxwidth'};
   my $display_mode = ($self->{VisType} eq 'd');
-  my $pad; { package Vis; $pad = $self->SUPER::Pad(); }
+  my $pad = $self->Pad();
 
-  state $interior_re = qr{ 
-    (
-        [^"'{}()\[\]]+
-      | $qstr_re
-      | \{ (?-1)+ \}
-      | \( (?-1)+ \)
-      | \[ (?-1)+ \]
-    )*
+  state $interior_re = qr/${balanced_or_safe_re}/;
+
+  state $scalar_index_re = qr{
+    ( (?:->)? (?: \{ $interior_re \} | \[ $interior_re \] ) )+
   }x;
-  state $scalar_index_re = qr{ 
-    ( (?:->)? (?: \{ $interior_re \} | \[ $interior_re \] ) )+ 
-  }x;
-  state $slice_re = qr{ 
-    (?: \{ $interior_re \} | \[ $interior_re \] ) 
+  state $slice_re = qr{
+    (?: \{ $interior_re \} | \[ $interior_re \] )
   }x;
   state $variable_re = qr/   # sigl could be $ or @
       \#?\w+(?:::\w+)*   # @name $pkg::name $#name $1
@@ -525,7 +550,7 @@ sub DB_Vis_Interpolate {
         # @{name} @{name[slice]} etc. (loosing the curlies)
         /\G (?!\\)(\@) \{ ( $variable_re ${slice_re}? ) \}/xsgc
         ||
-        # %name 
+        # %name
         /\G (?!\\)(\%)( $variable_re )/xsgc
        )
       {
@@ -533,7 +558,7 @@ sub DB_Vis_Interpolate {
         if ($debug) {
           print "### regex match ($_):";
           for my $i (1..$#+) {
-            eval "print \" $i=«\$$i»\" if defined \$$i;"; die "bug" if $@; 
+            eval "print \" $i=«\$$i»\" if defined \$$i;"; die "bug" if $@;
           }
           print "\n";
         }
@@ -560,12 +585,12 @@ sub DB_Vis_Interpolate {
     my $act = $action->[0];
     if ($act eq 'e') {
       my ($sigl, $rhs) = @$action[1,2];
-      # "$sigl$rhs" is a Perl expression giving the desired value.  
+      # "$sigl$rhs" is a Perl expression giving the desired value.
       # Note that the curlies were dropped from ${name} in the string
       # (because braces can not be used that way in expressions, only strings)
 
       my @items = Vis_Eval("$sigl$rhs");
-      
+
       my $varlabel = "";
       if ($display_mode) {
         # Don't show initial $ if it's a non-special scalar variable name
@@ -574,7 +599,7 @@ sub DB_Vis_Interpolate {
       }
 
       my $extra_padlen;
-      { $result =~ /([^\n]*)\z/s;  # already includes user's Pad 
+      { $result =~ /([^\n]*)\z/s;  # already includes user's Pad
         $extra_padlen = length($1) - length($pad) + length($varlabel);
         # Wrap if we're getting ridiculous
         if ($extra_padlen > $maxwidth-15 && length($1) > length($pad)
@@ -636,7 +661,7 @@ ViSEoF
 1;
 __END__
 
-=head1 NAME 
+=head1 NAME
 
 Vis - Improve Data::Dumper for use in messages
 
@@ -648,8 +673,8 @@ Vis - Improve Data::Dumper for use in messages
   my $ref = \%hash;
 
   # Interpolate strings, stingifying aggregates with auto-indenting
-  print svis 'ref=$ref\n hash=%hash\n ARGV=@ARGV\n'; # SINGLE quoted!  
-  print dvis 'FYI $ref %hash @ARGV\n';  
+  print svis 'ref=$ref\n hash=%hash\n ARGV=@ARGV\n'; # SINGLE quoted!
+  print dvis 'FYI $ref %hash @ARGV\n';
 
   # Format one item at a time (sans final newline)
   print "ref=", vis($ref), "\n";
@@ -667,7 +692,7 @@ Vis - Improve Data::Dumper for use in messages
   print Vis->vnew($scalar)->Dump, "\n";               # like vis()
   print Vis->anew(@array)->Dump, "\n";                # like avis()
 
-  print Dumper($ref);                                 # Data::Dumper 
+  print Dumper($ref);                                 # Data::Dumper
   print Vis->new([$ref],['$ref'])->Dump;              #  compatible APIs
 
   # Just change undef to "undef", nothing else
@@ -676,8 +701,8 @@ Vis - Improve Data::Dumper for use in messages
   print u($value),"\n";
 
   # Quote arguments for the shell
-  foreach ($ENV{HOME}, "/dir/safe", "Uck!", 
-           "My Documents", "Qu'ote", 'Qu"ote') 
+  foreach ($ENV{HOME}, "/dir/safe", "Uck!",
+           "My Documents", "Qu'ote", 'Qu"ote')
   {
     system( "set -x; /bin/ls -ld ".qsh($_) );
   }
@@ -685,7 +710,7 @@ Vis - Improve Data::Dumper for use in messages
 =head1 DESCRIPTION
 
 The Vis package provides additional interfaces to Data::Dumper
-which may be more convenient for error/debug messages 
+which may be more convenient for error/debug messages
 (plus a few related utilities).
 A condensed format is used for aggregate data.
 
@@ -722,7 +747,7 @@ Numeric "components" in hash keys are auto-detected.
 For example: "A.20_999" "A.100_9" "A.100_80" and "B" sort in that order.
 
 =back
-  
+
 =back
 
 Vis is a subclass of Data::Dumper and is a drop-in replacement.  The old
@@ -731,29 +756,29 @@ Data::Dumper may also be called directly (see "PERFORMANCE").
 
 =head2 svis 'string to be interpolated',...
 
-Variables and escapes in the string(s) are interpolated as 
+Variables and escapes in the string(s) are interpolated as
 in Perl double-quotish strings except that values are formatted
 using C<vis()> or C<avis()> (for $ or @ expressions, respectively).
-Therefore complex data structures are shown in full 
+Therefore complex data structures are shown in full
 (possibly subject to B<Maxdepth()>).  String values
-appear unambiguously "quoted".  
+appear unambiguously "quoted".
 In addition, C<%name> is interpolated as S<<< C<< (key => value ...) >> >>>.
 Multiple arguments are concatenated.
 
-The input string(s) should written SINGLE QUOTED so Perl will not 
+The input string(s) should written SINGLE QUOTED so Perl will not
 interpolate them before passing to svis().
 
 =head2 dvis 'string to be interpolated',...
 
 ('d' is for 'debug display').  C<dvis> is identical to C<svis>
 except that interpolated expressions are prefixed by
-the name of the variable or the expression.  
-For example, S<dvis('$foo $i $ary[$i] @ary %hash\n')> 
+the name of the variable or the expression.
+For example, S<dvis('$foo $i $ary[$i] @ary %hash\n')>
 yields S<< "foo=<value> i=<value> ary[i]=<value> @ary=(<value>,...) %hash=(key => <value>)\n". >>
 
 C<svis> and C<dvis> should not be called from package DB.
 
-=head2 vis $item, ... 
+=head2 vis $item, ...
 
 Format a scalar for printing, without a final newline.
 
@@ -767,7 +792,7 @@ This allows @arrays to be shown without taking a reference.
 
 =head2 svisq, dvisq, visq, and avisq
 
-These alternatives use 'single quotes' when formatting strings. 
+These alternatives use 'single quotes' when formatting strings.
 
 =head2 OO interfaces
 
@@ -775,7 +800,7 @@ OO interfaces allow setting Configuration options on a case-by-case basis.
 
 B<< Vis->snew >>, B<< Vis->dnew >>, B<< Vis->vnew >> and B<< Vis->anew >>
 are constructors corresponding to the functions
-B<svis>, B<dvis>, B<vis> and B<avis>, respectively.  See SYNOPSIS above. 
+B<svis>, B<dvis>, B<vis> and B<avis>, respectively.  See SYNOPSIS above.
 
 Additionally, B<< Vis->new >> provides the same API as Data::Dumper->new.
 
@@ -783,11 +808,11 @@ Additionally, B<< Vis->new >> provides the same API as Data::Dumper->new.
 
 =over 4
 
-=item $Vis::Maxwidth  I<or>  I<$OBJ>->Maxwidth(I<[NEWVAL]>) 
+=item $Vis::Maxwidth  I<or>  I<$OBJ>->Maxwidth(I<[NEWVAL]>)
 
 Sets or gets the maximum number of characters for formatted lines.
 Default is the terminal width or 80 if output is not a terminal.
-If Maxwidth=0 output is not folded, appearing similar to Data::Dumper 
+If Maxwidth=0 output is not folded, appearing similar to Data::Dumper
 (but still without a final newline).
 
 =back
@@ -797,15 +822,15 @@ default values come from global variables in package Vis :
 
 =over 4
 
-=item $Vis::Useqq               I<or>  I<$OBJ>->Useqq(I<[NEWVAL]>) 
+=item $Vis::Useqq               I<or>  I<$OBJ>->Useqq(I<[NEWVAL]>)
 
-=item $Vis::Quotekeys           I<or>  I<$OBJ>->Quotekeys(I<[NEWVAL]>) 
+=item $Vis::Quotekeys           I<or>  I<$OBJ>->Quotekeys(I<[NEWVAL]>)
 
-=item $Vis::Sortkeys            I<or>  I<$OBJ>->Sortkeys(I<[NEWVAL]>) 
+=item $Vis::Sortkeys            I<or>  I<$OBJ>->Sortkeys(I<[NEWVAL]>)
 
-=item $Vis::Terse               I<or>  I<$OBJ>->Terse(I<[NEWVAL]>) 
+=item $Vis::Terse               I<or>  I<$OBJ>->Terse(I<[NEWVAL]>)
 
-=item $Vis::Indent              I<or>  I<$OBJ>->Indent(I<[NEWVAL]>) 
+=item $Vis::Indent              I<or>  I<$OBJ>->Indent(I<[NEWVAL]>)
 
 =back
 
@@ -814,29 +839,29 @@ from global variables in Data::Dumper .  Here is a partial list:
 
 =over 4
 
-=item $Data::Dumper::Deepcopy   I<or>  I<$OBJ>->Deepcopy(I<[NEWVAL]>) 
+=item $Data::Dumper::Deepcopy   I<or>  I<$OBJ>->Deepcopy(I<[NEWVAL]>)
 
-=item $Data::Dumper::Deparse    I<or>  I<$OBJ>->Deparse(I<[NEWVAL]>) 
+=item $Data::Dumper::Deparse    I<or>  I<$OBJ>->Deparse(I<[NEWVAL]>)
 
-=item $Data::Dumper::Freezer    I<or>  I<$OBJ>->Freezer(I<[NEWVAL]>) 
+=item $Data::Dumper::Freezer    I<or>  I<$OBJ>->Freezer(I<[NEWVAL]>)
 
-=item $Data::Dumper::Maxdepth   I<or>  I<$OBJ>->Maxdepth(I<[NEWVAL]>) 
+=item $Data::Dumper::Maxdepth   I<or>  I<$OBJ>->Maxdepth(I<[NEWVAL]>)
 
-=item $Data::Dumper::Pad        I<or>  I<$OBJ>->Pad(I<[NEWVAL]>) 
+=item $Data::Dumper::Pad        I<or>  I<$OBJ>->Pad(I<[NEWVAL]>)
 
-=item $Data::Dumper::Purity     I<or>  I<$OBJ>->Purity(I<[NEWVAL]>) 
+=item $Data::Dumper::Purity     I<or>  I<$OBJ>->Purity(I<[NEWVAL]>)
 
-=item $Data::Dumper::Quotekeys  I<or>  I<$OBJ>->Quotekeys(I<[NEWVAL]>) 
+=item $Data::Dumper::Quotekeys  I<or>  I<$OBJ>->Quotekeys(I<[NEWVAL]>)
 
-=item $Data::Dumper::Sortkeys   I<or>  I<$OBJ>->Sortkeys(I<[NEWVAL]>) 
+=item $Data::Dumper::Sortkeys   I<or>  I<$OBJ>->Sortkeys(I<[NEWVAL]>)
 
-=item $Data::Dumper::Toaster    I<or>  I<$OBJ>->Toaster(I<[NEWVAL]>) 
+=item $Data::Dumper::Toaster    I<or>  I<$OBJ>->Toaster(I<[NEWVAL]>)
 
-=item $Data::Dumper::Useqq      I<or>  I<$OBJ>->Useqq(I<[NEWVAL]>) 
+=item $Data::Dumper::Useqq      I<or>  I<$OBJ>->Useqq(I<[NEWVAL]>)
 
-=item $Data::Dumper::Varname    I<or>  I<$OBJ>->Varname(I<[NEWVAL]>) 
+=item $Data::Dumper::Varname    I<or>  I<$OBJ>->Varname(I<[NEWVAL]>)
 
-Note that the B<Useqq(0)> is called implicitly 
+Note that the B<Useqq(0)> is called implicitly
 by B<svisq>, B<dvisq>, B<visq>, and B<avisq>.
 
 =back
@@ -846,11 +871,11 @@ because Vis makes certain assumptions about their settings:
 
 =over 4
 
-=item $Data::Dumper::Pair       I<or>  I<$OBJ>->Pair(I<[NEWVAL]>) 
+=item $Data::Dumper::Pair       I<or>  I<$OBJ>->Pair(I<[NEWVAL]>)
 
-=item $Data::Dumper::Indent     I<or>  I<$OBJ>->Indent(I<[NEWVAL]>) 
+=item $Data::Dumper::Indent     I<or>  I<$OBJ>->Indent(I<[NEWVAL]>)
 
-=item $Data::Dumper::Terse      I<or>  I<$OBJ>->Terse(I<[NEWVAL]>) 
+=item $Data::Dumper::Terse      I<or>  I<$OBJ>->Terse(I<[NEWVAL]>)
 
 =back
 
@@ -861,14 +886,14 @@ The argument(s) are returned unchanged, except that undefined argument(s)
 are replaced by the string "undef".  Refs are not stringified.
 C<u()> is not exported by default.
 
-=head2 qsh 
+=head2 qsh
 
 =head2 qsh $word, ...
 
 =head2 qshpath $path_with_tilde_prefix, ...
 
-The "words" ($_ by default) are 'quoted' if necessary for parsing 
-by /bin/sh (note that /bin/sh quoting rules differ from Perl's).  
+The "words" ($_ by default) are 'quoted' if necessary for parsing
+by /bin/sh (note that /bin/sh quoting rules differ from Perl's).
 Multiple items are concatenated, separated by spaces.
 
 Items which contain only "safe" characters are returned without 'quotes'.
@@ -887,11 +912,11 @@ Unlike C<qsh>, C<forceqsh> requires exactly one argument.
 
 =head1 PERFORMANCE
 
-Vis calls Data::Dumper and then condenses the output. 
-C<svis> and C<dvis> must also parse the strings to be interpolated.  
+Vis calls Data::Dumper and then condenses the output.
+C<svis> and C<dvis> must also parse the strings to be interpolated.
 For most purposes performance is of no concern.
 
-Single-quote style (C<Useqq(0)>) runs faster because 
+Single-quote style (C<Useqq(0)>) runs faster because
 the underlying Data::Dumper implementation uses XS (C code).
 
 For high-volume applications, such as to serialize a large data set,
@@ -922,8 +947,6 @@ sub u($)  { defined $_[0] ? $_[0] : "undef" }
 binmode STDOUT, 'utf8';
 binmode STDERR, 'utf8';
 select STDERR; $|=1; select STDOUT; $|=1;
-
-warn "### TODO: Test that \$, \$/ \$\ and \$^W are preserved !\n";
 
 # ---------- Check stuff other than formatting or interpolation --------
 
@@ -956,7 +979,6 @@ if (Vis::_unix_compatible_os()) {
   waitpid($pid,0);
   die "Vis::Maxwidth did not default to 80 with no tty" unless $? == 0;
 }
-$Vis::Maxwidth = 72;
 
 my $undef_as_false = undef;
 if (! ref Vis->new([1])->Useqq(undef)) {
@@ -981,15 +1003,25 @@ foreach ( ['Quotekeys',0,1],
         )
 {
   my ($name, @values) = @$_;
+  my $testval = [123];
   foreach my $value (@values) {
     foreach my $ctor (qw(vnew anew snew dnew)) {
-      my $v = eval "{ local \$Vis::$name = \$value;
-                      Vis->\$ctor([\"test\"])->$name();
-                    }";
-      die "bug:$@ " if $@;
-      die "Vis::$name value is not preserved by Vis->$ctor\n",
-          "(Set \$Vis::$name = ",u($value)," but $name() returned ",u($v),")\n"
-       unless (! defined $v && ! defined $value) || ($v eq $value);
+      {
+        my $v = eval "{ local \$Vis::$name = \$value;
+                        Vis->\$ctor([\"test \$testval\"])->$name();
+                      }";
+        die "bug:$@ " if $@;
+        die "\$Vis::$name value is not preserved by Vis->$ctor\n",
+            "(Set \$Vis::$name=",u($value)," but $name() returned ",u($v),")\n"
+         unless (! defined $v && ! defined $value) || ($v eq $value);
+      }
+      {
+        my $v = eval "{ Vis->\$ctor([\"test \$testval\"])->$name(\$value)->$name() }";
+        die "bug:$@ " if $@;
+        die "Vis::$name(v) does not set it's value!\n",
+            "(called $name(",u($value),") but $name() returned ",u($v),")\n"
+         unless (! defined $v && ! defined $value) || ($v eq $value);
+      }
     }
   }
 }
@@ -1007,6 +1039,8 @@ sub check($$$) {
          ."Got:\n${actual}«end»\n"
     unless $actual eq $expected;
 }
+
+$Vis::Maxwidth = 72;
 
 @ARGV = ('fake','argv');
 $. = 1234;
@@ -1067,7 +1101,9 @@ $_ = "GroupA.GroupB";
 
 # There was a bug for s/dvis called direct from outer scope, so don't use eval:
 check 'global divs %toplex_h', 
-      qq(\%toplex_h=( "" => "Emp", A => 111, "B B" => 222,\n  C => {d => 888, e => 999}, D => {}\n)\n),
+      '%toplex_h=( "" => "Emp", A => 111, "B B" => 222,'."\n"
+     .'            C => {d => 888, e => 999}, D => {}'."\n"
+     ."          )\n",
       dvis('%toplex_h\n'); 
 check 'global divs @ARGV', q(@ARGV=("fake", "argv")), dvis('@ARGV'); 
 check 'global divs $.', q($.=1234), dvis('$.'); 
@@ -1151,7 +1187,16 @@ sub f {
     [ q(@ARGV\n), qq(\@ARGV=(\"fake\", \"argv\")\n) ],
     [ q($ENV{EnvVar}\n), qq(ENV{EnvVar}=\"Test EnvVar Value\"\n) ],
     [ q($ENV{$EnvVarName}\n), qq(ENV{\$EnvVarName}=\"Test EnvVar Value\"\n) ],
-    [ q(@_\n), qq(\@_=( 42, [ 0, 1, "C", { "" => "Emp", A => 111, "B B" => 222,\n      C => {d => 888, e => 999}, D => {}\n    },\n    [], [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]\n  ]\n)\n) ],
+    [ q(@_\n), <<'EOF' ],  # N.B. Maxwidth was set to 72
+@_=( 42,
+     [ 0, 1, "C",
+       { "" => "Emp", A => 111, "B B" => 222,
+         C => {d => 888, e => 999}, D => {}
+       },
+       [], [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+     ]
+   )
+EOF
     [ q($#_\n), qq(\$#_=1\n) ],
     [ q($@\n), qq(\$\@=\"FAKE DEATH\\n\"\n) ],
     map({
@@ -1161,12 +1206,20 @@ sub f {
         map({ 
           my ($dollar, $r) = @$_;
           my $dolname_scalar = ($dollar ? "\$$dollar" : "").$name;
-          [ qq(%${dollar}${name}_h${r}\\n),
-            qq(\%${dollar}${name}_h${r}=( "" => "Emp", A => 111, "B B" => 222,\n  C => {d => 888, e => 999}, D => {}\n)\n)
-          ],
-          [ qq(\@${dollar}${name}_a${r}\\n),
-            qq(\@${dollar}${name}_a${r}=( 0, 1, "C", { "" => "Emp", A => 111, "B B" => 222,\n    C => {d => 888, e => 999}, D => {}\n  },\n  [], [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]\n)\n)
-          ],
+          my $p = " " x length("?${dollar}${name}_?${r}");
+          [ qq(%${dollar}${name}_h${r}\\n), <<EOF ],
+\%${dollar}${name}_h${r}=( "" => "Emp", A => 111, "B B" => 222,
+${p}   C => {d => 888, e => 999}, D => {}
+${p} )
+EOF
+          [ qq(\@${dollar}${name}_a${r}\\n), <<EOF ],
+\@${dollar}${name}_a${r}=( 0, 1, "C",
+${p}   { "" => "Emp", A => 111, "B B" => 222,
+${p}     C => {d => 888, e => 999}, D => {}
+${p}   },
+${p}   [], [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+${p} )
+EOF
           [ qq(\$#${dollar}${name}_a${r}),    qq(\$#${dollar}${name}_a${r}=5)   ],
           [ qq(\$#${dollar}${name}_a${r}\\n), qq(\$#${dollar}${name}_a${r}=5\n) ],
           [ qq(\$${dollar}${name}_a${r}[3]{C}{e}\\n),
@@ -1221,16 +1274,35 @@ sub f {
   )
   {
     my ($dvis_input, $expected) = @$test;
-
-    #print "### $dvis_input\n";
-    { local $@;
+    # warn "dvis_input=$dvis_input\n";
+    
+    { local $@;  # check for bad syntax first, to avoid uncontrolled die later
+      # For some reason we can't catch exceptions from inside package DB.
+      # undef is returned but $@ is not set
       my $ev = eval { "$dvis_input" };
-      die "Bad test string:$dvis_input\nPerl can't interpolate it: $@" if $@;
+      die "Bad test string:$dvis_input\nPerl can't interpolate it"
+         .($@ ? ":\n  $@" : "\n")
+        if $@ or ! defined $ev;
     }
 
-    # For some reason we can't catch exceptions from inside package DB (dvis)
-    # (undef is returned but $@ is not set!)
-    my $actual = dvis $dvis_input;
+    my $actual;
+    { # Verify that special vars are preserved and don't affect Vis
+      # (except if testing a punctuation var, then don't change it's value)
+      my @fake = (do {$dvis_input =~ /\$(?: [\@!,\/\\] | \^[EW] )/x})
+                    ? ($@, $!, $^E, $,, $/, $\, $^W)
+                    : ('FakeAt', 111, 111, 'Fake,', 'Fake/', 'FakeBS\\', 333);
+      my @nfake;
+      { local ($@, $!, $^E, $,, $/, $\, $^W) = @fake;
+        $actual = dvis $dvis_input; ### HERE IT IS ###
+        @nfake = ($@, $!, $^E, $,, $/, $\, $^W);
+      }
+      for my $i (0..5) {
+        no warnings;
+        my $varname = (qw($@ $! $^E $, $/ $\ $^W))[$i];
+        warn "ERROR: $varname was not preserved (expected $fake[$i], got $nfake[$i])\n"
+          unless ($fake[$i] =~ /^\d/ ? ($fake[$i]==$nfake[$i]) : ($fake[$i] eq $nfake[$i]));
+      }
+    }
     confess "\ndvis test failed: input «${dvis_input}»\n"
          ."Expected:\n${expected}«end»\n"
          ."Got:\n${actual}«end»\n"
