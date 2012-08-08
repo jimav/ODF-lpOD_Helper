@@ -64,7 +64,7 @@ sub Vis_Eval {   # Many ideas here were stolen from perl5db.pl
 
 package Vis;
 
-our $VERSION = sprintf "%d.%03d", q$Revision: 1.42 $ =~ /(\d+)/g;
+our $VERSION = sprintf "%d.%03d", q$Revision: 1.43 $ =~ /(\d+)/g;
 use Exporter;
 use Data::Dumper ();
 use Carp;
@@ -290,14 +290,24 @@ sub Dump {
   }
 
   my ($debug, $maxwidth) = @$self{qw/VisDebug Maxwidth/};
-  my $pad = $self->Pad();
 
   local $_ = $self->SUPER::Dump;
 
+  my $pad = $self->Pad();
+  if ($pad) {
+    s/^\Q${pad}\E//mg; # will be put back later
+    $maxwidth -= length($pad);
+    if ($maxwidth < 20) {
+      state $warned;
+      $warned=1, warn "Warning: Pad is too wide, Vis may exceed Maxwidth\n"
+        if (! $warned);
+      $maxwidth = $self->{Maxwidth};
+    }
+  }
+
   print "===== RAW =====\n${_}---------------\n" if $debug;
 
-  s/^\Q${pad}\E//mg if $pad;
-
+  
   #return $_ if $maxwidth == 0; # no condensation
 
   # Split into logical lines, being careful to preserve newlines in strings.
@@ -722,12 +732,16 @@ A final newline is not automatically included when using the new interfaces.
 
 =item *
 
-Multiple array and hash members are shown on the same line.
+Multiple array and hash members are shown on the same line, 
+subject to a maximum width (see "Maxwidth" below).
 
 For example  B<print "ref=", vis($ref), "\n";>  produces
 
-  ref={ complicated => [ "lengthy", "stuff",
-      [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]
+  ref={
+    complicated => [ "lengthy", "stuff",
+      [ 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16,
+        17, 18, 19, 20
+      ]
     ]
   }
 
@@ -759,11 +773,12 @@ Data::Dumper may also be called directly (see "PERFORMANCE").
 Variables and escapes in the string(s) are interpolated as
 in Perl double-quotish strings except that values are formatted
 using C<vis()> or C<avis()> (for $ or @ expressions, respectively).
-Therefore complex data structures are shown in full
-(possibly subject to B<Maxdepth()>).  String values
-appear unambiguously "quoted".
-In addition, C<%name> is interpolated as S<<< C<< (key => value ...) >> >>>.
 Multiple arguments are concatenated.
+
+Strings are unambiguously "quoted".
+In addition, C<%name> is interpolated as S<<< C<< (key => value ...) >> >>>.
+Multi-line structures are indented to line up with their starting position,
+taking into account any preceeding text on the same line.
 
 The input string(s) should written SINGLE QUOTED so Perl will not
 interpolate them before passing to svis().
@@ -772,22 +787,28 @@ interpolate them before passing to svis().
 
 ('d' is for 'debug display').  C<dvis> is identical to C<svis>
 except that interpolated expressions are prefixed by
-the name of the variable or the expression.
-For example, S<dvis('$foo $i $ary[$i] @ary %hash\n')>
-yields S<< "foo=<value> i=<value> ary[i]=<value> @ary=(<value>,...) %hash=(key => <value>)\n". >>
+the name of the variable or the expression.  For example,
+
+  my $foo = 'Nazdrave
+  ';
+  my @bar = (0..18);
+  my %hash = (A=>100,B=>200);
+  print dvis '$foo @bar[3..5] %hash\n';
+
+produces
+
+  foo="Nazdrave\n" @bar[3..5]=(3, 4, 5) %hash=(A => 100, B => 200)
 
 C<svis> and C<dvis> should not be called from package DB.
 
 =head2 vis $item, ...
 
 Format a scalar for printing, without a final newline.
-
-Multiple arguments are each formatted separately,
-separated by newlines.
+Multiple items are separated by newlines.
 
 =head2 avis @array
 
-Format an array or list in parenthesis: C<(arg1,arg2,arg3,...)>.
+Format the arguments as a list in parenthesis: C<(arg1,arg2,arg3,...)>.
 This allows @arrays to be shown without taking a reference.
 
 =head2 svisq, dvisq, visq, and avisq
@@ -810,7 +831,8 @@ Additionally, B<< Vis->new >> provides the same API as Data::Dumper->new.
 
 =item $Vis::Maxwidth  I<or>  I<$OBJ>->Maxwidth(I<[NEWVAL]>)
 
-Sets or gets the maximum number of characters for formatted lines.
+Sets or gets the maximum number of characters for formatted lines,
+including any prefix set via I<Pad()>.
 Default is the terminal width or 80 if output is not a terminal.
 If Maxwidth=0 output is not folded, appearing similar to Data::Dumper
 (but still without a final newline).
