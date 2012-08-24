@@ -64,7 +64,7 @@ sub Vis_Eval {   # Many ideas here were stolen from perl5db.pl
 
 package Vis;
 
-our $VERSION = sprintf "%d.%03d", q$Revision: 1.43 $ =~ /(\d+)/g;
+our $VERSION = sprintf "%d.%03d", q$Revision: 1.44 $ =~ /(\d+)/g;
 use Exporter;
 use Data::Dumper ();
 use Carp;
@@ -510,10 +510,13 @@ sub DB_Vis_dvisq(@) { DB_Vis_Interpolate(Vis->dnew(@_)->Useqq(0)); }
 sub DB_Vis_Dump     { DB_Vis_Interpolate($_[0]); }
 
 # Interpolate strings for svis and dvis.   This must be in package
-# DB and the closest scope not in package DB must be the user's context.
+# DB and the closest scope not in package DB which has any lexicals
+# must be the user's context.
 #
-# To accomplish this, interface functions in package Vis goto a trampoline,
-# which in turn calls us.
+# To accomplish this, interface functions in package Vis goto a trampoline
+# which has no lexicals, which in turn calls us.  A goto can not be used
+# by the trampolines because they would need to modify their @_, and that
+# make the user's @_ invisible.
 #
 sub DB_Vis_Interpolate {
   &Vis::SaveAndResetPunct;
@@ -588,7 +591,8 @@ sub DB_Vis_Interpolate {
   }
 
   # $_ and $1 etc. have now been restored to the caller's values
-  # DO NOT use regex with (capture groups) between here and the eval below!
+  # DO NOT use regex with (capture groups) between here and the eval below
+  # except inside { interior blocks }.
 
   my $result = $pad;
   foreach my $action (@actions) {
@@ -614,7 +618,7 @@ sub DB_Vis_Interpolate {
         # Wrap if we're getting ridiculous
         if ($extra_padlen > $maxwidth-15 && length($1) > length($pad)
             && $maxwidth > 0) {
-          $result .= "<wrapped>\n$pad";
+          $result .= "\n$pad";
           redo;
         }
       }
