@@ -64,7 +64,7 @@ sub Vis_Eval {   # Many ideas here were stolen from perl5db.pl
 
 package Vis;
 
-our $VERSION = sprintf "%d.%03d", q$Revision: 1.44 $ =~ /(\d+)/g;
+our $VERSION = sprintf "%d.%03d", q$Revision: 1.45 $ =~ /(\d+)/g;
 use Exporter;
 use Data::Dumper ();
 use Carp;
@@ -74,7 +74,7 @@ use POSIX qw(INT_MAX);
 sub debugvis(@) {  # for our internal debug messages
   confess "multiple args not supported in debugvis" if @_ != 1;
   local $/ = "\n";
-  my $s = Data::Dumper->new([shift])->Useqq(0)->Terse(1)->Indent(1)->Dump;
+  my $s = Data::Dumper->new([shift])->Useqq(1)->Terse(1)->Indent(1)->Dump;
   chomp $s;
   return $s;
 }
@@ -402,10 +402,11 @@ sub Dump {
     ^( (?: ${balanced_squished_re} | [^"'{}()\[\]]++ | ${qstr_re} )*+ )
      \[\ (.*)\ \]/$1\[$3\]/x or $Jcode =~ /\[\],?$/ or die "\nbug"
           }
-          elsif ($lines[$I] =~ /\ \},?$/) {
+          elsif ($lines[$I] =~ /\ \},?$/ 
+                  && $lines[$I] !~ /sub\ ${balanced_re},?$/) {
             $lines[$I] =~ s/
     ^( (?: ${balanced_squished_re} | [^"'{}()\[\]]++ | ${qstr_re} )*+ )
-     \{\ (.*)\ \}/$1\{$3\}/x or $Jcode =~ /\{\},?$/ or die "\nbug"
+     \{\ (.*)\ \}/$1\{$3\}/x or $Jcode =~ /\{\},?$/ or die "\nbug:",debugvis($lines[$I])
           }
           if (length($lines[$I])-1 <= $maxwidth) {
             $lines[$J] = "";
@@ -463,8 +464,7 @@ sub forceqsh($) {
   return $_;
 }
 
-sub qsh(;@) {
-  @_ = ($_) if @_==0;  # format $_ if no args
+sub qsh(_;@) {
   join " ",
        map {
          defined $_
@@ -475,8 +475,7 @@ sub qsh(;@) {
 }
 
 # Quote paths for shell: Like qsh but doesn't quote an initial ~ or ~username
-sub qshpath(;@) {
-  @_ = ($_) if @_==0;  # format $_ if no args
+sub qshpath(_;@) {
   join " ",
        map {
          defined $_
@@ -1105,6 +1104,20 @@ package main;
 
 $_ = "GroupA.GroupB";
 /(.*)\W(.*)/sp or die "nomatch"; # set $1 and $2
+
+{ my $code = 'qsh("a b")';           check $code, "'a b'",  eval $code; }
+{ my $code = 'qshpath("a b")';       check $code, "'a b'",  eval $code; }
+{ my $code = 'qshpath("~user")';     check $code, "~user",  eval $code; }
+{ my $code = 'qshpath("~user/a b")'; check $code, "~user/'a b'", eval $code; }
+{ my $code = 'qshpath("~user/ab")';  check $code, "~user/ab", eval $code; }
+{ my $code = 'qsh("~user/ab")';      check $code, "'~user/ab'", eval $code; }
+{ my $code = 'qsh($_)';              check $code, "${_}",   eval $code; }
+{ my $code = 'qsh()';                check $code, "${_}",   eval $code; }
+{ my $code = 'qsh';                  check $code, "${_}",   eval $code; }
+{ my $code = 'qshpath($_)';          check $code, "${_}",   eval $code; }
+{ my $code = 'qshpath()';            check $code, "${_}",   eval $code; } 
+{ my $code = 'qshpath';              check $code, "${_}",   eval $code; } 
+{ my $code = 'forceqsh($_)';         check $code, "'${_}'", eval $code; }
 
 { my $code = 'vis($_)'; check $code, "\"${_}\"", eval $code; }
 { my $code = 'avis($_,1,2,3)'; check $code, "(\"${_}\", 1, 2, 3)", eval $code; }
