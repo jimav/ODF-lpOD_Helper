@@ -64,7 +64,7 @@ sub Vis_Eval {   # Many ideas here were stolen from perl5db.pl
 
 package Vis;
 
-our $VERSION = sprintf "%d.%03d", q$Revision: 1.45 $ =~ /(\d+)/g;
+our $VERSION = sprintf "%d.%03d", q$Revision: 1.46 $ =~ /(\d+)/g;
 use Exporter;
 use Data::Dumper ();
 use Carp;
@@ -298,9 +298,9 @@ sub Dump {
     s/^\Q${pad}\E//mg; # will be put back later
     $maxwidth -= length($pad);
     if ($maxwidth < 20) {
-      state $warned;
-      $warned=1, warn "Warning: Pad is too wide, Vis may exceed Maxwidth\n"
-        if (! $warned);
+      #state $warned;
+      #$warned=1, warn "Warning: Pad is too wide, Vis may exceed Maxwidth\n"
+      #  if (! $warned);
       $maxwidth = $self->{Maxwidth};
     }
   }
@@ -351,10 +351,10 @@ sub Dump {
       while ($lines[$J] eq "") { next LOOP if ++$J > $#lines; }
       while ($lines[$I] eq "") { next LOOP if ++$I >= $J; }
 
-      my ($Iprefix,$Icode) = ($lines[$I] =~ /^(\s*)(.*)/);
+      my ($Iprefix,$Icode) = ($lines[$I] =~ /^( *)(.*)\n\z/s);
       my $Iindent = length($Iprefix);
 
-      my ($Jprefix,$Jcode) = ($lines[$J] =~ /^(\s*)(.*)/);
+      my ($Jprefix,$Jcode) = ($lines[$J] =~ /^( *)(.*)\n\z/s);
       my $Jindent = length($Jprefix);
 
       if ($debug) {
@@ -395,18 +395,22 @@ sub Dump {
         print "[Ilen=$Ilen Jlen=$Jlen"," mw=$maxwidth]\n" if $debug;
         if ($Ilen + $Jlen - 2 <= $maxwidth) {
           # It may be possible, after squishing [ 1, 2 ] -> [1, 2]
+          # Do the join, but save the old I for possible undo below
           my $saved_Iend =
             substr($lines[$I],$Ilen,INT_MAX, ' '.substr($lines[$J], $Jindent));
+          print "## Prelim join (saved_Iend=",debugvis($saved_Iend),"):",debugvis($lines[$I]),"\n" if $Debug;
           if ($lines[$I] =~ /\ \],?$/) {
             $lines[$I] =~ s/ # nb $balanced_squished_re uses a (capture group)
     ^( (?: ${balanced_squished_re} | [^"'{}()\[\]]++ | ${qstr_re} )*+ )
-     \[\ (.*)\ \]/$1\[$3\]/x or $Jcode =~ /\[\],?$/ or die "\nbug"
+     \[\ (.*)\ \]/$1\[$3\]/sx or $Jcode =~ /\[\],?$/ or die "\nbug";
+            print "## Squished [...] in lines[I], now:",debugvis($lines[$I]),"\n" if $Debug;
           }
           elsif ($lines[$I] =~ /\ \},?$/ 
                   && $lines[$I] !~ /sub\ ${balanced_re},?$/) {
             $lines[$I] =~ s/
     ^( (?: ${balanced_squished_re} | [^"'{}()\[\]]++ | ${qstr_re} )*+ )
-     \{\ (.*)\ \}/$1\{$3\}/x or $Jcode =~ /\{\},?$/ or die "\nbug:",debugvis($lines[$I])
+     \{\ (.*)\ \}/$1\{$3\}/sx or $Jcode =~ /\{\},?$/ or die "\nbug:",debugvis($lines[$I]);
+            print "## Squished {...} in lines[I], now:",debugvis($lines[$I]),"\n" if $Debug;
           }
           if (length($lines[$I])-1 <= $maxwidth) {
             $lines[$J] = "";
