@@ -56,7 +56,7 @@ sub Vis_Eval {   # Many ideas here were stolen from perl5db.pl
   if ($at) {
     ##$at =~ s/ at \(eval.*//;
     push @DB::CARP_NOT, 'Vis';
-    Carp::croak("Error interpolating '$evalarg':\n $at");
+    Carp::croak("${Vis::error_prefix}Error interpolating '$evalarg':\n $at");
   }
 
   return @result;
@@ -64,7 +64,7 @@ sub Vis_Eval {   # Many ideas here were stolen from perl5db.pl
 
 package Vis;
 
-our $VERSION = sprintf "%d.%03d", q$Revision: 1.46 $ =~ /(\d+)/g;
+our $VERSION = sprintf "%d.%03d", q$Revision: 1.47 $ =~ /(\d+)/g;
 use Exporter;
 use Data::Dumper ();
 use Carp;
@@ -526,8 +526,10 @@ sub DB_Vis_Interpolate {
 
   my ($self) = @_;
   my ($debug, $maxwidth) = @$self{'VisDebug','Maxwidth'};
-  my $display_mode = ($self->{VisType} eq 'd');
   my $pad = $self->Pad();
+  my $display_mode = ($self->{VisType} eq 'd');
+
+  local $Vis::error_prefix = "$self->{VisType}vis: "; # see Vis_Eval
 
   state $interior_re = qr/${balanced_or_safe_re}/;
 
