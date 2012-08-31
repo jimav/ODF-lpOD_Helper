@@ -22,14 +22,14 @@ sub Vis_Eval {   # Many ideas here were stolen from perl5db.pl
   # The call stack:
   #   0: Our current running context, right here
   #   1: DB::DB_Vis_Interpolate calling us
-  #   2: Trampoline calling DB::DB_Vis_Interpolate
-  #   3: User calling the trampoline (via goto from interface function)
+  #   2: Interface func calling DB::DB_Vis_Interpolate
+  #   3: User calling the interface func (via goto from a trampoline)
   ($Vis::pkg) = caller 2;  # name of package containing user's call
   ($Vis::UserIsInSub) = caller 3;  # Set @DB::args to user's @_ if in a sub
 
   # make user's @_ accessible, if the user is in a sub (otherwise we can't)
   local *_ =
-    $Vis::UserIsInSub ? \@DB::args : ['<Sorry, outer @_ is not visible>'];
+    $Vis::UserIsInSub ? \@DB::args : ['<@_ in outer scope is not visible>'];
 
   # At this point, nothing is in scope except the name of this sub
 
@@ -64,7 +64,7 @@ sub Vis_Eval {   # Many ideas here were stolen from perl5db.pl
 
 package Vis;
 
-our $VERSION = sprintf "%d.%03d", q$Revision: 1.47 $ =~ /(\d+)/g;
+our $VERSION = sprintf "%d.%03d", q$Revision: 1.48 $ =~ /(\d+)/g;
 use Exporter;
 use Data::Dumper ();
 use Carp;
@@ -103,22 +103,23 @@ $Indent     = 1           unless defined $Indent;
 
 # Functional (non-oo) APIs
 sub u(@);
-sub u(@)      { @_ == 1
-                  ? defined($_[0]) ? $_[0] : "undef"
-                  : (map { u($_) } @_)
-              }
+sub u(@)    { @_ == 1
+                ? defined($_[0]) ? $_[0] : "undef"
+                : (map { u($_) } @_)
+            }
 #sub u($)      { defined($_[0]) ? $_[0] : "undef" }
-sub vis(@)    { return __PACKAGE__->vnew(@_)->Dump; }
+sub vis(_;@)  { return __PACKAGE__->vnew(@_)->Dump; }
+sub visq(_;@) { return __PACKAGE__->vnew(@_)->Useqq(0)->Dump; }
 sub avis(@)   { return __PACKAGE__->anew(@_)->Dump; }
-sub visq(@)   { return __PACKAGE__->vnew(@_)->Useqq(0)->Dump; }
 sub avisq(@)  { return __PACKAGE__->anew(@_)->Useqq(0)->Dump; }
 
-# We have to put all this code in package DB so that the closest non-DB
-# call frame is the user's context, so that $variables eval correctly.
-sub svis(@)   { goto &DB::DB_Vis_svis }
-sub dvis(@)   { goto &DB::DB_Vis_dvis }
-sub svisq(@)  { goto &DB::DB_Vis_svisq }
-sub dvisq(@)  { goto &DB::DB_Vis_dvisq }
+# trampolines
+#   The interpolation code for svis, etc. must live in package DB and
+#   the closest non-DB call frame must be the user's context.
+sub svis($;@)  { goto &DB::DB_Vis_svis }
+sub svisq($;@) { goto &DB::DB_Vis_svisq }
+sub dvis($;@)  { goto &DB::DB_Vis_dvis }
+sub dvisq($;@) { goto &DB::DB_Vis_dvisq }
 
 # Provide Data::Dumper non-oo APIs
 sub Dumper(@) { return __PACKAGE__->Dump([@_]); }
@@ -505,7 +506,7 @@ sub SaveAndResetPunct {
 
 package DB;
 
-# Trampolines
+# Interface functions, entered by goto from trampolines called by the user
 sub DB_Vis_svis(@)  { DB_Vis_Interpolate(Vis->snew(@_)); }
 sub DB_Vis_dvis(@)  { DB_Vis_Interpolate(Vis->dnew(@_)); }
 sub DB_Vis_svisq(@) { DB_Vis_Interpolate(Vis->snew(@_)->Useqq(0)); }
@@ -513,13 +514,10 @@ sub DB_Vis_dvisq(@) { DB_Vis_Interpolate(Vis->dnew(@_)->Useqq(0)); }
 sub DB_Vis_Dump     { DB_Vis_Interpolate($_[0]); }
 
 # Interpolate strings for svis and dvis.   This must be in package
-# DB and the closest scope not in package DB which has any lexicals
-# must be the user's context.
+# DB and the closest scope not in package DB must be the user's context.
 #
-# To accomplish this, interface functions in package Vis goto a trampoline
-# which has no lexicals, which in turn calls us.  A goto can not be used
-# by the trampolines because they would need to modify their @_, and that
-# make the user's @_ invisible.
+# To accomplish this, interface functions in package Vis are trampolines
+# which just goto a function in package DB without modifying @_.
 #
 sub DB_Vis_Interpolate {
   &Vis::SaveAndResetPunct;
@@ -810,9 +808,11 @@ produces
 
 C<svis> and C<dvis> should not be called from package DB.
 
+=head2 vis
+
 =head2 vis $item, ...
 
-Format a scalar for printing, without a final newline.
+Format a scalar for printing ($_ by default), without a final newline.
 Multiple items are separated by newlines.
 
 =head2 avis @array
