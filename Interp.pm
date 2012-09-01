@@ -64,7 +64,7 @@ sub Vis_Eval {   # Many ideas here were stolen from perl5db.pl
 
 package Vis;
 
-our $VERSION = sprintf "%d.%03d", q$Revision: 1.48 $ =~ /(\d+)/g;
+our $VERSION = sprintf "%d.%03d", q$Revision: 1.49 $ =~ /(\d+)/g;
 use Exporter;
 use Data::Dumper ();
 use Carp;
@@ -108,8 +108,8 @@ sub u(@)    { @_ == 1
                 : (map { u($_) } @_)
             }
 #sub u($)      { defined($_[0]) ? $_[0] : "undef" }
-sub vis(_;@)  { return __PACKAGE__->vnew(@_)->Dump; }
-sub visq(_;@) { return __PACKAGE__->vnew(@_)->Useqq(0)->Dump; }
+sub vis(@)    { return __PACKAGE__->vnew(@_)->Dump; }
+sub visq(@)   { return __PACKAGE__->vnew(@_)->Useqq(0)->Dump; }
 sub avis(@)   { return __PACKAGE__->anew(@_)->Dump; }
 sub avisq(@)  { return __PACKAGE__->anew(@_)->Useqq(0)->Dump; }
 
@@ -196,13 +196,14 @@ sub _config_defaults {
     ->Maxwidth($Maxwidth)
 }
 
+# vnew  # $_ by default
 # vnew(items...)
 # anew(items...)
 # snew(strings...)
 # dnew(strings...)
 sub vnew {
   my $class = shift;
-  my $obj = (bless($class->SUPER::new(\@_), $class))->_config_defaults();
+  my $obj = (bless($class->SUPER::new(@_ ? \@_ : [$_]), $class))->_config_defaults();
   $obj->{VisType} = 'v';
   $obj;
 }
