@@ -64,7 +64,7 @@ sub Vis_Eval {   # Many ideas here were stolen from perl5db.pl
 
 package Vis;
 
-our $VERSION = sprintf "%d.%03d", q$Revision: 1.49 $ =~ /(\d+)/g;
+our $VERSION = sprintf "%d.%03d", q$Revision: 1.50 $ =~ /(\d+)/g;
 use Exporter;
 use Data::Dumper ();
 use Carp;
@@ -282,6 +282,20 @@ my $balanced_or_safe_re = qr{
 
 my $key_re  = qr{ \w+ | $qstr_re }x;
 
+sub _debug_show($$$$$$) {
+  my ($linesaref, $I, $Iindent, $J, $Jindent, $restart) = @_;
+  print "===== I=$I Iind=$Iindent, J=$J Jind=$Jindent restart=$restart\n";
+  my $nd = @$linesaref <= 9 ? 1 : @$linesaref <= 99 ? 2 : 3;
+  for my $ix(0..$#$linesaref) {
+    next if $linesaref->[$ix] eq "" && $ix != $I && $ix != $J;
+    printf "[%${nd}d] ", $ix;
+    print($ix==$I ? "I" : " ");
+    print($ix==$J ? "J" : " ");
+    print ":",($linesaref->[$ix] eq "" ? "(empty)":debugvis($linesaref->[$ix])), "\n";
+  }
+  print "--------------------\n";
+}
+
 sub Dump {
   my ($self) = @_;
 
@@ -360,16 +374,7 @@ sub Dump {
       my $Jindent = length($Jprefix);
 
       if ($debug) {
-        print "===== I=$I Iind=$Iindent, J=$J Jind=$Jindent restart=$restart\n";
-        my $nd = @lines <= 9 ? 1 : @lines <= 99 ? 2 : 3;
-        for my $ix(0..$#lines) {
-          next if $lines[$ix] eq "" && $ix != $I && $ix != $J;
-          printf "[%${nd}d] ", $ix;
-          print($ix==$I ? "I" : " ");
-          print($ix==$J ? "J" : " ");
-          print ":",($lines[$ix] eq "" ? "(empty)":debugvis($lines[$ix])), "\n";
-        }
-        print "--------------------\n";
+        _debug_show(\@lines, $I, $Iindent, $J, $Jindent, $restart);
       }
 
       if (($Iindent <= $Jindent)
@@ -398,20 +403,25 @@ sub Dump {
         if ($Ilen + $Jlen - 2 <= $maxwidth) {
           # It may be possible, after squishing [ 1, 2 ] -> [1, 2]
           # Do the join, but save the old I for possible undo below
-          my $saved_Iend =
-            substr($lines[$I],$Ilen,INT_MAX, ' '.substr($lines[$J], $Jindent));
-          print "## Prelim join (saved_Iend=",debugvis($saved_Iend),"):",debugvis($lines[$I]),"\n" if $Debug;
+          my $old_I = $lines[$I];
+          substr($lines[$I],$Ilen) = substr($lines[$J], $Jindent);
+          print "## Prelim join:",debugvis($lines[$I]),"\n" if $Debug;
           if ($lines[$I] =~ /\ \],?$/) {
             $lines[$I] =~ s/ # nb $balanced_squished_re uses a (capture group)
     ^( (?: ${balanced_squished_re} | [^"'{}()\[\]]++ | ${qstr_re} )*+ )
-     \[\ (.*)\ \]/$1\[$3\]/sx or $Jcode =~ /\[\],?$/ or die "\nbug";
+     \[\ (.*)\ \]/$1\[$3\]/sx 
+              or $Jcode =~ /\[\],?$/ 
+              or ($debug||_debug_show(\@lines, $I, $Iindent, $J, $Jindent, $restart)), die "\nbug: I=$I J=$J";
             print "## Squished [...] in lines[I], now:",debugvis($lines[$I]),"\n" if $Debug;
           }
           elsif ($lines[$I] =~ /\ \},?$/ 
                   && $lines[$I] !~ /sub\ ${balanced_re},?$/) {
+
             $lines[$I] =~ s/
     ^( (?: ${balanced_squished_re} | [^"'{}()\[\]]++ | ${qstr_re} )*+ )
-     \{\ (.*)\ \}/$1\{$3\}/sx or $Jcode =~ /\{\},?$/ or die "\nbug:",debugvis($lines[$I]);
+     \{\ (.*)\ \}/$1\{$3\}/sx 
+            or $Jcode =~ /\{\},?$/ 
+            or ($debug||_debug_show(\@lines, $I, $Iindent, $J, $Jindent, $restart)), die "\nbug: I=$I J=$J";
             print "## Squished {...} in lines[I], now:",debugvis($lines[$I]),"\n" if $Debug;
           }
           if (length($lines[$I])-1 <= $maxwidth) {
@@ -424,7 +434,7 @@ sub Dump {
             print "MARGINALLY TOO LONG (could not squish anything)\n",
                   debugvis($lines[$I]),"\n"
               if $debug;
-            substr($lines[$I],$Ilen,INT_MAX) = $saved_Iend;
+            $lines[$I] = $old_I;
           }
         } else {
           print "NO ROOM\n" if $debug;
