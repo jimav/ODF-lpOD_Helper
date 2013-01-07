@@ -64,7 +64,7 @@ sub Vis_Eval {   # Many ideas here were stolen from perl5db.pl
 
 package Vis;
 
-our $VERSION = sprintf "%d.%03d", q$Revision: 1.50 $ =~ /(\d+)/g;
+our $VERSION = sprintf "%d.%03d", q$Revision: 1.51 $ =~ /(\d+)/g;
 use Exporter;
 use Data::Dumper ();
 use Carp;
@@ -158,6 +158,7 @@ sub _unix_compatible_os() {
 }
 sub _get_default_width() {
   local ($_, $!, $^E);
+  my ($self) = @_;
   my $r;
   if (_unix_compatible_os) {
     if (-t STDERR) {
@@ -167,7 +168,7 @@ sub _get_default_width() {
       (($r) = ((qx'stty -a'//"") =~ /.*; columns (\d+);/s))
       ;
       { local $/ = "\n"; chomp $r if $r; }
-      print "## Vis detected terminal width is ",u($r),"\n" if $Debug;
+      print "## Vis detected terminal width is ",u($r),"\n" if $self->{VisDebug};
     }
   }
   # elsif(...) { ... }
@@ -184,7 +185,7 @@ sub _config_defaults {
   # $Data::Dumper::Useqq setting, e.g. 'utf8'
   $self->Useqq(1) unless $self->Useqq();
 
-  $Maxwidth = _get_default_width() if ! defined $Maxwidth;
+  $Maxwidth = $self->_get_default_width() if ! defined $Maxwidth;
 
   $self
     ->Quotekeys($Quotekeys)
@@ -405,14 +406,14 @@ sub Dump {
           # Do the join, but save the old I for possible undo below
           my $old_I = $lines[$I];
           substr($lines[$I],$Ilen) = substr($lines[$J], $Jindent);
-          print "## Prelim join:",debugvis($lines[$I]),"\n" if $Debug;
+          print "## Prelim join:",debugvis($lines[$I]),"\n" if $debug;
           if ($lines[$I] =~ /\ \],?$/) {
-            $lines[$I] =~ s/ # nb $balanced_squished_re uses a (capture group)
+            $lines[$I] =~ s/ # nb balanced_squished_re uses a (capture group)
     ^( (?: ${balanced_squished_re} | [^"'{}()\[\]]++ | ${qstr_re} )*+ )
      \[\ (.*)\ \]/$1\[$3\]/sx 
               or $Jcode =~ /\[\],?$/ 
               or ($debug||_debug_show(\@lines, $I, $Iindent, $J, $Jindent, $restart)), die "\nbug: I=$I J=$J";
-            print "## Squished [...] in lines[I], now:",debugvis($lines[$I]),"\n" if $Debug;
+            print "## Squished [...] in lines[I], now:",debugvis($lines[$I]),"\n" if $debug;
           }
           elsif ($lines[$I] =~ /\ \},?$/ 
                   && $lines[$I] !~ /sub\ ${balanced_re},?$/) {
@@ -422,7 +423,7 @@ sub Dump {
      \{\ (.*)\ \}/$1\{$3\}/sx 
             or $Jcode =~ /\{\},?$/ 
             or ($debug||_debug_show(\@lines, $I, $Iindent, $J, $Jindent, $restart)), die "\nbug: I=$I J=$J";
-            print "## Squished {...} in lines[I], now:",debugvis($lines[$I]),"\n" if $Debug;
+            print "## Squished {...} in lines[I], now:",debugvis($lines[$I]),"\n" if $debug;
           }
           if (length($lines[$I])-1 <= $maxwidth) {
             $lines[$J] = "";
@@ -680,7 +681,7 @@ ViSEoF
     } else {
       die "bug";
     }
-    print "### After act '$act' : result=«${result}»\n" if $Debug;
+    print "### After act '$act' : result=«${result}»\n" if $debug;
   }
   ( $@, $!, $^E, $,, $/, $\, $^W ) = @saved;
   return $result;
@@ -1137,7 +1138,7 @@ $_ = "GroupA.GroupB";
 { my $code = 'forceqsh($_)';         check $code, "'${_}'", eval $code; }
 
 { my $code = 'vis($_)'; check $code, "\"${_}\"", eval $code; }
-{ my $code = 'avis($_,1,2,3)'; check $code, "(\"${_}\", 1, 2, 3)", eval $code; }
+{ my $code = 'avis($_,1,2,3)'; check $code, "(\"${_}\",1,2,3)", eval $code; }
 { my $code = 'avis(@_)'; check $code, '()', eval $code; }
 { my $code = 'svis(q($_ con),q(caten),q(ated\n))';
   check $code, "\"${_}\" concatenated\n", eval $code;
@@ -1157,15 +1158,15 @@ $_ = "GroupA.GroupB";
 
 # There was a bug for s/dvis called direct from outer scope, so don't use eval:
 check 'global divs %toplex_h', 
-      '%toplex_h=( "" => "Emp", A => 111, "B B" => 222,'."\n"
-     .'            C => {d => 888, e => 999}, D => {}'."\n"
+      '%toplex_h=("" => "Emp",A => 111,"B B" => 222,'."\n"
+     .'            C => {d => 888,e => 999},D => {}'."\n"
      ."          )\n",
       dvis('%toplex_h\n'); 
-check 'global divs @ARGV', q(@ARGV=("fake", "argv")), dvis('@ARGV'); 
+check 'global divs @ARGV', q(@ARGV=("fake","argv")), dvis('@ARGV'); 
 check 'global divs $.', q($.=1234), dvis('$.'); 
 check 'global divs $ENV{EnvVar}', q("Test EnvVar Value"), svis('$ENV{EnvVar}'); 
 sub func {
-  check 'func args', q(@_=(1, 2, 3)), dvis('@_'); 
+  check 'func args', q(@_=(1,2,3)), dvis('@_'); 
 }
 func(1,2,3);
 
@@ -1184,7 +1185,31 @@ sub doquoting($$) {
   return $quoted;
 }
 
-sub f {
+sub show_white($) {
+  my $_ = shift;
+  s/\t/<tab>/msg;
+  s/( +)$/"<space>" x length($1)/mseg;
+  $_
+}
+
+sub get_closure(;$) {
+ my ($clobber) = @_;
+
+ my %closure_h = (%toplex_h);
+ my @closure_a = (@toplex_a);
+ my $closure_ar = \@closure_a;
+ my $closure_hr = \%closure_h;
+ if ($clobber) { # try to over-write deleted objects
+   @closure_a = ("bogusa".."boguzz");
+ }
+
+ return sub {
+
+  # Since we later generate references symbolically at run-time, 
+  # we have to explicitly save those which would otherwise be deleted
+  # by the time this sub is called.
+  my $saverefs = [ \%closure_h, \@closure_a, \$closure_ar, \$closure_hr ];
+
   my $zero = 0;
   my $one = 1;
   my $two = 2;
@@ -1237,19 +1262,19 @@ sub f {
     [ q($[\n), qq(\$[=0\n) ],
     [ q($^N\n), qq(\$^N=\"GroupB\"\n) ],
     [ q($+\n), qq(\$+=\"GroupB\"\n) ],
-    [ q(@+ $#+\n), qq(\@+=(13, 6, 13) \$#+=2\n) ],
-    [ q(@- $#-\n), qq(\@-=(0, 0, 7) \$#-=2\n) ],
+    [ q(@+ $#+\n), qq(\@+=(13,6,13) \$#+=2\n) ],
+    [ q(@- $#-\n), qq(\@-=(0,0,7) \$#-=2\n) ],
     [ q($;\n), qq(\$;=\"\\34\"\n) ],
-    [ q(@ARGV\n), qq(\@ARGV=(\"fake\", \"argv\")\n) ],
+    [ q(@ARGV\n), qq(\@ARGV=(\"fake\",\"argv\")\n) ],
     [ q($ENV{EnvVar}\n), qq(ENV{EnvVar}=\"Test EnvVar Value\"\n) ],
     [ q($ENV{$EnvVarName}\n), qq(ENV{\$EnvVarName}=\"Test EnvVar Value\"\n) ],
     [ q(@_\n), <<'EOF' ],  # N.B. Maxwidth was set to 72
-@_=( 42,
-     [ 0, 1, "C",
-       { "" => "Emp", A => 111, "B B" => 222,
-         C => {d => 888, e => 999}, D => {}
+@_=(42,
+     [0,1,"C",
+       {"" => "Emp",A => 111,"B B" => 222,
+         C => {d => 888,e => 999},D => {}
        },
-       [], [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+       [],[0,1,2,3,4,5,6,7,8,9]
      ]
    )
 EOF
@@ -1264,16 +1289,16 @@ EOF
           my $dolname_scalar = ($dollar ? "\$$dollar" : "").$name;
           my $p = " " x length("?${dollar}${name}_?${r}");
           [ qq(%${dollar}${name}_h${r}\\n), <<EOF ],
-\%${dollar}${name}_h${r}=( "" => "Emp", A => 111, "B B" => 222,
-${p}   C => {d => 888, e => 999}, D => {}
+\%${dollar}${name}_h${r}=("" => "Emp",A => 111,"B B" => 222,
+${p}   C => {d => 888,e => 999},D => {}
 ${p} )
 EOF
           [ qq(\@${dollar}${name}_a${r}\\n), <<EOF ],
-\@${dollar}${name}_a${r}=( 0, 1, "C",
-${p}   { "" => "Emp", A => 111, "B B" => 222,
-${p}     C => {d => 888, e => 999}, D => {}
+\@${dollar}${name}_a${r}=(0,1,"C",
+${p}   {"" => "Emp",A => 111,"B B" => 222,
+${p}     C => {d => 888,e => 999},D => {}
 ${p}   },
-${p}   [], [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+${p}   [],[0,1,2,3,4,5,6,7,8,9]
 ${p} )
 EOF
           [ qq(\$#${dollar}${name}_a${r}),    qq(\$#${dollar}${name}_a${r}=5)   ],
@@ -1297,10 +1322,10 @@ EOF
             qq(${dolname_scalar}_a${r}[3]->{C}->{e}=999\n)
           ],
           [ qq(\@${dollar}${name}_a${r}[\$zero,\$one]\\n),
-            qq(\@${dollar}${name}_a${r}[\$zero,\$one]=(0, 1)\n)
+            qq(\@${dollar}${name}_a${r}[\$zero,\$one]=(0,1)\n)
           ],
           [ qq(\@${dollar}${name}_h${r}{${LQ}A${RQ},${LQ}B B${RQ}}\\n),
-            qq(\@${dollar}${name}_h${r}{${LQ}A${RQ},${LQ}B B${RQ}}=(111, 222)\n)
+            qq(\@${dollar}${name}_h${r}{${LQ}A${RQ},${LQ}B B${RQ}}=(111,222)\n)
           ],
         } (['',''], ['$','r'])
         ), #map [$dollar,$r]
@@ -1322,7 +1347,7 @@ EOF
         } (['$','r',''], ['','r','->'])
         ), #map [$dollar,$r,$arrow]
         }
-        qw(sublex toplex global subglobal maskedglobal localized
+        qw(closure sublex toplex global subglobal maskedglobal localized
            A::B::C::ABC)
       ), #map $name
       } ('""', "''")
@@ -1359,10 +1384,11 @@ EOF
           unless ($fake[$i] =~ /^\d/ ? ($fake[$i]==$nfake[$i]) : ($fake[$i] eq $nfake[$i]));
       }
     }
-    confess "\ndvis test failed: input «${dvis_input}»\n"
-         ."Expected:\n${expected}«end»\n"
-         ."Got:\n${actual}«end»\n"
-    unless $expected eq $actual;
+    unless ($expected eq $actual) {
+      confess "\ndvis test failed: input «",show_white($dvis_input),"»\n"
+           ."Expected:\n",show_white($expected),"«end»\n"
+           ."Got:\n",show_white($actual),"«end»\n"
+    }
 
     # Check Useqq 
     for my $useqq (0, 1) {
@@ -1376,6 +1402,14 @@ EOF
         unless $exp eq $act;
     }
   }
+ };
+} # get_closure()
+sub f($) {
+  get_closure(1);
+  my $code = get_closure(0);
+  get_closure(1);
+  get_closure(1);
+  $code->(@_);
 }
 sub g($) {
   local $_ = 'SHOULD NEVER SEE THIS';
