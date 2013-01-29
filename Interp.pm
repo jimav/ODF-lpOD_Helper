@@ -12,26 +12,49 @@ use strict; use warnings; use utf8;
 
 package DB;
 
-# This must appear before any variable declarations, to avoid accidentally
-# masking the user's variables in the eval below.
+# This must appear before any un-qualified variable declarations,
+# to avoid accidentally masking the user's variables in the eval below.
 #
 sub Vis_Eval {   # Many ideas here were stolen from perl5db.pl
 
   { ($Vis::evalarg) = $_[0] =~ /(.*)/s; }  # untaint
 
+#  for my $lvl (0..4) {
+#    my @a = caller $lvl;
+#    last if @a == 0;
+#    print STDERR "   caller $lvl : (",
+#                 "pkg=$a[0] f=$a[1] ln=$a[2] sub=$a[3] ha=",
+#                 Vis::debugvis($a[4]),")\n",
+#                 "                               DB::args=",
+#                 Vis::debugavis(map{"$_"} @DB::args),"\n";
+#  }
+
   # The call stack:
-  #   0: Our current running context, right here
-  #   1: DB::DB_Vis_Interpolate calling us
-  #   2: Interface func calling DB::DB_Vis_Interpolate
-  #   3: User calling the interface func (via goto from a trampoline)
-  ($Vis::pkg) = caller 2;  # name of package containing user's call
-  ($Vis::UserIsInSub) = caller 3;  # Set @DB::args to user's @_ if in a sub
+  #   0: DB::DB_Vis_Interpolate calling us
+  #   1: Interface func calling DB::DB_Vis_Interpolate
+  #   2: User calling the interface func (via goto from a trampoline)
+  #   3: The caller of the user's sub (this frame defines @_)
+
+  ($Vis::pkg) = caller 2;         # name of package containing user's call
+
+  # Get @_ values from the closest frame above the user's call which
+  # has arguments.  This will be the very next frame (i.e. frame 3)
+  # unless the user was called using "&subname;".
+  for ($Vis::DistToArgs = 3; ; $Vis::DistToArgs++) {
+    my ($pkg,undef,undef,undef,$hasargs) = caller $Vis::DistToArgs;
+    if (! $pkg) {
+      undef $Vis::DistToArgs;
+      last;
+    }
+    last if $hasargs;
+  }
 
   # make user's @_ accessible, if the user is in a sub (otherwise we can't)
-  local *_ =
-    $Vis::UserIsInSub ? \@DB::args : ['<@_ in outer scope is not visible>'];
+  local *_ = defined($Vis::DistToArgs) 
+               ? \@DB::args
+               : ['<@_ is not defined in the outer scope>'] ;
 
-  # At this point, nothing is in scope except the name of this sub
+  # At this point, nothing is in scope except the name of this sub!
 
   @Vis::result = eval '($@, $!, $^E, $,, $/, $\, $^W) = @Vis::saved;'
                      ."package $Vis::pkg; $Vis::evalarg ";
@@ -64,7 +87,7 @@ sub Vis_Eval {   # Many ideas here were stolen from perl5db.pl
 
 package Vis;
 
-our $VERSION = sprintf "%d.%03d", q$Revision: 1.51 $ =~ /(\d+)/g;
+our $VERSION = sprintf "%d.%03d", q$Revision: 1.52 $ =~ /(\d+)/g;
 use Exporter;
 use Data::Dumper ();
 use Carp;
@@ -72,11 +95,21 @@ use feature qw(switch state);
 use POSIX qw(INT_MAX);
 
 sub debugvis(@) {  # for our internal debug messages
-  confess "multiple args not supported in debugvis" if @_ != 1;
   local $/ = "\n";
+  confess "should call debugavis" if @_ != 1;
   my $s = Data::Dumper->new([shift])->Useqq(1)->Terse(1)->Indent(1)->Dump;
   chomp $s;
   return $s;
+}
+sub debugavis(@) {  # for our internal debug messages
+  local $/ = "\n";
+  my $s = "(";
+  foreach my $a (@_) {
+    $s .= "," unless $s eq "(";
+    $s .= Data::Dumper->new([$a])->Useqq(1)->Terse(1)->Indent(1)->Dump;
+    chomp $s;
+  }
+  return "$s)";
 }
 
 our @ISA       = qw(Exporter Data::Dumper);
