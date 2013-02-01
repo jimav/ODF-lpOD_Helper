@@ -55,14 +55,15 @@ sub Vis_Eval {   # Many ideas here were stolen from perl5db.pl
 
   # At this point, nothing is in scope except the name of this sub!
 
+  #OLD:
   #@Vis::result = eval '($@, $!, $^E, $,, $/, $\, $^W) = @Vis::saved;'
   #                   ."package $Vis::pkg; $Vis::evalarg ";
 
-  # Because of tied variables, we may execute user code here.
-  # If a die happens, catch it and re-throw in the callers context.
-  eval {
+  # The LHS of this assignment has to be inside the eval to catch die 
+  # from tied variable handlers.
+  {
     ($@, $!, $^E, $,, $/, $\, $^W) = @Vis::saved;
-    @Vis::result = eval "package $Vis::pkg; $Vis::evalarg ";
+    eval "package $Vis::pkg; \@Vis::result = $Vis::evalarg ";
   };
 
   package Vis;
@@ -83,10 +84,12 @@ sub Vis_Eval {   # Many ideas here were stolen from perl5db.pl
   &Vis::SaveAndResetPunct;
 
   if ($at) {
-    ##$at =~ s/ at \(eval.*//;
-    $at =~ s/ at \S+ line \d+\n?\z//s;
+    $at =~ s/ at (?:\(eval \d+\)|\S+) line \d+\.?\n?\z//s;
     push @DB::CARP_NOT, 'Vis';
-    Carp::croak("${Vis::error_prefix}Error interpolating '$evalarg':\n $at");
+    Carp::croak(
+      $Vis::error_prefix,
+      (index($at,$evalarg) >= 0 ? "" : "Error interpolating '$evalarg', "),
+      "$at\n");
   }
 
   return @result;
@@ -94,7 +97,7 @@ sub Vis_Eval {   # Many ideas here were stolen from perl5db.pl
 
 package Vis;
 
-our $VERSION = sprintf "%d.%03d", q$Revision: 1.53 $ =~ /(\d+)/g;
+our $VERSION = sprintf "%d.%03d", q$Revision: 1.54 $ =~ /(\d+)/g;
 use Exporter;
 use Data::Dumper ();
 use Carp;
