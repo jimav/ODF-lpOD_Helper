@@ -1,5 +1,14 @@
-use strict; use warnings; use utf8;
-# Version string is after sub Vis_Eval.
+use strict; use warnings; 
+
+# This file contains UTF-8 characters in debug-output strings (e.g. « and »).
+# But to see them correctly on a non-Latin1 terminal (e.g. utf-8), your 
+# program has to say 
+#   use open ':std' => ':locale';
+# or otherwise set the STDERR encoding to match what your terminal expects
+# (Perl assumes Latin-1 by default).
+use utf8;
+
+# $VERSION is declared after sub Vis_Eval.
 
 # Copyright © Jim Avera 2012.  Released into the Public Domain
 # by the copyright owner.  (james_avera AT yahoo đøţ ¢ÔḾ)
@@ -18,16 +27,6 @@ package DB;
 sub Vis_Eval {   # Many ideas here were stolen from perl5db.pl
 
   { ($Vis::evalarg) = $_[0] =~ /(.*)/s; }  # untaint
-
-#  for my $lvl (0..4) {
-#    my @a = caller $lvl;
-#    last if @a == 0;
-#    print STDERR "   caller $lvl : (",
-#                 "pkg=$a[0] f=$a[1] ln=$a[2] sub=$a[3] ha=",
-#                 Vis::debugvis($a[4]),")\n",
-#                 "                               DB::args=",
-#                 Vis::debugavis(map{"$_"} @DB::args),"\n";
-#  }
 
   # The call stack:
   #   0: DB::DB_Vis_Interpolate calling us
@@ -56,8 +55,15 @@ sub Vis_Eval {   # Many ideas here were stolen from perl5db.pl
 
   # At this point, nothing is in scope except the name of this sub!
 
-  @Vis::result = eval '($@, $!, $^E, $,, $/, $\, $^W) = @Vis::saved;'
-                     ."package $Vis::pkg; $Vis::evalarg ";
+  #@Vis::result = eval '($@, $!, $^E, $,, $/, $\, $^W) = @Vis::saved;'
+  #                   ."package $Vis::pkg; $Vis::evalarg ";
+
+  # Because of tied variables, we may execute user code here.
+  # If a die happens, catch it and re-throw in the callers context.
+  eval {
+    ($@, $!, $^E, $,, $/, $\, $^W) = @Vis::saved;
+    @Vis::result = eval "package $Vis::pkg; $Vis::evalarg ";
+  };
 
   package Vis;
   our (@saved, $evalarg, @result);
@@ -78,6 +84,7 @@ sub Vis_Eval {   # Many ideas here were stolen from perl5db.pl
 
   if ($at) {
     ##$at =~ s/ at \(eval.*//;
+    $at =~ s/ at \S+ line \d+\n?\z//s;
     push @DB::CARP_NOT, 'Vis';
     Carp::croak("${Vis::error_prefix}Error interpolating '$evalarg':\n $at");
   }
@@ -87,7 +94,7 @@ sub Vis_Eval {   # Many ideas here were stolen from perl5db.pl
 
 package Vis;
 
-our $VERSION = sprintf "%d.%03d", q$Revision: 1.52 $ =~ /(\d+)/g;
+our $VERSION = sprintf "%d.%03d", q$Revision: 1.53 $ =~ /(\d+)/g;
 use Exporter;
 use Data::Dumper ();
 use Carp;
@@ -155,9 +162,10 @@ sub dvis($;@)  { goto &DB::DB_Vis_dvis }
 sub dvisq($;@) { goto &DB::DB_Vis_dvisq }
 
 # Provide Data::Dumper non-oo APIs
-sub Dumper(@) { return __PACKAGE__->Dump([@_]); }
-sub Dumpf(@)  { return __PACKAGE__->Dump(@_); }
-sub Dumpp(@)  { print __PACKAGE__->Dump(@_); }
+# Declared without prototypes (would be just (@)) to match Data::Dumper
+sub Dumper { return __PACKAGE__->Dump([@_]); }
+sub Dumpf  { return __PACKAGE__->Dump(@_); }
+sub Dumpp  { print __PACKAGE__->Dump(@_); }
 
 # Note: All Data::Dumper methods can be called on Vis objects
 
@@ -595,6 +603,7 @@ sub DB_Vis_Interpolate {
     # N.B. The evals are executed below after $_ is restored.
     local $_ = join "", map {defined($_) ? $_ : '<undef arg>'} $self->Values();
     while (1) {
+      #print "### pos()=",Vis::u(pos()),"\n" if $debug;
       if (
         # \G does not work with (?|...) in Perl 5.12.4
         # https://rt.perl.org/rt3//Public/Bug/Display.html?id=112894
