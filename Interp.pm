@@ -62,6 +62,7 @@ sub Vis_Eval {   # Many ideas here were stolen from perl5db.pl
   # The LHS of this assignment has to be inside the eval to catch die 
   # from tied variable handlers.
   {
+    no strict 'refs';
     ($@, $!, $^E, $,, $/, $\, $^W) = @Vis::saved;
     eval "package $Vis::pkg; \@Vis::result = $Vis::evalarg ";
   };
@@ -97,7 +98,7 @@ sub Vis_Eval {   # Many ideas here were stolen from perl5db.pl
 
 package Vis;
 
-our $VERSION = sprintf "%d.%03d", q$Revision: 1.54 $ =~ /(\d+)/g;
+our $VERSION = sprintf "%d.%03d", q$Revision: 1.55 $ =~ /(\d+)/g;
 use Exporter;
 use Data::Dumper ();
 use Carp;
