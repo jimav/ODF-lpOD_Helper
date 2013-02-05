@@ -98,7 +98,7 @@ sub Vis_Eval {   # Many ideas here were stolen from perl5db.pl
 
 package Vis;
 
-our $VERSION = sprintf "%d.%03d", q$Revision: 1.55 $ =~ /(\d+)/g;
+our $VERSION = sprintf "%d.%03d", q$Revision: 1.56 $ =~ /(\d+)/g;
 use Exporter;
 use Data::Dumper ();
 use Carp;
@@ -638,7 +638,7 @@ sub DB_Vis_Interpolate {
         }
       }
       elsif (/\G ( (?: [^\$\@%\\]+ | \\. )+ ) /xsgc) {
-        push @actions, ['t',$1];  # interpolate \n etc. in plain text
+        push @actions, ['t',$1];  # interpolate plain text including \$ etc.
       }
       else {
         if (/\G./) {
