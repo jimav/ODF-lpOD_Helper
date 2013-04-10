@@ -98,7 +98,7 @@ sub Vis_Eval {   # Many ideas here were stolen from perl5db.pl
 
 package Vis;
 
-our $VERSION = sprintf "%d.%03d", q$Revision: 1.56 $ =~ /(\d+)/g;
+our $VERSION = sprintf "%d.%03d", q$Revision: 1.57 $ =~ /(\d+)/g;
 use Exporter;
 use Data::Dumper ();
 use Carp;
@@ -639,6 +639,10 @@ sub DB_Vis_Interpolate {
       }
       elsif (/\G ( (?: [^\$\@%\\]+ | \\. )+ ) /xsgc) {
         push @actions, ['t',$1];  # interpolate plain text including \$ etc.
+      }
+      elsif (/\G   (?!\\)([\$\@\%])(\s|$)   /xsgc) {
+        Carp::carp "Warning: Dangling '$1' in string interpolated by svis or dvis\n";
+        push @actions, ['t',"\\${1}${2}"];  # treat as literal text
       }
       else {
         if (/\G./) {
