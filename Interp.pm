@@ -98,7 +98,7 @@ sub Vis_Eval {   # Many ideas here were stolen from perl5db.pl
 
 package Vis;
 
-our $VERSION = sprintf "%d.%03d", q$Revision: 1.57 $ =~ /(\d+)/g;
+our $VERSION = sprintf "%d.%03d", q$Revision: 1.58 $ =~ /(\d+)/g;
 use Exporter;
 use Data::Dumper ();
 use Carp;
@@ -147,10 +147,11 @@ $Indent     = 1           unless defined $Indent;
 
 # Functional (non-oo) APIs
 sub u(@);
-sub u(@)    { @_ == 1
-                ? defined($_[0]) ? $_[0] : "undef"
-                : (map { u($_) } @_)
-            }
+sub u(@) { 
+  @_ == 1 ? (defined($_[0]) ? $_[0] : "undef") :
+  @_ == 0 ? u($_) :
+  (map { u($_) } @_)
+}
 #sub u($)      { defined($_[0]) ? $_[0] : "undef" }
 sub vis(@)    { return __PACKAGE__->vnew(@_)->Dump; }
 sub visq(@)   { return __PACKAGE__->vnew(@_)->Useqq(0)->Dump; }
@@ -975,8 +976,8 @@ because Vis makes certain assumptions about their settings:
 
 =head2 u $data, ...
 
-The argument(s) are returned unchanged, except that undefined argument(s)
-are replaced by the string "undef".  Refs are not stringified.
+The arguments ($_ by default) are returned unchanged, except that undefined 
+argument(s) are replaced by the string "undef".  Refs are not stringified.
 C<u()> is not exported by default.
 
 =head2 qsh
@@ -1033,9 +1034,10 @@ use Carp;
 use English qw( -no_match_vars );;
 #use lib "$ENV{HOME}/lib/perl";
 use Vis;
+use Vis 'u';
 
 sub tf($) { $_[0] ? "true" : "false" }
-sub u($)  { defined $_[0] ? $_[0] : "undef" }
+#sub u($)  { defined $_[0] ? $_[0] : "undef" }
 
 binmode STDOUT, 'utf8';
 binmode STDERR, 'utf8';
