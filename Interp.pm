@@ -98,7 +98,7 @@ sub Vis_Eval {   # Many ideas here were stolen from perl5db.pl
 
 package Vis;
 
-our $VERSION = sprintf "%d.%03d", q$Revision: 1.58 $ =~ /(\d+)/g;
+our $VERSION = sprintf "%d.%03d", q$Revision: 1.59 $ =~ /(\d+)/g;
 use Exporter;
 use Data::Dumper ();
 use Carp;
@@ -776,7 +776,7 @@ Vis - Improve Data::Dumper for use in messages
   print Vis->new([$ref],['$ref'])->Dump;              #  compatible APIs
 
   # Just change undef to "undef", nothing else
-  use Vis qw(u);  # or qw(:DEFAULT u);
+  use Vis 'u';  # or qw(:DEFAULT u);
   my $value;
   print u($value),"\n";
 
@@ -912,7 +912,7 @@ If Maxwidth=0 output is not folded, appearing similar to Data::Dumper
 =back
 
 The following Methods have the same meaning as in Data::Dumper except that
-default values come from global variables in package Vis :
+default values come from global variables in package B<Vis> :
 
 =over 4
 
@@ -1008,7 +1008,7 @@ Unlike C<qsh>, C<forceqsh> requires exactly one argument.
 
 Vis calls Data::Dumper and then condenses the output.
 C<svis> and C<dvis> must also parse the strings to be interpolated.
-For most purposes performance is of no concern.
+For most purposes the extra overhead is not significant.
 
 Single-quote style (C<Useqq(0)>) runs faster because
 the underlying Data::Dumper implementation uses XS (C code).
