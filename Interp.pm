@@ -98,7 +98,7 @@ sub Vis_Eval {   # Many ideas here were stolen from perl5db.pl
 
 package Vis;
 
-our $VERSION = sprintf "%d.%03d", q$Revision: 1.59 $ =~ /(\d+)/g;
+our $VERSION = sprintf "%d.%03d", q$Revision: 1.60 $ =~ /(\d+)/g;
 use Exporter;
 use Data::Dumper ();
 use Carp;
@@ -838,19 +838,18 @@ Vis is a subclass of Data::Dumper and is a drop-in replacement.  The old
 APIs are all available through Vis but produce condensed output formatting.
 Data::Dumper may also be called directly (see "PERFORMANCE").
 
-=head2 svis 'string to be interpolated',...
+=head2 svis 'string to be interpolated', ...
 
-Variables and escapes in the string(s) are interpolated as
-in Perl double-quotish strings except that values are formatted
-using C<vis()> or C<avis()> (for $ or @ expressions, respectively).
-Multiple arguments are concatenated.
-
-Strings are unambiguously "quoted".
+The arguments are concatenated, interpolating variables and escapes
+as in in Perl double-quotish strings except that values are formatted
+unambiguously using C<vis()> or C<avis()> 
+(for $ or @ expressions, respectively).
 In addition, C<%name> is interpolated as S<<< C<< (key => value ...) >> >>>.
+
 Multi-line structures are indented to line up with their starting position,
 taking into account any preceeding text on the same line.
 
-The input string(s) should written SINGLE QUOTED so Perl will not
+The argument string(s) should be written SINGLE QUOTED so Perl will not
 interpolate them before passing to svis().
 
 =head2 dvis 'string to be interpolated',...
