@@ -63,8 +63,9 @@ sub Vis_Eval {   # Many ideas here were stolen from perl5db.pl
   # from tied variable handlers.
   {
     no strict 'refs';
-    ($@, $!, $^E, $,, $/, $\, $^W) = @Vis::saved;
-    eval "package $Vis::pkg; \@Vis::result = $Vis::evalarg ";
+    ($!, $^E, $,, $/, $\, $^W) = @Vis::saved[1..6];
+    eval 
+      "package $Vis::pkg; \$@=\$Vis::saved[0]; \@Vis::result=$Vis::evalarg ";
   };
 
   package Vis;
@@ -74,13 +75,15 @@ sub Vis_Eval {   # Many ideas here were stolen from perl5db.pl
 
   # Now save the possibly-modified values of punctuation variables.
   # Because of tied variables, we may have just executed user code!
-  # So save some special variables and reset them to sane values.
+  # So save the possibly-modified punctuation variables again and 
+  # reset them to sane values.
   #
-  # However we don't want to re-save $@; instead we want the originally-saved
-  # $@ from the user to be kept (and ultimately restored later).
+  # However we don't want to re-save $@, which we just cleared by
+  # executing our own 'eval' above; we want to later restore the 
+  # user's original $@, which was saved earlier.
   # By localizing $saved[0] here, the effect of the following call to
-  # &SaveAndResetPunct will be un-done when we return, restoring the
-  # originally-saved value for $@.
+  # &SaveAndResetPunct will be un-done when we return for that value only, 
+  # restoring the originally-saved value for $@ to $saved[0].
   local $saved[0];
   &Vis::SaveAndResetPunct;
 
@@ -98,7 +101,7 @@ sub Vis_Eval {   # Many ideas here were stolen from perl5db.pl
 
 package Vis;
 
-our $VERSION = sprintf "%d.%03d", q$Revision: 1.60 $ =~ /(\d+)/g;
+our $VERSION = sprintf "%d.%03d", q$Revision: 1.61 $ =~ /(\d+)/g;
 use Exporter;
 use Data::Dumper ();
 use Carp;
@@ -227,8 +230,8 @@ sub _get_default_width() {
 sub _config_defaults {
   my $self = shift;
 
-  # Set double-quote style, but preserve any special
-  # $Data::Dumper::Useqq setting, e.g. 'utf8'
+  ### Set double-quote style, but preserve any special
+  ### $Data::Dumper::Useqq setting, e.g. 'utf8'
   $self->Useqq(1) unless $self->Useqq();
 
   $Maxwidth = $self->_get_default_width() if ! defined $Maxwidth;
@@ -578,6 +581,7 @@ sub DB_Vis_Dump     { DB_Vis_Interpolate($_[0]); }
 # which just goto a function in package DB without modifying @_.
 #
 sub DB_Vis_Interpolate {
+
   &Vis::SaveAndResetPunct;
 
   my ($self) = @_;
