@@ -101,12 +101,79 @@ sub Vis_Eval {   # Many ideas here were stolen from perl5db.pl
 
 package Vis;
 
-our $VERSION = sprintf "%d.%03d", q$Revision: 1.61 $ =~ /(\d+)/g;
+our $VERSION = sprintf "%d.%03d", q$Revision: 1.62 $ =~ /(\d+)/g;
 use Exporter;
-use Data::Dumper ();
 use Carp;
 use feature qw(switch state);
 use POSIX qw(INT_MAX);
+use Encode ();
+
+our $Utf8patch //= 1;
+
+use Data::Dumper ();
+
+# Over-ride Data::Dumper::qquote to fix bug with Useqq('utf8')
+# N.B. This might not work if the sub ref has been cached by Perl
+$Vis::original_qquote = \&Data::Dumper::qquote;
+sub qquote_wrapper {
+  goto &fixed_qquote if $_[1] eq 'utf8';
+  goto &{$Vis::original_qquote};
+}
+if ($Vis::Utf8patch 
+    && &{$Vis::original_qquote}("\N{U+263A}","utf8") =~ /263a/i) {
+  # Data::Dumper still has the bug with Useqq("utf8")
+  no warnings;
+  *Data::Dumper::qquote = \&Vis::qquote_wrapper;
+}
+my %esc = (  
+    "\a" => "\\a",
+    "\b" => "\\b",
+    "\t" => "\\t",
+    "\n" => "\\n",
+    "\f" => "\\f",
+    "\r" => "\\r",
+    "\e" => "\\e",
+);
+# Following is a copy of qquote() from Data::Dumper version 2.130_02 with 
+# minimal changes to make Useqq('utf8') work.
+sub fixed_qquote {
+  local($_) = shift;
+  s/([\\\"\@\$])/\\$1/g;
+  return qq("$_") unless 
+    /[^ !"\#\$%&'()*+,\-.\/0-9:;<=>?\@A-Z[\\\]^_`a-z{|}~]/;  # fast exit
+
+  my $high = shift || "";
+  s/([\a\b\t\n\f\r\e])/$esc{$1}/g;
+
+  if (ord('^')==94)  { # ascii
+    # no need for 3 digits in escape for these
+    s/([\0-\037])(?!\d)/'\\'.sprintf('%o',ord($1))/eg;
+    s/([\0-\037\177])/'\\'.sprintf('%03o',ord($1))/eg;
+    # all but last branch below not supported --BEHAVIOR SUBJECT TO CHANGE--
+    if ($high eq "iso8859") {
+      s/([\200-\240])/'\\'.sprintf('%o',ord($1))/eg;
+    } elsif ($high eq "utf8") {
+      # Leave all printable characters as-is so humans can read them.
+      # The caller guarantees that the input consists of decoded characters
+      # (not bytes), and that the result will be encoded to UTF-8 or something 
+      # else which can represent all of Unicode.
+      s/([^[:print:]])/'\x{'.sprintf("%x",ord($1)).'}'/uge;
+    } elsif ($high eq "8bit") {
+        # leave it as it is
+    } else {
+      s/([\200-\377])/'\\'.sprintf('%03o',ord($1))/eg;
+      s/([^\040-\176])/sprintf "\\x{%04x}", ord($1)/ge;
+    }
+  }
+  else { # ebcdic
+      s{([^ !"\#\$%&'()*+,\-.\/0-9:;<=>?\@A-Z[\\\]^_`a-z{|}~])(?!\d)}
+       {my $v = ord($1); '\\'.sprintf(($v <= 037 ? '%o' : '%03o'), $v)}eg;
+      s{([^ !"\#\$%&'()*+,\-.\/0-9:;<=>?\@A-Z[\\\]^_`a-z{|}~])}
+       {'\\'.sprintf('%03o',ord($1))}eg;
+  }
+
+  return qq("$_");
+}
 
 sub debugvis(@) {  # for our internal debug messages
   local $/ = "\n";
@@ -767,7 +834,7 @@ Vis - Improve Data::Dumper for use in messages
   dvisq(), svisq(), visq(), and avisq() show strings 'single quoted'
 
   # Equivalent OO APIs allow using configuration methods
-  print Vis->snew('Howdy! var=$var ary=@ary hash=%hash\n')
+  print Vis->snew('var=$var ary=@ary hash=%hash\n')
              ->Maxwidth(120)
              ->Maxdepth($levels)
              ->Pad("| ")
@@ -775,6 +842,12 @@ Vis - Improve Data::Dumper for use in messages
   print Vis->dnew('Howdy! $var @ary %hash\n')->Dump;  # like dvis()
   print Vis->vnew($scalar)->Dump, "\n";               # like vis()
   print Vis->anew(@array)->Dump, "\n";                # like avis()
+
+  # Avoid unnecessary hex escaping in Unicode strings
+  $Vis::Useqq = 'utf8';
+  binmode(STDOUT, ":utf8");
+  my $var = "Let me read my Unicode \N{U+263A} ";
+  print svis('var=$var\n');
 
   print Dumper($ref);                                 # Data::Dumper
   print Vis->new([$ref],['$ref'])->Dump;              #  compatible APIs
@@ -797,6 +870,7 @@ The Vis package provides additional interfaces to Data::Dumper
 which may be more convenient for error/debug messages
 (plus a few related utilities).
 A condensed format is used for aggregate data.
+Wide characters can optionally be preserved in readable form.
 
 =over 2
 
@@ -919,8 +993,6 @@ default values come from global variables in package B<Vis> :
 
 =over 4
 
-=item $Vis::Useqq               I<or>  I<$OBJ>->Useqq(I<[NEWVAL]>)
-
 =item $Vis::Quotekeys           I<or>  I<$OBJ>->Quotekeys(I<[NEWVAL]>)
 
 =item $Vis::Sortkeys            I<or>  I<$OBJ>->Sortkeys(I<[NEWVAL]>)
@@ -928,6 +1000,16 @@ default values come from global variables in package B<Vis> :
 =item $Vis::Terse               I<or>  I<$OBJ>->Terse(I<[NEWVAL]>)
 
 =item $Vis::Indent              I<or>  I<$OBJ>->Indent(I<[NEWVAL]>)
+
+=item $Vis::Useqq               I<or>  I<$OBJ>->Useqq(I<[NEWVAL]>)
+
+Note that the B<Useqq(0)> is called implicitly
+by B<svisq>, B<dvisq>, B<visq>, and B<avisq>.
+
+B<Useqq('utf8')> is like B<Useqq(1)> but also leaves printable wide 
+characters as-is so you can read them.  Input strings must contain Unicode characters 
+and the output must be encoded to a UTF-8 or another suitable encoding (see perlunitut).
+(B<Vis> repairs a bug in Data::Dumper which prevented this feature from working).
 
 =back
 
@@ -948,18 +1030,9 @@ from global variables in Data::Dumper .  Here is a partial list:
 
 =item $Data::Dumper::Purity     I<or>  I<$OBJ>->Purity(I<[NEWVAL]>)
 
-=item $Data::Dumper::Quotekeys  I<or>  I<$OBJ>->Quotekeys(I<[NEWVAL]>)
-
-=item $Data::Dumper::Sortkeys   I<or>  I<$OBJ>->Sortkeys(I<[NEWVAL]>)
-
 =item $Data::Dumper::Toaster    I<or>  I<$OBJ>->Toaster(I<[NEWVAL]>)
 
-=item $Data::Dumper::Useqq      I<or>  I<$OBJ>->Useqq(I<[NEWVAL]>)
-
 =item $Data::Dumper::Varname    I<or>  I<$OBJ>->Varname(I<[NEWVAL]>)
-
-Note that the B<Useqq(0)> is called implicitly
-by B<svisq>, B<dvisq>, B<visq>, and B<avisq>.
 
 =back
 
@@ -1031,11 +1104,14 @@ Jim Avera (james_avera AT yahoo daht komm)
 
 #!/usr/bin/perl
 # Tester for module Vis.  TODO: Convert to CPAN module-test setup
-use utf8; use strict; use warnings;
-use feature qw(state switch);
+use strict; use warnings; use feature qw(state switch);
+use utf8; 
+use open IO => 'utf8', ':std';
 use Carp;
 use English qw( -no_match_vars );;
 #use lib "$ENV{HOME}/lib/perl";
+
+BEGIN{ $Vis::Utf8patch = 0; } # Suppress work-around to test patched Data::Dumper
 use Vis;
 use Vis 'u';
 
@@ -1086,10 +1162,13 @@ if (! ref Vis->new([1])->Useqq(undef)) {
 
 print "         unicode_str:$unicode_str\n";
 { my $s = Vis->vnew($unicode_str)->Useqq('utf8')->Dump;
-  $s =~ s/^"(.*)"\z/$1/s or die "bug";
+  $s =~ s/^"(.*)"\z/$1/s or die "bug($s)";
   print "Vis with Useqq(utf8):$s\n";
-  warn "WARNING: Useqq('utf8') is broken in your Data::Dumper.\n"
-    unless $s eq $unicode_str;
+  if ($s eq $unicode_str) {
+    warn "Useqq('utf8') seems to work.\n"
+  } else {
+    warn "WARNING: Useqq('utf8') is broken in your Data::Dumper.\n"
+  } 
 }
 foreach ( ['Quotekeys',0,1],
           ['Sortkeys',0,1,sub{return sort keys %{shift @_}}],
