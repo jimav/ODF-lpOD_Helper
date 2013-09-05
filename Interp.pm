@@ -101,7 +101,7 @@ sub Vis_Eval {   # Many ideas here were stolen from perl5db.pl
 
 package Vis;
 
-our $VERSION = sprintf "%d.%03d", q$Revision: 1.62 $ =~ /(\d+)/g;
+our $VERSION = sprintf "%d.%03d", q$Revision: 1.63 $ =~ /(\d+)/g;
 use Exporter;
 use Carp;
 use feature qw(switch state);
@@ -153,10 +153,11 @@ sub fixed_qquote {
     if ($high eq "iso8859") {
       s/([\200-\240])/'\\'.sprintf('%o',ord($1))/eg;
     } elsif ($high eq "utf8") {
-      # Leave all printable characters as-is so humans can read them.
-      # The caller guarantees that the input consists of decoded characters
-      # (not bytes), and that the result will be encoded to UTF-8 or something 
-      # else which can represent all of Unicode.
+      # Leave printable wide chars alone so humans can read them.
+      # The caller must guarantee that the input data consists of
+      # decoded characters (not bytes), and that the result will be encoded
+      # to UTF-8 or another encoding which can represent the data.  
+      ##s/([^[:print:]])/ sprintf("\\x{%x}",ord($1)) /uge;
       s/([^[:print:]])/'\x{'.sprintf("%x",ord($1)).'}'/uge;
     } elsif ($high eq "8bit") {
         # leave it as it is
@@ -1107,20 +1108,38 @@ Jim Avera (james_avera AT yahoo daht komm)
 use strict; use warnings; use feature qw(state switch);
 use utf8; 
 use open IO => 'utf8', ':std';
+select STDERR; $|=1; select STDOUT; $|=1;
 use Carp;
 use English qw( -no_match_vars );;
 #use lib "$ENV{HOME}/lib/perl";
 
-BEGIN{ $Vis::Utf8patch = 0; } # Suppress work-around to test patched Data::Dumper
+my $unicode_str;
+BEGIN{ 
+  # This test must be done before loading Vis, which over-rides an internal
+  # function to fix the bug
+  $unicode_str = join "",map {eval sprintf "\" \\N{U+%04X}\"",$_} 
+                             (0x263A..0x2650); 
+  print "                    unicode_str:$unicode_str\n";
+  require Data::Dumper;
+  { my $s = Data::Dumper->new([$unicode_str],['unicode_str'])->Terse(1)->Useqq('utf8')->Dump;
+    chomp $s;
+    $s =~ s/^"(.*)"$/$1/s or die "bug";
+    if ($s ne $unicode_str) {
+      #warn "Data::Dumper with Useqq('utf8'):$s\n";
+      warn "WARNING: Useqq('utf8') is broken in your Data::Dumper.\n"
+    } else {
+      print "Useqq('utf8') seems to have been fixed in Data::Dumper,\n",
+            "disabling the fix in Vis ...\n";
+      $Vis::Utf8patch = 0;
+    }
+  }
+}
 use Vis;
 use Vis 'u';
 
 sub tf($) { $_[0] ? "true" : "false" }
 #sub u($)  { defined $_[0] ? $_[0] : "undef" }
 
-binmode STDOUT, 'utf8';
-binmode STDERR, 'utf8';
-select STDERR; $|=1; select STDOUT; $|=1;
 
 # ---------- Check stuff other than formatting or interpolation --------
 
@@ -1133,8 +1152,6 @@ for my $varname (qw(PREMATCH MATCH POSTMATCH)) {
 }
 
 my $byte_str = join "",map { chr $_ } 10..30;
-my $unicode_str = join "",map {
-        eval sprintf "\" \\N{U+%04X}\"",$_} (0x263A..0x2650);
 
 die "Expected initial Vis::Maxwidth to be undef" if defined $Vis::Maxwidth;
 if (Vis::_unix_compatible_os()) {
@@ -1154,22 +1171,23 @@ if (Vis::_unix_compatible_os()) {
   die "Vis::Maxwidth did not default to 80 with no tty" unless $? == 0;
 }
 
+{ my $s = Vis->new([$unicode_str],['unicode_str'])->Terse(1)->Useqq('utf8')->Dump;
+  chomp $s;
+  $s =~ s/^"(.*)"$/$1/s or die "bug";
+  print "         Vis with Useqq('utf8'):$s\n";
+  if ($s ne $unicode_str) {
+    die "Useqq('utf8') fix does not work!\n","s=<${s}>\n";
+  } else {
+    print "Useqq('utf8') works with Vis.\n";
+  }
+}
+
 my $undef_as_false = undef;
 if (! ref Vis->new([1])->Useqq(undef)) {
-  warn "WARNING: Your Data::Dumper has not been fixed to accept undef boolean args.\n";
+  warn "WARNING: Data::Dumper does not recognize undef boolean args as 'false'.\n";
   $undef_as_false = 0;
 }
 
-print "         unicode_str:$unicode_str\n";
-{ my $s = Vis->vnew($unicode_str)->Useqq('utf8')->Dump;
-  $s =~ s/^"(.*)"\z/$1/s or die "bug($s)";
-  print "Vis with Useqq(utf8):$s\n";
-  if ($s eq $unicode_str) {
-    warn "Useqq('utf8') seems to work.\n"
-  } else {
-    warn "WARNING: Useqq('utf8') is broken in your Data::Dumper.\n"
-  } 
-}
 foreach ( ['Quotekeys',0,1],
           ['Sortkeys',0,1,sub{return sort keys %{shift @_}}],
           ['Terse',0,1],
