@@ -101,7 +101,7 @@ sub Vis_Eval {   # Many ideas here were stolen from perl5db.pl
 
 package Vis;
 
-our $VERSION = sprintf "%d.%03d", q$Revision: 1.63 $ =~ /(\d+)/g;
+our $VERSION = sprintf "%d.%03d", q$Revision: 1.64 $ =~ /(\d+)/g;
 use Exporter;
 use Carp;
 use feature qw(switch state);
@@ -157,8 +157,7 @@ sub fixed_qquote {
       # The caller must guarantee that the input data consists of
       # decoded characters (not bytes), and that the result will be encoded
       # to UTF-8 or another encoding which can represent the data.  
-      ##s/([^[:print:]])/ sprintf("\\x{%x}",ord($1)) /uge;
-      s/([^[:print:]])/'\x{'.sprintf("%x",ord($1)).'}'/uge;
+      s/([^[:print:]])/ sprintf("\\x{%x}",ord($1)) /uge;
     } elsif ($high eq "8bit") {
         # leave it as it is
     } else {
