@@ -101,7 +101,7 @@ sub Vis_Eval {   # Many ideas here were stolen from perl5db.pl
 
 package Vis;
 
-our $VERSION = sprintf "%d.%03d", q$Revision: 1.65 $ =~ /(\d+)/g;
+our $VERSION = sprintf "%d.%03d", q$Revision: 1.66 $ =~ /(\d+)/g;
 use Exporter;
 use Carp;
 use feature qw(switch state);
@@ -597,17 +597,19 @@ sub forceqsh($) {
 }
 
 sub qsh(_;@) {
+  my @args = @_;
   join " ",
        map {
          defined $_
            ? (/[^-\w_\/:\.]/ || $_ eq "") ? forceqsh($_) : $_
            : "undef";
        }
-       @_;
+       @args;
 }
 
 # Quote paths for shell: Like qsh but doesn't quote an initial ~ or ~username
 sub qshpath(_;@) {
+  my @args = @_;
   join " ",
        map {
          defined $_
@@ -618,7 +620,7 @@ sub qshpath(_;@) {
              }
            : "undef";
        }
-       @_;
+       @args;
 }
 
 our @saved;
@@ -1286,6 +1288,14 @@ $_ = "GroupA.GroupB";
 { my $code = 'qshpath()';            check $code, "${_}",   eval $code; } 
 { my $code = 'qshpath';              check $code, "${_}",   eval $code; } 
 { my $code = 'forceqsh($_)';         check $code, "'${_}'", eval $code; }
+
+# Check that $1 etc. can be passed (this was once a bug...)
+{ my $code = '" a~b" =~ / (.*)/ && qsh($1)'; check $code, "'a~b'", eval $code; }
+{ my $code = '" a~b" =~ / (.*)/ && qshpath($1)'; check $code, "'a~b'", eval $code; }
+{ my $code = '" a~b" =~ / (.*)/ && forceqsh($1)'; check $code, "'a~b'", eval $code; }
+{ my $code = '" a~b" =~ / (.*)/ && vis($1)'; check $code, '"a~b"', eval $code; }
+
+{ my $code = 'my $vv=123; \' a $vv b\' =~ / (.*)/ && dvis($1)'; check $code, 'a vv=123 b', eval $code; }
 
 { my $code = 'vis($_)'; check $code, "\"${_}\"", eval $code; }
 { my $code = 'avis($_,1,2,3)'; check $code, "(\"${_}\",1,2,3)", eval $code; }
