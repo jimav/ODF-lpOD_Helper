@@ -101,7 +101,7 @@ sub Vis_Eval {   # Many ideas here were stolen from perl5db.pl
 
 package Vis;
 
-our $VERSION = sprintf "%d.%03d", q$Revision: 1.64 $ =~ /(\d+)/g;
+our $VERSION = sprintf "%d.%03d", q$Revision: 1.65 $ =~ /(\d+)/g;
 use Exporter;
 use Carp;
 use feature qw(switch state);
@@ -439,7 +439,6 @@ sub Dump {
   }
 
   print "===== RAW =====\n${_}---------------\n" if $debug;
-
   
   #return $_ if $maxwidth == 0; # no condensation
 
