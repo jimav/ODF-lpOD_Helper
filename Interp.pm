@@ -101,7 +101,7 @@ sub Vis_Eval {   # Many ideas here were stolen from perl5db.pl
 
 package Vis;
 
-our $VERSION = sprintf "%d.%03d", q$Revision: 1.66 $ =~ /(\d+)/g;
+our $VERSION = sprintf "%d.%03d", q$Revision: 1.67 $ =~ /(\d+)/g;
 use Exporter;
 use Carp;
 use feature qw(switch state);
@@ -581,19 +581,19 @@ sub forceqsh($) {
   # inside '...'.  Therefore the quoting has to be interrupted for any
   # embedded single-quotes so they can be contatenated as \' or "'"
   #
-  # N.B. vis with Useqq(0) will format ' as \' and \ as \\
 
-  local $_ = __PACKAGE__->vnew(shift)->Useqq(0)->Dump;
-
-  unless (/^'/) {
-    # The input was a reference to an aggregate; re-format as 'string'
+  my $_ = shift;
+  if (ref) {
+    # If a ref to an aggregate, convert to a string
     $_ = __PACKAGE__->vnew($_)->Useqq(0)->Dump;
   }
-
-  s/\\\\/\\/g;   # 'foo\\bar\\\'baz' -> 'foo\bar\\'baz'
-  s/\\'/'\\''/g; # 'foo\bar\'baz'    -> 'foo\bar'\''baz'
-
-  return $_;
+  
+  # Now we have a simple scalar.  
+  # Don't use Data::Dumper because it will change
+  # wide characters to \x{...} escapes.  For qsh() we assume the user
+  # will encode the resulting string as needed, so leave wide chars as-is.
+  s/'/'\\''/g; # foo'bar => foo'\''bar
+  return "'${_}'";
 }
 
 sub qsh(_;@) {
