@@ -101,7 +101,7 @@ sub Vis_Eval {   # Many ideas here were stolen from perl5db.pl
 
 package Vis;
 
-our $VERSION = sprintf "%d.%03d", q$Revision: 1.67 $ =~ /(\d+)/g;
+our $VERSION = sprintf "%d.%03d", q$Revision: 1.68 $ =~ /(\d+)/g;
 use Exporter;
 use Carp;
 use feature qw(switch state);
@@ -157,7 +157,7 @@ sub fixed_qquote {
       # The caller must guarantee that the input data consists of
       # decoded characters (not bytes), and that the result will be encoded
       # to UTF-8 or another encoding which can represent the data.  
-      s/([^[:print:]])/ sprintf("\\x{%x}",ord($1)) /uge;
+      s/([^[:graph:] ])/ sprintf("\\x{%x}",ord($1)) /uge;
     } elsif ($high eq "8bit") {
         # leave it as it is
     } else {
@@ -390,18 +390,24 @@ my $balanced_squished_re = qr{  # match [a,...  but not [ a,...
      )
    }x;
 
-# This matches innocous stuff and/or balanced blocks
+# This matches as much innocuous stuff and/or balanced blocks as possible
+# (with unpredictable capture group use)
 my $balanced_or_safe_re = qr{
      #(?{ print "### START balanced_or_safe_re at $+[0]\n"; })
      (?: [^"'{}()\[\]]+ | $qstr_re | $balanced_re)*
      #(?{ print "### END balanced_or_safe_re at $+[0] $^N\n"; })
    }x;
 
+# Similar but only matches *squished* balanced blocks. 
+my $balancedsquished_or_safe_re = qr{
+     (?: [^"'{}()\[\]]+ | $qstr_re | $balanced_squished_re)*
+   }x;
+
 my $key_re  = qr{ \w+ | $qstr_re }x;
 
 sub _debug_show($$$$$$) {
   my ($linesaref, $I, $Iindent, $J, $Jindent, $restart) = @_;
-  print "===== I=$I Iind=$Iindent, J=$J Jind=$Jindent restart=$restart\n";
+  print "===== I=$I Iind=$Iindent J=$J Jind=$Jindent restart=$restart\n";
   my $nd = @$linesaref <= 9 ? 1 : @$linesaref <= 99 ? 2 : 3;
   for my $ix(0..$#$linesaref) {
     next if $linesaref->[$ix] eq "" && $ix != $I && $ix != $J;
@@ -410,7 +416,7 @@ sub _debug_show($$$$$$) {
     print($ix==$J ? "J" : " ");
     print ":",($linesaref->[$ix] eq "" ? "(empty)":debugvis($linesaref->[$ix])), "\n";
   }
-  print "--------------------\n";
+  print "=====================\n";
 }
 
 sub Dump {
@@ -427,7 +433,7 @@ sub Dump {
   local $_ = $self->SUPER::Dump;
 
   my $pad = $self->Pad();
-  if ($pad) {
+  if ($pad ne ""){
     s/^\Q${pad}\E//mg; # will be put back later
     $maxwidth -= length($pad);
     if ($maxwidth < 20) {
@@ -489,69 +495,54 @@ sub Dump {
       my ($Jprefix,$Jcode) = ($lines[$J] =~ /^( *)(.*)\n\z/s);
       my $Jindent = length($Jprefix);
 
-      if ($debug) {
-        _debug_show(\@lines, $I, $Iindent, $J, $Jindent, $restart);
-      }
+      my $J_is_closing = ($Jcode =~ /[\]\}]$/);
+
+      _debug_show(\@lines, $I, $Iindent, $J, $Jindent, $restart) if $debug;
 
       if (($Iindent <= $Jindent)
-          && $Icode !~ /^[\]\}]/ # I isn't closing an aggregate
-
-          # && $Jcode !~ /[\[\{]$/ # [FIXME:???] J isn't opening a new aggregate
+          # I is not closing an aggregate
+          && $Icode !~ /^[\]\}]/ 
 
           # J does not end with an un-closed block (we only join atoms or
-          # [whole blocks]).  This prevents hard-to-read forms like
+          # [whole blocks]).  This prevents hard-to-see keys such as KEY2:
           #    { "KEY" => [ 1, 2, 3, 4,
           #      "five", "six", 7 ], "KEY2" => ... }
-          && $Jcode !~ /
-                ^(?: [^"'{}()\[\]]++ | ${qstr_re} | ${balanced_re} )*+
-                 # [\{\[] .*  ,$
-                 [\{\[]
-             /x
-          # # I is an open sequence we can append to, or J is closing a [block]
-          # && ($Icode =~ /(?:,|[\[\{])$/s || $Jcode =~ /^[\]\}]/s)
+          && $Jcode !~ /^ (?> ${balanced_or_safe_re}) [\{\[] /x
          )
       {
         # The lines are elegible to be joined, if there is enough space
+        # (or in any case if the joining would not increase line length)
         my $Ilen = $Iindent + length($Icode);
         my $Jlen = length($Jcode);
+        my $sep  = $Icode =~ /,$/ && $Jcode =~ / => ${balanced_or_safe_re},?$/x
+                    ? " " : "";
+        my $adj = $Ilen + length($sep) - $Jindent; # posn change, + or -
+        print "[Iind=$Iindent Ilen=$Ilen Jlen=$Jlen sep='${sep}' adj=$adj mw=$maxwidth]\n" if $debug;
 
-        print "[Ilen=$Ilen Jlen=$Jlen"," mw=$maxwidth]\n" if $debug;
-        if ($Ilen + $Jlen - 2 <= $maxwidth) {
-          # It may be possible, after squishing [ 1, 2 ] -> [1, 2]
-          # Do the join, but save the old I for possible undo below
-          my $old_I = $lines[$I];
-          substr($lines[$I],$Ilen) = substr($lines[$J], $Jindent);
-          print "## Prelim join:",debugvis($lines[$I]),"\n" if $debug;
-          if ($lines[$I] =~ /\ \],?$/) {
-            $lines[$I] =~ s/ # nb balanced_squished_re uses a (capture group)
-    ^( (?: ${balanced_squished_re} | [^"'{}()\[\]]++ | ${qstr_re} )*+ )
-     \[\ (.*)\ \]/$1\[$3\]/sx 
-              or $Jcode =~ /\[\],?$/ 
-              or ($debug||_debug_show(\@lines, $I, $Iindent, $J, $Jindent, $restart)), die "\nbug: I=$I J=$J";
-            print "## Squished [...] in lines[I], now:",debugvis($lines[$I]),"\n" if $debug;
+        if ($Ilen + $Jlen + length($sep) <= $maxwidth || $adj <= 0) {
+          substr($lines[$I],$Ilen) = $sep.substr($lines[$J], $Jindent); 
+          $lines[$J] = "";
+          print "## joined:",debugvis($lines[$I]),"\n" if $debug;
+          if ($J < $#lines && $adj < 0) {
+            # Adjust the indentation of remaining items in the same block
+            # to line up with the item just joined, the indent decreased.
+            # This occurs when joining members onto an opening bracket.
+            #my $extra_prefix = " " x $adj;
+            for (my $K=$J+1; ;$K++) {
+              die "bug" if $K > $#lines;
+              $lines[$K] =~ /^( *)/;
+              last if length($1) <= $Iindent; # end of nested block
+              #if ($adj > 0) {
+              #  $lines[$K] = $extra_prefix . $lines[$K];
+              #} else { 
+                substr($lines[$K],0,-$adj) = "";
+              #}              
+            }
           }
-          elsif ($lines[$I] =~ /\ \},?$/ 
-                  && $lines[$I] !~ /sub\ ${balanced_re},?$/) {
-
-            $lines[$I] =~ s/
-    ^( (?: ${balanced_squished_re} | [^"'{}()\[\]]++ | ${qstr_re} )*+ )
-     \{\ (.*)\ \}/$1\{$3\}/sx 
-            or $Jcode =~ /\{\},?$/ 
-            or ($debug||_debug_show(\@lines, $I, $Iindent, $J, $Jindent, $restart)), die "\nbug: I=$I J=$J";
-            print "## Squished {...} in lines[I], now:",debugvis($lines[$I]),"\n" if $debug;
-          }
-          if (length($lines[$I])-1 <= $maxwidth) {
-            $lines[$J] = "";
-            #$restart = $I if $I < $restart;
-            $restart = 0 if $I < $restart;
-            last LOOP if ++$J > $#lines;
-            redo LOOP;
-          } else {
-            print "MARGINALLY TOO LONG (could not squish anything)\n",
-                  debugvis($lines[$I]),"\n"
-              if $debug;
-            $lines[$I] = $old_I;
-          }
+          #$restart = $I if $I < $restart;
+          $restart = 0 if $I < $restart;
+          last LOOP if ++$J > $#lines;
+          redo LOOP;
         } else {
           print "NO ROOM\n" if $debug;
         }
@@ -571,7 +562,7 @@ sub Dump {
     }
   }
 
-  s/^/$pad/meg if $pad;
+  s/^/$pad/meg if $pad ne "";
 
   return $_;
 }
@@ -659,6 +650,9 @@ sub DB_Vis_Interpolate {
 
   local $Vis::error_prefix = "$self->{VisType}vis: "; # see Vis_Eval
 
+  # NOTE: These may or may not use capture groups internally, so capture
+  # groups must NOT be opened after the first point of use in a regexp!
+  
   state $interior_re = qr/${balanced_or_safe_re}/;
 
   state $scalar_index_re = qr{
@@ -847,7 +841,7 @@ Vis - Improve Data::Dumper for use in messages
   # Avoid unnecessary hex escaping in Unicode strings
   $Vis::Useqq = 'utf8';
   binmode(STDOUT, ":utf8");
-  my $var = "Let me read my Unicode \N{U+263A} ";
+  my $var = "Just let me read my Unicode \N{U+263A} ";
   print svis('var=$var\n');
 
   print Dumper($ref);                                 # Data::Dumper
@@ -1008,9 +1002,11 @@ Note that the B<Useqq(0)> is called implicitly
 by B<svisq>, B<dvisq>, B<visq>, and B<avisq>.
 
 B<Useqq('utf8')> is like B<Useqq(1)> but also leaves printable wide 
-characters as-is so you can read them.  Input strings must contain Unicode characters 
-and the output must be encoded to a UTF-8 or another suitable encoding (see perlunitut).
-(B<Vis> repairs a bug in Data::Dumper which prevented this feature from working).
+characters as-is so you can read them (anything in the POSIX [:graph:] set).
+Input strings must contain characters (not bytes), and the output must 
+later be encoded to UTF-8 or another encoding which can represent the data
+(see perlunitut).
+[Data::Dumper has long contained code to implement this but a bug prevented it from working; B<Vis> overrides a Data::Dumper internal function to repair it.]
 
 =back
 
@@ -1099,7 +1095,7 @@ Data::Dumper
 
 =head1 AUTHOR
 
-Jim Avera (james_avera AT yahoo daht komm)
+Jim Avera (james_avera AT yahoo)
 
 =cut
 
@@ -1318,8 +1314,8 @@ $_ = "GroupA.GroupB";
 
 # There was a bug for s/dvis called direct from outer scope, so don't use eval:
 check 'global divs %toplex_h', 
-      '%toplex_h=("" => "Emp",A => 111,"B B" => 222,'."\n"
-     .'            C => {d => 888,e => 999},D => {}'."\n"
+      '%toplex_h=("" => "Emp", A => 111, "B B" => 222,'."\n"
+     .'           C => {d => 888, e => 999}, D => {}'."\n"
      ."          )\n",
       dvis('%toplex_h\n'); 
 check 'global divs @ARGV', q(@ARGV=("fake","argv")), dvis('@ARGV'); 
@@ -1430,12 +1426,12 @@ sub get_closure(;$) {
     [ q($ENV{$EnvVarName}\n), qq(ENV{\$EnvVarName}=\"Test EnvVar Value\"\n) ],
     [ q(@_\n), <<'EOF' ],  # N.B. Maxwidth was set to 72
 @_=(42,
-     [0,1,"C",
-       {"" => "Emp",A => 111,"B B" => 222,
-         C => {d => 888,e => 999},D => {}
-       },
-       [],[0,1,2,3,4,5,6,7,8,9]
-     ]
+    [0,1,"C",
+     {"" => "Emp", A => 111, "B B" => 222,
+      C => {d => 888, e => 999}, D => {}
+     },
+     [],[0,1,2,3,4,5,6,7,8,9]
+    ]
    )
 EOF
     [ q($#_\n), qq(\$#_=1\n) ],
@@ -1449,16 +1445,16 @@ EOF
           my $dolname_scalar = ($dollar ? "\$$dollar" : "").$name;
           my $p = " " x length("?${dollar}${name}_?${r}");
           [ qq(%${dollar}${name}_h${r}\\n), <<EOF ],
-\%${dollar}${name}_h${r}=("" => "Emp",A => 111,"B B" => 222,
-${p}   C => {d => 888,e => 999},D => {}
+\%${dollar}${name}_h${r}=("" => "Emp", A => 111, "B B" => 222,
+${p}  C => {d => 888, e => 999}, D => {}
 ${p} )
 EOF
           [ qq(\@${dollar}${name}_a${r}\\n), <<EOF ],
 \@${dollar}${name}_a${r}=(0,1,"C",
-${p}   {"" => "Emp",A => 111,"B B" => 222,
-${p}     C => {d => 888,e => 999},D => {}
-${p}   },
-${p}   [],[0,1,2,3,4,5,6,7,8,9]
+${p}  {"" => "Emp", A => 111, "B B" => 222,
+${p}   C => {d => 888, e => 999}, D => {}
+${p}  },
+${p}  [],[0,1,2,3,4,5,6,7,8,9]
 ${p} )
 EOF
           [ qq(\$#${dollar}${name}_a${r}),    qq(\$#${dollar}${name}_a${r}=5)   ],
