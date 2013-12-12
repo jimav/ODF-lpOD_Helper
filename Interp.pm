@@ -101,7 +101,7 @@ sub Vis_Eval {   # Many ideas here were stolen from perl5db.pl
 
 package Vis;
 
-our $VERSION = sprintf "%d.%03d", q$Revision: 1.68 $ =~ /(\d+)/g;
+our $VERSION = sprintf "%d.%03d", q$Revision: 1.69 $ =~ /(\d+)/g;
 use Exporter;
 use Carp;
 use feature qw(switch state);
@@ -394,13 +394,13 @@ my $balanced_squished_re = qr{  # match [a,...  but not [ a,...
 # (with unpredictable capture group use)
 my $balanced_or_safe_re = qr{
      #(?{ print "### START balanced_or_safe_re at $+[0]\n"; })
-     (?: [^"'{}()\[\]]+ | $qstr_re | $balanced_re)*
+     (?> [^"'{}()\[\]]+ | $qstr_re | $balanced_re)*
      #(?{ print "### END balanced_or_safe_re at $+[0] $^N\n"; })
    }x;
 
 # Similar but only matches *squished* balanced blocks. 
 my $balancedsquished_or_safe_re = qr{
-     (?: [^"'{}()\[\]]+ | $qstr_re | $balanced_squished_re)*
+     (?> [^"'{}()\[\]]+ | $qstr_re | $balanced_squished_re)*
    }x;
 
 my $key_re  = qr{ \w+ | $qstr_re }x;
@@ -1219,6 +1219,18 @@ foreach ( ['Quotekeys',0,1],
 
 # ---------- Check formatting or interpolation --------
 
+sub timed_run(&$@) {
+  my ($code, $maxcpusecs, @codeargs) = @_;
+  use Time::HiRes qw(clock);
+  my $startclock = clock();
+  my (@result, $result);
+  if (wantarray) {@result = &$code(@codeargs)} else {$result = &$code(@codeargs)};
+  my $cpusecs = clock() - $startclock;
+  confess "TOOK TOO LONG ($cpusecs CPU seconds vs. limit of $maxcpusecs)\n" 
+    if $cpusecs > $maxcpusecs;
+  if (wantarray) {return @result} else {return $result};
+}
+
 sub check($$$) {
   my ($code, $expected, $actual) = @_;
   confess "BUG(EVAL ERR): $@" if $@;
@@ -1325,6 +1337,17 @@ sub func {
   check 'func args', q(@_=(1,2,3)), dvis('@_'); 
 }
 func(1,2,3);
+
+# There was once a "took almost forever" backtracking problem 
+my @backtrack_bugtest_data = (
+  42,
+  {A => 0, BBBBBBBBBBBBB => "foo"},
+);
+timed_run {
+  check 'dvis @backtrack_bugtest_data',
+        '@backtrack_bugtest_data=(42,{A => 0, BBBBBBBBBBBBB => "foo"})',
+        dvis('@backtrack_bugtest_data');
+} 0.01;
 
 sub doquoting($$) {
   my ($input, $useqq) = @_;
