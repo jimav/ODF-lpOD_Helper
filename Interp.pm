@@ -101,7 +101,7 @@ sub Vis_Eval {   # Many ideas here were stolen from perl5db.pl
 
 package Vis;
 
-our $VERSION = sprintf "%d.%03d", q$Revision: 1.69 $ =~ /(\d+)/g;
+our $VERSION = sprintf "%d.%03d", q$Revision: 1.70 $ =~ /(\d+)/g;
 use Exporter;
 use Carp;
 use feature qw(switch state);
@@ -666,6 +666,7 @@ sub DB_Vis_Interpolate {
     | \#?\$\w+(?:::\w+)* # $$ref $#$ref
     | \^\w               # $^N   (control-character 'punctuation' variable)
     | \#?[^\w\s\{\$]     # $#- $^ $? (regular 'punctuation' variable)
+    | (?<=\$)\$          # $$
     | \{ $interior_re \} # ${ref expression} or ${^SPECIALNAME}
   /x;
 
@@ -1439,6 +1440,7 @@ sub get_closure(;$) {
     [ q($^L\n), qq(\$^L=\"\\f\"\n) ],
     [ q($?\n), qq(\$?=0\n) ],
     [ q($[\n), qq(\$[=0\n) ],
+    [ q($$\n), qq(\$\$=$$\n) ],
     [ q($^N\n), qq(\$^N=\"GroupB\"\n) ],
     [ q($+\n), qq(\$+=\"GroupB\"\n) ],
     [ q(@+ $#+\n), qq(\@+=(13,6,13) \$#+=2\n) ],
