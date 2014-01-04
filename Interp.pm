@@ -101,7 +101,7 @@ sub Vis_Eval {   # Many ideas here were stolen from perl5db.pl
 
 package Vis;
 
-our $VERSION = sprintf "%d.%03d", q$Revision: 1.70 $ =~ /(\d+)/g;
+our $VERSION = sprintf "%d.%03d", q$Revision: 1.71 $ =~ /(\d+)/g;
 use Exporter;
 use Carp;
 use feature qw(switch state);
@@ -265,12 +265,14 @@ sub _sortkeys {
 }
 
 sub _unix_compatible_os() {
-  # There must be a better way...
-  (($^O !~ /win|dos/i && $^O =~ /ix$|ux$|bsd|svr|uni|osf|sv$/)
-   || $^O eq 'drawin'
-   || $^O eq 'cygwin'
-  )
-  && -w "/dev/null"
+  state $result //=
+    # There must be a better way...
+    (($^O !~ /win|dos/i && $^O =~ /ix$|ux$|bsd|svr|uni|osf|sv$/)
+     || $^O eq 'drawin'
+     || $^O eq 'cygwin'
+    )
+    && -w "/dev/null";
+  $result;
 }
 sub _get_default_width() {
   local ($_, $!, $^E);
