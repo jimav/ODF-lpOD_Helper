@@ -8,7 +8,7 @@ use strict; use warnings;
 # (Perl assumes Latin-1 by default).
 use utf8;
 
-# $VERSION is declared after sub Vis_Eval.
+our $Vis::VERSION = sprintf "%d.%03d", q$Revision: 1.73 $ =~ /(\d+)/g;
 
 # Copyright © Jim Avera 2012.  Released into the Public Domain
 # by the copyright owner.  (james_avera AT yahoo đøţ ¢ÔḾ)
@@ -101,7 +101,6 @@ sub Vis_Eval {   # Many ideas here were stolen from perl5db.pl
 
 package Vis;
 
-our $VERSION = sprintf "%d.%03d", q$Revision: 1.72 $ =~ /(\d+)/g;
 use Exporter;
 use Carp;
 use feature qw(switch state);
@@ -1141,6 +1140,8 @@ sub tf($) { $_[0] ? "true" : "false" }
 
 
 # ---------- Check stuff other than formatting or interpolation --------
+
+print "Vis::VERSION = $Vis::VERSION\n";
 
 for my $varname (qw(PREMATCH MATCH POSTMATCH)) {
   $_ = "test"; /(\w+)/;
