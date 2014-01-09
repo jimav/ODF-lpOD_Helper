@@ -8,7 +8,7 @@ use strict; use warnings;
 # (Perl assumes Latin-1 by default).
 use utf8;
 
-our $Vis::VERSION = sprintf "%d.%03d", q$Revision: 1.73 $ =~ /(\d+)/g;
+$Vis::VERSION = sprintf "%d.%03d", q$Revision: 1.74 $ =~ /(\d+)/g;
 
 # Copyright © Jim Avera 2012.  Released into the Public Domain
 # by the copyright owner.  (james_avera AT yahoo đøţ ¢ÔḾ)
