@@ -101,7 +101,7 @@ sub Vis_Eval {   # Many ideas here were stolen from perl5db.pl
 
 package Vis;
 
-our $VERSION = sprintf "%d.%03d", q$Revision: 1.71 $ =~ /(\d+)/g;
+our $VERSION = sprintf "%d.%03d", q$Revision: 1.72 $ =~ /(\d+)/g;
 use Exporter;
 use Carp;
 use feature qw(switch state);
@@ -594,7 +594,7 @@ sub qsh(_;@) {
   join " ",
        map {
          defined $_
-           ? (/[^-\w_\/:\.]/ || $_ eq "") ? forceqsh($_) : $_
+           ? (/[^-\w_\/:\.]/ || $_ eq "" || ref) ? forceqsh($_) : $_
            : "undef";
        }
        @args;
