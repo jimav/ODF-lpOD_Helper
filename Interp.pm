@@ -8,7 +8,7 @@ use strict; use warnings;
 # (Perl assumes Latin-1 by default).
 use utf8;
 
-$Vis::VERSION = sprintf "%d.%03d", q$Revision: 1.76 $ =~ /(\d+)/g;
+$Vis::VERSION = sprintf "%d.%03d", q$Revision: 1.77 $ =~ /(\d+)/g;
 
 # Copyright © Jim Avera 2012-2014.  Released into the Public Domain
 # by the copyright owner.  (james_avera AT yahoo dot com).
@@ -221,7 +221,7 @@ sub u(@) {
   (map { u($_) } @_)
 }
 #sub u($)      { defined($_[0]) ? $_[0] : "undef" }
-sub vis($)    { return __PACKAGE__->vnew(@_)->Dump; }
+sub vis(;$)   { return __PACKAGE__->vnew(@_)->Dump; }
 sub visq($)   { return __PACKAGE__->vnew(@_)->Useqq(0)->Dump; }
 sub avis(@)   { return __PACKAGE__->anew(@_)->Dump; }
 sub avisq(@)  { return __PACKAGE__->anew(@_)->Useqq(0)->Dump; }
@@ -1317,6 +1317,8 @@ $_ = "GroupA.GroupB";
 { my $code = 'my $vv=123; \' a $vv b\' =~ / (.*)/ && dvis($1)'; check $code, 'a vv=123 b', eval $code; }
 
 { my $code = 'vis($_)'; check $code, "\"${_}\"", eval $code; }
+{ my $code = 'vis()'; check $code, "\"${_}\"", eval $code; }
+{ my $code = 'vis'; check $code, "\"${_}\"", eval $code; }
 { my $code = 'avis($_,1,2,3)'; check $code, "(\"${_}\",1,2,3)", eval $code; }
 { my $code = 'hvis("foo",$_)'; check $code, "(foo => \"${_}\")", eval $code; }
 { my $code = 'avis(@_)'; check $code, '()', eval $code; }
