@@ -8,7 +8,7 @@ use strict; use warnings;
 # (Perl assumes Latin-1 by default).
 use utf8;
 
-$Vis::VERSION = sprintf "%d.%03d", q$Revision: 1.75 $ =~ /(\d+)/g;
+$Vis::VERSION = sprintf "%d.%03d", q$Revision: 1.76 $ =~ /(\d+)/g;
 
 # Copyright © Jim Avera 2012-2014.  Released into the Public Domain
 # by the copyright owner.  (james_avera AT yahoo dot com).
@@ -174,7 +174,7 @@ sub fixed_qquote {
   return qq("$_");
 }
 
-sub debugvis(@) {  # for our internal debug messages
+sub debugvis($) {  # for our internal debug messages
   local $/ = "\n";
   confess "should call debugavis" if @_ != 1;
   my $s = Data::Dumper->new([shift])->Useqq(1)->Terse(1)->Indent(1)->Dump;
@@ -193,11 +193,10 @@ sub debugavis(@) {  # for our internal debug messages
 }
 
 our @ISA       = qw(Exporter Data::Dumper);
-our @EXPORT    = qw(vis  avis  svis  dvis
-                    visq avisq svisq dvisq
+our @EXPORT    = qw(vis  avis  hvis svis  dvis
+                    visq avisq svisq dvisq u
                     Dumper qsh forceqsh qshpath);
-our @EXPORT_OK = qw(u
-                    $Maxwidth
+our @EXPORT_OK = qw($Maxwidth
                     $Debug $Useqq $Quotekeys $Sortkeys $Terse $Indent);
 
 # Used by non-oo functions, and initial settings for oo constructors.
@@ -222,10 +221,12 @@ sub u(@) {
   (map { u($_) } @_)
 }
 #sub u($)      { defined($_[0]) ? $_[0] : "undef" }
-sub vis(@)    { return __PACKAGE__->vnew(@_)->Dump; }
-sub visq(@)   { return __PACKAGE__->vnew(@_)->Useqq(0)->Dump; }
+sub vis($)    { return __PACKAGE__->vnew(@_)->Dump; }
+sub visq($)   { return __PACKAGE__->vnew(@_)->Useqq(0)->Dump; }
 sub avis(@)   { return __PACKAGE__->anew(@_)->Dump; }
 sub avisq(@)  { return __PACKAGE__->anew(@_)->Useqq(0)->Dump; }
+sub hvis(@)   { return __PACKAGE__->hnew(@_)->Dump; }
+sub hvisq(@)  { return __PACKAGE__->hnew(@_)->Useqq(0)->Dump; }
 
 # trampolines
 #   The interpolation code for svis, etc. must live in package DB and
@@ -317,6 +318,7 @@ sub _config_defaults {
 # vnew  # $_ by default
 # vnew(items...)
 # anew(items...)
+# hnew(items...)
 # snew(strings...)
 # dnew(strings...)
 sub vnew {
@@ -328,6 +330,14 @@ sub vnew {
 sub anew {
   my $class = shift;
   my $obj = (bless($class->SUPER::new([\@_]), $class))->_config_defaults();
+  $obj->{VisType} = 'a';
+  $obj;
+}
+sub hnew {
+  my $class = shift;
+  croak "hvis: Odd number of arguments can not be hash keys and values\n"
+    if (@_ % 2) != 0;
+  my $obj = (bless($class->SUPER::new([{@_}]), $class))->_config_defaults();
   $obj->{VisType} = 'a';
   $obj;
 }
@@ -849,9 +859,7 @@ Vis - Improve Data::Dumper for use in messages
   print Dumper($ref);                                 # Data::Dumper
   print Vis->new([$ref],['$ref'])->Dump;              #  compatible APIs
 
-  # Just change undef to "undef", nothing else
-  use Vis 'u';  # or qw(:DEFAULT u);
-  my $value;
+  # Just change undef to "undef", but do not dump composites
   print u($value),"\n";
 
   # Quote arguments for the shell
@@ -866,7 +874,7 @@ Vis - Improve Data::Dumper for use in messages
 The Vis package provides additional interfaces to Data::Dumper
 which may be more convenient for error/debug messages
 (plus a few related utilities).
-A condensed format is used for aggregate data.
+Aggregate data structures are formatted in a condensed format.
 Wide characters can optionally be preserved in readable form.
 
 =over 2
@@ -947,10 +955,9 @@ C<svis> and C<dvis> should not be called from package DB.
 
 =head2 vis
 
-=head2 vis $item, ...
+=head2 vis $scalar
 
 Format a scalar for printing ($_ by default), without a final newline.
-Multiple items are separated by newlines.
 
 =head2 avis @array
 
@@ -1311,7 +1318,9 @@ $_ = "GroupA.GroupB";
 
 { my $code = 'vis($_)'; check $code, "\"${_}\"", eval $code; }
 { my $code = 'avis($_,1,2,3)'; check $code, "(\"${_}\",1,2,3)", eval $code; }
+{ my $code = 'hvis("foo",$_)'; check $code, "(foo => \"${_}\")", eval $code; }
 { my $code = 'avis(@_)'; check $code, '()', eval $code; }
+{ my $code = 'hvis(@_)'; check $code, '()', eval $code; }
 { my $code = 'svis(q($_ con),q(caten),q(ated\n))';
   check $code, "\"${_}\" concatenated\n", eval $code;
 }
@@ -1319,6 +1328,7 @@ $_ = "GroupA.GroupB";
   check $code, "\$_=\"${_}\" concatenated\n", eval $code;
 }
 { my $code = 'avis(undef)'; check $code, "(undef)", eval $code; }
+{ my $code = 'hvis("foo",undef)'; check $code, "(foo => undef)", eval $code; }
 { my $code = 'vis(undef)'; check $code, "undef", eval $code; }
 { my $code = 'svis("foo",undef)'; check $code, "foo<undef arg>", eval $code; }
 { my $code = 'dvis("foo",undef)'; check $code, "foo<undef arg>", eval $code; }
