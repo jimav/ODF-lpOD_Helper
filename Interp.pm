@@ -8,7 +8,7 @@ use strict; use warnings;
 # (Perl assumes Latin-1 by default).
 use utf8;
 
-$Vis::VERSION = sprintf "%d.%03d", q$Revision: 1.77 $ =~ /(\d+)/g;
+$Vis::VERSION = sprintf "%d.%03d", q$Revision: 1.78 $ =~ /(\d+)/g;
 
 # Copyright © Jim Avera 2012-2014.  Released into the Public Domain
 # by the copyright owner.  (james_avera AT yahoo dot com).
@@ -603,7 +603,7 @@ sub qsh(_;@) {
   join " ",
        map {
          defined $_
-           ? (/[^-\w_\/:\.]/ || $_ eq "" || ref) ? forceqsh($_) : $_
+           ? (/[^-\w_\/:\.,]/ || $_ eq "" || ref) ? forceqsh($_) : $_
            : "undef";
        }
        @args;
