@@ -8,7 +8,7 @@ use strict; use warnings;
 # (Perl assumes Latin-1 by default).
 use utf8;
 
-$Vis::VERSION = sprintf "%d.%03d", q$Revision: 1.78 $ =~ /(\d+)/g;
+$Vis::VERSION = sprintf "%d.%03d", q$Revision: 1.79 $ =~ /(\d+)/g;
 
 # Copyright © Jim Avera 2012-2014.  Released into the Public Domain
 # by the copyright owner.  (james_avera AT yahoo dot com).
@@ -216,9 +216,9 @@ $Indent     = 1           unless defined $Indent;
 # Functional (non-oo) APIs
 sub u(@);
 sub u(@) { 
-  @_ == 1 ? (defined($_[0]) ? $_[0] : "undef") :
   @_ == 0 ? u($_) :
-  (map { u($_) } @_)
+  @_ == 1 ? (defined($_[0]) ? $_[0] : "undef") :
+  wantarray ? (map { u($_) } @_) : croak("u(): Multiple args in scalar context")
 }
 #sub u($)      { defined($_[0]) ? $_[0] : "undef" }
 sub vis(;$)   { return __PACKAGE__->vnew(@_)->Dump; }
@@ -1143,8 +1143,6 @@ use Vis;
 use Vis 'u';
 
 sub tf($) { $_[0] ? "true" : "false" }
-#sub u($)  { defined $_[0] ? $_[0] : "undef" }
-
 
 # ---------- Check stuff other than formatting or interpolation --------
 
