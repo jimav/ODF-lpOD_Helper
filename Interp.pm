@@ -8,7 +8,7 @@ use strict; use warnings; use 5.010;
 # (Perl assumes Latin-1 by default).
 use utf8;
 
-$Vis::VERSION = sprintf "%d.%03d", q$Revision: 1.80 $ =~ /(\d+)/g;
+$Vis::VERSION = sprintf "%d.%03d", q$Revision: 1.81 $ =~ /(\d+)/g;
 
 # Copyright © Jim Avera 2012-2014.  Released into the Public Domain
 # by the copyright owner.  (james_avera AT yahoo dot com).
@@ -155,26 +155,34 @@ sub fixed_qquote {
     } elsif ($high eq "utf8") {
       # Leave printable wide chars alone so humans can read them.
       # The caller must guarantee that the input data consists of
-      # decoded characters (not bytes), and that the result will be encoded
-      # to UTF-8 or another encoding which can represent the data.  
+      # decoded characters (not octets), and that the result will later
+      # be encoded to an encoding which can represent them (e.g. UTF-8).
       
+      state $printable_chars = '[:graph:] ';
+      #state $printable_chars = '\p{XID_Continue} ';
+
+      state $printable_re = qr/[${printable_chars}]/s;
+      state $nonprintable_re = qr/[^${printable_chars}]/s;
+
       #s/([^[:graph:] ])/ sprintf("\\x{%x}",ord($1)) /uge;
-      #  The above s// was a performance problem for large binary blobs,
-      # so trying a copy-to-preallocated-array technique...
-      if (/[^[:graph:] ]/) {
+      #  The above s/// was very slow with large binary blobs due to reallocs,
+      #  so trying a copy-to-preallocated-array technique...
+      if (/${nonprintable_re}/s) {
         my $new = ""; vec($new,length($_)*8,8)=0; $new = ""; # pre-allocate
-        my $done;
-        until ($done++) {
-          while (/\G[[:graph:] ]+/gscp) {
-            $new .= ${^MATCH};
-            $done = 0;
+        my $limit = length($_);
+        my $prevpos = 0;
+        until ($prevpos == $limit) {
+          while (/\G${printable_re}+/gsc) {
+            $new .= substr($_,$prevpos,pos()-$prevpos); # use ${^MATCH} with /p?
+            $prevpos = pos;
           }
-          while (/\G[^[:graph:] ]/gscp) {
-            $new .= sprintf "\\x{%x}", ord(${^MATCH});
-            $done = 0;
+          while (/\G${nonprintable_re}+/gsc) {
+            my $fmt = "\\x{%x}" x length(${^MATCH});
+            $new .= sprintf $fmt, map{ord} 
+                      split(//, substr($_,$prevpos,pos()-$prevpos));
+            $prevpos = pos;
           }
         }
-        die "bug" if /\G./gsc;
         $_ = $new;
       }
     } elsif ($high eq "8bit") {
@@ -441,13 +449,13 @@ my $balanced_squished_re = qr{  # match [a,...  but not [ a,...
 # (with unpredictable capture group use)
 my $balanced_or_safe_re = qr{
      #(?{ print "### START balanced_or_safe_re at $+[0]\n"; })
-     (?> [^"'{}()\[\]]+ | $qstr_re | $balanced_re)*
+     ( [^"'{}()\[\]]++ | $qstr_re | $balanced_re )*+
      #(?{ print "### END balanced_or_safe_re at $+[0] $^N\n"; })
    }x;
 
 # Similar but only matches *squished* balanced blocks. 
 my $balancedsquished_or_safe_re = qr{
-     (?> [^"'{}()\[\]]+ | $qstr_re | $balanced_squished_re)*
+     ( [^"'{}()\[\]]++ | $qstr_re | $balanced_squished_re )*+
    }x;
 
 my $key_re  = qr{ \w+ | $qstr_re }x;
@@ -536,26 +544,25 @@ sub Dump {
   # The "delimiter" is the whole (logical) line, including final newline,
   # which is returned because it is in a (capture group).
   my @lines;
-
-  
   my $useqq = $self->Useqq();
+  my $limit = length($_);
   my $startpos = 0;
-  while (/\G(?=.)/gsc) {
+  while ($startpos != $limit) {
     if ($useqq) {
       #while (/\G"(?:[^"\\]++|\\.)*+"/gsc || /\G[^"\n]+/gsc) {}
       # Ack!  Perl implements (...)* using recursion even when partial
       # backtracking is not possible, and there is a 64K recursion limit.
       # Benchmarking shows that ~200 is the sweet spot.
       while (
-        (/\G"/cgs && do{ while(/\G(?:[^"\\]++|\\.){0,200}+/cgs){} 
-                         /\G"/cgs // die "oops" })
+        (/\G"/cgs 
+         && do{ while(/\G(?:[^"\\]++|\\.){0,200}+/cgs){} /\G"/cgs })
         || /\G[^"\n]+/gsc
       ) {}
     } else {
       #while (/\G'(?:[^'\\]++|\\['\\])*+'/gsc || /\G[^'\n]+/gsc) {}
       while (
-        (/\G'/cgs && do{ while(/\G(?:[^'\\]++|\\['\\]){0,200}+/cgs){} 
-                         /\G'/cgs // die "oops" })
+        (/\G'/cgs 
+         && do{ while(/\G(?:[^'\\]++|\\['\\]){0,200}+/cgs){} /\G'/cgs })
         || /\G[^'\n]+/gsc
       ) {}
     }
@@ -1287,11 +1294,11 @@ if (Vis::_unix_compatible_os()) {
   die "Vis::Maxwidth did not default to 80 with no tty" unless $? == 0;
 }
 
-{ my $s = Vis->new([$unicode_str],['unicode_str'])->Terse(1)->Useqq('utf8')->Dump;
+{ my $s = Vis->new([$unicode_str."\x{FFFF}"],['unicode_strplusFFFF'])->Terse(1)->Useqq('utf8')->Dump;
   chomp $s;
   $s =~ s/^"(.*)"$/$1/s or die "bug";
   print "         Vis with Useqq('utf8'):$s\n";
-  if ($s ne $unicode_str) {
+  if ($s ne $unicode_str.'\x{ffff}') {
     die "Useqq('utf8') fix does not work!\n","s=<${s}>\n";
   } else {
     print "Useqq('utf8') works with Vis.\n";
@@ -1300,7 +1307,7 @@ if (Vis::_unix_compatible_os()) {
 
 my $undef_as_false = undef;
 if (! ref Vis->new([1])->Useqq(undef)) {
-  warn "WARNING: Data::Dumper does not recognize undef boolean args as 'false'.\n";
+  warn "WARNING: Data::Dumper methods do not recognize undef boolean args as 'false'.\n";
   $undef_as_false = 0;
 }
 
