@@ -1,4 +1,4 @@
-use strict; use warnings; 
+use strict; use warnings; use 5.010;
 
 # This file contains UTF-8 characters in debug-output strings (e.g. « and »).
 # But to see them correctly on a non-Latin1 terminal (e.g. utf-8), your 
@@ -8,7 +8,7 @@ use strict; use warnings;
 # (Perl assumes Latin-1 by default).
 use utf8;
 
-$Vis::VERSION = sprintf "%d.%03d", q$Revision: 1.79 $ =~ /(\d+)/g;
+$Vis::VERSION = sprintf "%d.%03d", q$Revision: 1.80 $ =~ /(\d+)/g;
 
 # Copyright © Jim Avera 2012-2014.  Released into the Public Domain
 # by the copyright owner.  (james_avera AT yahoo dot com).
@@ -106,6 +106,7 @@ use Carp;
 use feature qw(switch state);
 use POSIX qw(INT_MAX);
 use Encode ();
+use Scalar::Util qw(looks_like_number);
 
 our $Utf8patch //= 1;
 
@@ -156,7 +157,26 @@ sub fixed_qquote {
       # The caller must guarantee that the input data consists of
       # decoded characters (not bytes), and that the result will be encoded
       # to UTF-8 or another encoding which can represent the data.  
-      s/([^[:graph:] ])/ sprintf("\\x{%x}",ord($1)) /uge;
+      
+      #s/([^[:graph:] ])/ sprintf("\\x{%x}",ord($1)) /uge;
+      #  The above s// was a performance problem for large binary blobs,
+      # so trying a copy-to-preallocated-array technique...
+      if (/[^[:graph:] ]/) {
+        my $new = ""; vec($new,length($_)*8,8)=0; $new = ""; # pre-allocate
+        my $done;
+        until ($done++) {
+          while (/\G[[:graph:] ]+/gscp) {
+            $new .= ${^MATCH};
+            $done = 0;
+          }
+          while (/\G[^[:graph:] ]/gscp) {
+            $new .= sprintf "\\x{%x}", ord(${^MATCH});
+            $done = 0;
+          }
+        }
+        die "bug" if /\G./gsc;
+        $_ = $new;
+      }
     } elsif ($high eq "8bit") {
         # leave it as it is
     } else {
@@ -196,22 +216,27 @@ our @ISA       = qw(Exporter Data::Dumper);
 our @EXPORT    = qw(vis  avis  hvis svis  dvis
                     visq avisq svisq dvisq u
                     Dumper qsh forceqsh qshpath);
-our @EXPORT_OK = qw($Maxwidth
-                    $Debug $Useqq $Quotekeys $Sortkeys $Terse $Indent);
+our @EXPORT_OK = qw($Maxwidth $MaxStringwidth $Truncsuffix $Debug 
+                    $Useqq $Quotekeys $Sortkeys 
+                    $Terse $Indent $Sparseseen);
 
 # Used by non-oo functions, and initial settings for oo constructors.
-our ($Maxwidth, $Debug, $Useqq, $Quotekeys, $Sortkeys,
-     $Terse, $Indent);
+our ($Maxwidth, $MaxStringwidth, $Truncsuffix, $Debug, 
+     $Useqq, $Quotekeys, $Sortkeys,
+     $Terse, $Indent, $Sparseseen);
 
-$Maxwidth   = undef       unless defined $Maxwidth; # undef to auto-detect tty
-$Debug      = 0           unless defined $Debug;
+$Maxwidth       = undef       unless defined $Maxwidth; # undef to auto-detect
+$MaxStringwidth = 0           unless defined $MaxStringwidth;
+$Truncsuffix    = "..."       unless defined $Truncsuffix;
+$Debug          = 0           unless defined $Debug;
 
 # The following Vis defaults override Data::Dumper defaults
-$Useqq      = 1           unless defined $Useqq;
-$Quotekeys  = 0           unless defined $Quotekeys;
-$Sortkeys   = \&_sortkeys unless defined $Sortkeys;
-$Terse      = 1           unless defined $Terse;
-$Indent     = 1           unless defined $Indent;
+$Useqq          = 1           unless defined $Useqq;
+$Quotekeys      = 0           unless defined $Quotekeys;
+$Sortkeys       = \&_sortkeys unless defined $Sortkeys;
+$Terse          = 1           unless defined $Terse;
+$Indent         = 1           unless defined $Indent;
+$Sparseseen     = 1           unless defined $Sparseseen;
 
 # Functional (non-oo) APIs
 sub u(@);
@@ -313,6 +338,9 @@ sub _config_defaults {
     ->Debug($Debug)
     ->Useqq($Useqq)
     ->Maxwidth($Maxwidth)
+    ->MaxStringwidth($MaxStringwidth)
+    ->Truncsuffix($Truncsuffix)
+    ->Sparseseen($Sparseseen)
 }
 
 # vnew  # $_ by default
@@ -382,6 +410,14 @@ sub Maxwidth {
   my($s, $v) = @_;
   @_ >= 2 ? (($s->{Maxwidth} = $v), return $s) : $s->{Maxwidth};
 }
+sub MaxStringwidth {
+  my($s, $v) = @_;
+  @_ >= 2 ? (($s->{MaxStringwidth} = $v), return $s) : $s->{MaxStringwidth};
+}
+sub Truncsuffix {
+  my($s, $v) = @_;
+  @_ >= 2 ? (($s->{Truncsuffix} = $v), return $s) : $s->{Truncsuffix};
+}
 
 my $qstr_re = qr{ " (?: [^"\\]++ | \\. )*+ " | ' (?: [^'\\]++ | \\. )*+ ' }x;
 
@@ -430,6 +466,32 @@ sub _debug_show($$$$$$) {
   print "=====================\n";
 }
 
+sub trunc_strings {
+  my $self = shift;
+  my $ret = 0;
+  given(ref $_[0]) {
+    when("") {  # scalar
+      my $maxlen = $self->{MaxStringwidth};
+      if (length($_[0]) > $maxlen) {
+        $_[0] = substr($_[0],0,$maxlen).$self->{Truncsuffix};
+        $ret = 1;
+      }
+    }
+    when("ARRAY") {
+      foreach (@{$_[0]}) {
+        $ret = 1 if $self->trunc_strings($_);
+      }
+    }
+    when("HASH") {
+      foreach (values %{$_[0]}) {
+        $ret = 1 if $self->trunc_strings($_);
+      }
+    }
+    default { die }
+  }
+  return $ret;
+}
+
 sub Dump {
   my ($self) = @_;
 
@@ -439,7 +501,17 @@ sub Dump {
     goto &DB::DB_Vis_Dump if ($self->{VisType}//"") =~ /[sd]/;
   }
 
-  my ($debug, $maxwidth) = @$self{qw/VisDebug Maxwidth/};
+  my ($debug, $maxwidth, $maxstringwidth) 
+    = @$self{qw/VisDebug Maxwidth MaxStringwidth/};
+
+  if (($maxstringwidth//0) > 0) {
+    # This could be more efficient if we were willing to reach directly
+    # into Data::Dumper's internals and edit the data without copying
+    my @todump = $self->Values; 
+    if ($self->trunc_strings(\@todump)) {
+      $self->Values( \@todump );
+    }
+  }
 
   local $_ = $self->SUPER::Dump;
 
@@ -458,14 +530,45 @@ sub Dump {
   print "===== RAW =====\n${_}---------------\n" if $debug;
   
   #return $_ if $maxwidth == 0; # no condensation
+  return $_ if /sub\s*\{/s && $self->Deparse; # we can't handle this
 
   # Split into logical lines, being careful to preserve newlines in strings.
   # The "delimiter" is the whole (logical) line, including final newline,
   # which is returned because it is in a (capture group).
-  my $split_re = $self->Useqq()
-       ? qr/( (?: "(?:[^"\\]++|\\.)*+" | [^"\n]++ )* \n)/xs
-       : qr/( (?: '(?:[^'\\]++|\\['\\]|\\(?=[^'\\]))*+' | [^'\n]++ )* \n)/xs;
-  my @lines = (grep {defined($_) && $_ ne ""} split /$split_re/, $_);
+  my @lines;
+
+  
+  my $useqq = $self->Useqq();
+  my $startpos = 0;
+  while (/\G(?=.)/gsc) {
+    if ($useqq) {
+      #while (/\G"(?:[^"\\]++|\\.)*+"/gsc || /\G[^"\n]+/gsc) {}
+      # Ack!  Perl implements (...)* using recursion even when partial
+      # backtracking is not possible, and there is a 64K recursion limit.
+      # Benchmarking shows that ~200 is the sweet spot.
+      while (
+        (/\G"/cgs && do{ while(/\G(?:[^"\\]++|\\.){0,200}+/cgs){} 
+                         /\G"/cgs // die "oops" })
+        || /\G[^"\n]+/gsc
+      ) {}
+    } else {
+      #while (/\G'(?:[^'\\]++|\\['\\])*+'/gsc || /\G[^'\n]+/gsc) {}
+      while (
+        (/\G'/cgs && do{ while(/\G(?:[^'\\]++|\\['\\]){0,200}+/cgs){} 
+                         /\G'/cgs // die "oops" })
+        || /\G[^'\n]+/gsc
+      ) {}
+    }
+    /\G\n/gsc or die "oops";
+    push @lines, substr($_, $startpos, pos()-$startpos);
+    $startpos = pos();
+  }
+  undef $_;
+#  my $split_re = $self->Useqq()
+#       ? qr/( (?: "(?:[^"\\]++|\\.)*+" | [^"\n]++ )* \n)/xs
+#       : qr/( (?: '(?:[^'\\]++|\\['\\]|\\(?=[^'\\]))*+' | [^'\n]++ )* \n)/xs;
+#  my @lines = (grep {defined($_) && $_ ne ""} split /$split_re/, $_);
+
   #print "### Useqq=",$self->Useqq()," split_re=/$split_re/ lines:\n  ",debugvis(\@lines),"\n";
 
   # Data::Dumper output with Indent(1) is very structured, with a
@@ -990,6 +1093,12 @@ Default is the terminal width or 80 if output is not a terminal.
 If Maxwidth=0 output is not folded, appearing similar to Data::Dumper
 (but still without a final newline).
 
+=item $Vis::MaxStringwidth  I<or>  I<$OBJ>->MaxStringwidth(I<[NEWVAL]>)
+
+Sets or gets the maximum number of characters to be displayed
+for an individual string.  Strings longer than that are truncated
+and an elipsis (...) appended.  Zero or undef for no limit.
+
 =back
 
 The following Methods have the same meaning as in Data::Dumper except that
@@ -1017,6 +1126,8 @@ later be encoded to UTF-8 or another encoding which can represent the data
 (see perlunitut).
 [Data::Dumper has long contained code to implement this but a bug prevented it from working; B<Vis> overrides a Data::Dumper internal function to repair it.]
 
+=item $Data::Dumper::Sparseseen  I<or>  I<$OBJ>->Sparseseen(I<[NEWVAL]>)
+
 =back
 
 Other inherited methods may also be used, with default values
@@ -1025,8 +1136,6 @@ from global variables in Data::Dumper .  Here is a partial list:
 =over 4
 
 =item $Data::Dumper::Deepcopy   I<or>  I<$OBJ>->Deepcopy(I<[NEWVAL]>)
-
-=item $Data::Dumper::Deparse    I<or>  I<$OBJ>->Deparse(I<[NEWVAL]>)
 
 =item $Data::Dumper::Freezer    I<or>  I<$OBJ>->Freezer(I<[NEWVAL]>)
 
@@ -1047,11 +1156,13 @@ because Vis makes certain assumptions about their settings:
 
 =over 4
 
-=item $Data::Dumper::Pair       I<or>  I<$OBJ>->Pair(I<[NEWVAL]>)
+=item $Data::Dumper::Pair      I<or>  I<$OBJ>->Pair(I<[NEWVAL]>)
 
-=item $Data::Dumper::Indent     I<or>  I<$OBJ>->Indent(I<[NEWVAL]>)
+=item $Data::Dumper::Indent    I<or>  I<$OBJ>->Indent(I<[NEWVAL]>)
 
-=item $Data::Dumper::Terse      I<or>  I<$OBJ>->Terse(I<[NEWVAL]>)
+=item $Data::Dumper::Terse     I<or>  I<$OBJ>->Terse(I<[NEWVAL]>)
+
+=item $Data::Dumper::Deparse   I<or>  I<$OBJ>->Deparse(I<[NEWVAL]>)
 
 =back
 
@@ -1193,13 +1304,17 @@ if (! ref Vis->new([1])->Useqq(undef)) {
   $undef_as_false = 0;
 }
 
-foreach ( ['Quotekeys',0,1],
+foreach ( 
+          ['Maxwidth',0,1,80,9999],
+          ['MaxStringwidth',undef,0,1,80,9999],
+          ['Truncsuffix',"","...","(trunc)"],
+          ['Debug',undef,0,1],
+          ['Useqq',0,1,'utf8'],
+          ['Quotekeys',0,1],
           ['Sortkeys',0,1,sub{return sort keys %{shift @_}}],
           ['Terse',0,1],
           ['Indent',0,1,2,3],
-          ['Useqq',0,1,'utf8'],
-          ['Maxwidth',0,1,80,9999],
-          ['Debug',undef,0,1],
+          ['Sparseseen',0,1,2,3],
         )
 {
   my ($name, @values) = @$_;
@@ -1213,7 +1328,7 @@ foreach ( ['Quotekeys',0,1],
         die "bug:$@ " if $@;
         die "\$Vis::$name value is not preserved by Vis->$ctor\n",
             "(Set \$Vis::$name=",u($value)," but $name() returned ",u($v),")\n"
-         unless (! defined $v && ! defined $value) || ($v eq $value);
+         unless (! defined $v and ! defined $value) || ($v eq $value);
       }
       {
         my $v = eval "{ Vis->\$ctor([\"test \$testval\"])->$name(\$value)->$name() }";
@@ -1336,6 +1451,21 @@ $_ = "GroupA.GroupB";
 
 { my $code = q/my $s; my @a=sort{ $s=dvis('$a $b'); $a<=>$b }(3,2); "@a $s"/ ;
   check $code, '2 3 a=3 b=2', eval $code; 
+}
+
+# Check string truncation
+{ local $Vis::MaxStringwidth = 3;
+  { my $code = 'vis("abcde")'; check $code, "\"abc...\"", eval $code; }
+  { my $code = 'vis(["abcDE","xyzAB"])'; check $code, "[\"abc...\",\"xyz...\"]", eval $code; }
+  { my $code = 'vis(["abcDE", ["xyzAB", {longkey => "fghI"}, ]])'; 
+       check $code, '["abc...",["xyz...",{longkey => "fgh..."}]]', eval $code; }
+  local $Vis::Truncsuffix = "(trunc)";
+  { my $code = 'vis("abcde")'; check $code, "\"abc(trunc)\"", eval $code; }
+  foreach my $MSw (-1, 0, undef) {
+    local $Vis::MaxStringwidth = $MSw;
+    { my $code = 'vis(["abcDE", ["xyzAB", {longkey => "fghI"}, ]])'; 
+         check $code, '["abcDE",["xyzAB",{longkey => "fghI"}]]', eval $code; }
+  }
 }
 
 # There was a bug for s/dvis called direct from outer scope, so don't use eval:
