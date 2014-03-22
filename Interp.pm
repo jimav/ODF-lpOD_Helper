@@ -8,7 +8,7 @@ use strict; use warnings; use 5.010;
 # (Perl assumes Latin-1 by default).
 use utf8;
 
-$Vis::VERSION = sprintf "%d.%03d", q$Revision: 1.81 $ =~ /(\d+)/g;
+$Vis::VERSION = sprintf "%d.%03d", q$Revision: 1.82 $ =~ /(\d+)/g;
 
 # Copyright © Jim Avera 2012-2014.  Released into the Public Domain
 # by the copyright owner.  (james_avera AT yahoo dot com).
@@ -704,8 +704,12 @@ sub forceqsh($) {
   # Don't use Data::Dumper because it will change
   # wide characters to \x{...} escapes.  For qsh() we assume the user
   # will encode the resulting string as needed, so leave wide chars as-is.
-  s/'/'\\''/g; # foo'bar => foo'\''bar
-  return "'${_}'";
+  if (/[^"\\]/ and not /[^\x{40}-\x{7E}]/) {
+    return "\"${_}\"";  # prefer "..." if no escapes needed
+  } else {
+    s/'/'\\''/g; # foo'bar => foo'\''bar
+    return "'${_}'";
+  }
 }
 
 sub qsh(_;@) {
@@ -931,7 +935,7 @@ __END__
 
 =head1 NAME
 
-Vis - Improve Data::Dumper for use in messages
+Vis - Enhance Data::Dumper for use in messages
 
 =head1 SYNOPSIS
 
@@ -942,6 +946,8 @@ Vis - Improve Data::Dumper for use in messages
 
   # Interpolate strings, stingifying aggregates with auto-indenting
   print svis 'ref=$ref\n hash=%hash\n ARGV=@ARGV\n'; # SINGLE quoted!
+
+  # dvis (d for debug) is like svis but shows variable= prefixes
   print dvis 'FYI $ref %hash @ARGV\n';
 
   # Format one item at a time (sans final newline)
@@ -969,7 +975,7 @@ Vis - Improve Data::Dumper for use in messages
   print Dumper($ref);                                 # Data::Dumper
   print Vis->new([$ref],['$ref'])->Dump;              #  compatible APIs
 
-  # Just change undef to "undef", but do not dump composites
+  # Change undef to "undef", but otherwise return the argument as-is
   print u($value),"\n";
 
   # Quote arguments for the shell
@@ -1010,33 +1016,25 @@ For example  B<print "ref=", vis($ref), "\n";>  produces
 
 =item *
 
-Default settings are different than with Data::Dumper :
+Default configuration settings are optimized for human consumption.
 
-=over
+=item *
 
-B<Quotekeys(0)> -- Don't quote hash keys unless necessary.
-
-B<Terse(1)> -- Don't assign to variables, just show the data.
-
-B<Sortkeys(smart sorting)>
-
-Numeric "components" in hash keys are auto-detected.
+Hash keys appear sorted with numeric "components" sorted numerically.
 For example: "A.20_999" "A.100_9" "A.100_80" and "B" sort in that order.
-
-=back
 
 =back
 
 Vis is a subclass of Data::Dumper and is a drop-in replacement.  The old
 APIs are all available through Vis but produce condensed output formatting.
-Data::Dumper may also be called directly (see "PERFORMANCE").
+Data::Dumper may still be called directly (see "PERFORMANCE").
 
 =head2 svis 'string to be interpolated', ...
 
 The arguments are concatenated, interpolating variables and escapes
 as in in Perl double-quotish strings except that values are formatted
 unambiguously using C<vis()> or C<avis()> 
-(for $ or @ expressions, respectively).
+for $ or @ expressions, respectively.
 In addition, C<%name> is interpolated as S<<< C<< (key => value ...) >> >>>.
 
 Multi-line structures are indented to line up with their starting position,
@@ -1045,9 +1043,9 @@ taking into account any preceeding text on the same line.
 The argument string(s) should be written SINGLE QUOTED so Perl will not
 interpolate them before passing to svis().
 
-=head2 dvis 'string to be interpolated',...
+=head2 dvis 'string to be interpolated', ...
 
-('d' is for 'debug display').  C<dvis> is identical to C<svis>
+'d' is for 'debug display'.  C<dvis> is identical to C<svis>
 except that interpolated expressions are prefixed by
 the name of the variable or the expression.  For example,
 
@@ -1061,7 +1059,9 @@ produces
 
   foo="Nazdrave\n" @bar[3..5]=(3, 4, 5) %hash=(A => 100, B => 200)
 
-C<svis> and C<dvis> should not be called from package DB.
+Note: "@_" shows your original sub arguments as they were before any C<shift> 
+statements were executed.   This is because svis/dvis use Perl's debug mechanism,
+which has this quirk.
 
 =head2 vis
 
@@ -1096,15 +1096,15 @@ Additionally, B<< Vis->new >> provides the same API as Data::Dumper->new.
 
 Sets or gets the maximum number of characters for formatted lines,
 including any prefix set via I<Pad()>.
-Default is the terminal width or 80 if output is not a terminal.
+Default is the terminal width or 80 if STDERR is not a terminal.
 If Maxwidth=0 output is not folded, appearing similar to Data::Dumper
 (but still without a final newline).
 
 =item $Vis::MaxStringwidth  I<or>  I<$OBJ>->MaxStringwidth(I<[NEWVAL]>)
 
 Sets or gets the maximum number of characters to be displayed
-for an individual string.  Strings longer than that are truncated
-and an elipsis (...) appended.  Zero or undef for no limit.
+for an individual string.  Longer strings are truncated
+and an ellipsis (...) appended.  Zero or undef for no limit.
 
 =back
 
@@ -1121,6 +1121,8 @@ default values come from global variables in package B<Vis> :
 
 =item $Vis::Indent              I<or>  I<$OBJ>->Indent(I<[NEWVAL]>)
 
+=item $Vis::Sparseseen          I<or>  I<$OBJ>->Sparseseen(I<[NEWVAL]>)
+
 =item $Vis::Useqq               I<or>  I<$OBJ>->Useqq(I<[NEWVAL]>)
 
 Note that the B<Useqq(0)> is called implicitly
@@ -1132,8 +1134,6 @@ Input strings must contain characters (not bytes), and the output must
 later be encoded to UTF-8 or another encoding which can represent the data
 (see perlunitut).
 [Data::Dumper has long contained code to implement this but a bug prevented it from working; B<Vis> overrides a Data::Dumper internal function to repair it.]
-
-=item $Data::Dumper::Sparseseen  I<or>  I<$OBJ>->Sparseseen(I<[NEWVAL]>)
 
 =back
 
@@ -1158,16 +1158,11 @@ from global variables in Data::Dumper .  Here is a partial list:
 
 =back
 
-The following inherited methods should be used carefully, if at all,
-because Vis makes certain assumptions about their settings:
+These inherited methods should not be used with Vis :
 
 =over 4
 
 =item $Data::Dumper::Pair      I<or>  I<$OBJ>->Pair(I<[NEWVAL]>)
-
-=item $Data::Dumper::Indent    I<or>  I<$OBJ>->Indent(I<[NEWVAL]>)
-
-=item $Data::Dumper::Terse     I<or>  I<$OBJ>->Terse(I<[NEWVAL]>)
 
 =item $Data::Dumper::Deparse   I<or>  I<$OBJ>->Deparse(I<[NEWVAL]>)
 
@@ -1178,7 +1173,6 @@ because Vis makes certain assumptions about their settings:
 
 The arguments ($_ by default) are returned unchanged, except that undefined 
 argument(s) are replaced by the string "undef".  Refs are not stringified.
-C<u()> is not exported by default.
 
 =head2 qsh
 
@@ -1186,11 +1180,13 @@ C<u()> is not exported by default.
 
 =head2 qshpath $path_with_tilde_prefix, ...
 
-The "words" ($_ by default) are 'quoted' if necessary for parsing
-by /bin/sh (note that /bin/sh quoting rules differ from Perl's).
+The "words" ($_ by default) are quoted if necessary for parsing
+by /bin/sh, which has different quoting rules than Perl.
 Multiple items are concatenated, separated by spaces.
+"Double quotes" are used when no escapes would be needed, 
+otherwise 'single quotes'.
 
-Items which contain only "safe" characters are returned without 'quotes'.
+Items which contain only "safe" characters are returned unquoted.
 
 References are formatted as with C<vis()> and the resulting string quoted.
 Undefined values appear as C<undef> without quotes.
@@ -1200,7 +1196,7 @@ unquoted.  Useful with shells such as bash or csh.
 
 =head2 forceqsh $word
 
-The argument is 'quoted' for /bin/sh even if quoting is not necessary.
+The argument is quoted for /bin/sh even if not necessary.
 
 Unlike C<qsh>, C<forceqsh> requires exactly one argument.
 
@@ -1429,9 +1425,9 @@ $_ = "GroupA.GroupB";
 { my $code = 'forceqsh($_)';         check $code, "'${_}'", eval $code; }
 
 # Check that $1 etc. can be passed (this was once a bug...)
-{ my $code = '" a~b" =~ / (.*)/ && qsh($1)'; check $code, "'a~b'", eval $code; }
-{ my $code = '" a~b" =~ / (.*)/ && qshpath($1)'; check $code, "'a~b'", eval $code; }
-{ my $code = '" a~b" =~ / (.*)/ && forceqsh($1)'; check $code, "'a~b'", eval $code; }
+{ my $code = '" a~b" =~ / (.*)/ && qsh($1)'; check $code, '"a~b"', eval $code; }
+{ my $code = '" a~b" =~ / (.*)/ && qshpath($1)'; check $code, '"a~b"', eval $code; }
+{ my $code = '" a~b" =~ / (.*)/ && forceqsh($1)'; check $code, '"a~b"', eval $code; }
 { my $code = '" a~b" =~ / (.*)/ && vis($1)'; check $code, '"a~b"', eval $code; }
 
 { my $code = 'my $vv=123; \' a $vv b\' =~ / (.*)/ && dvis($1)'; check $code, 'a vv=123 b', eval $code; }
