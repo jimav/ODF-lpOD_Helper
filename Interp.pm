@@ -8,7 +8,7 @@ use strict; use warnings; use 5.010;
 # (Perl assumes Latin-1 by default).
 use utf8;
 
-$Vis::VERSION = sprintf "%d.%03d", q$Revision: 1.82 $ =~ /(\d+)/g;
+$Vis::VERSION = sprintf "%d.%03d", q$Revision: 1.83 $ =~ /(\d+)/g;
 
 # Copyright © Jim Avera 2012-2014.  Released into the Public Domain
 # by the copyright owner.  (james_avera AT yahoo dot com).
@@ -771,7 +771,7 @@ sub DB_Vis_Interpolate {
   my ($self) = @_;
   my ($debug, $maxwidth) = @$self{'VisDebug','Maxwidth'};
   my $pad = $self->Pad();
-  my $display_mode = ($self->{VisType} eq 'd');
+  my $d_or_s = $self->{VisType} eq 'd' ? "d" : "s";
 
   local $Vis::error_prefix = "$self->{VisType}vis: "; # see Vis_Eval
 
@@ -834,7 +834,7 @@ sub DB_Vis_Interpolate {
         push @actions, ['t',$1];  # interpolate plain text including \$ etc.
       }
       elsif (/\G   (?!\\)([\$\@\%])(\s|$)   /xsgc) {
-        Carp::carp "Warning: Dangling '$1' in string interpolated by svis or dvis\n";
+        Carp::carp "Warning: Dangling '$1' in string interpolated by ${d_or_s}vis\n";
         push @actions, ['t',"\\${1}${2}"];  # treat as literal text
       }
       else {
@@ -864,7 +864,7 @@ sub DB_Vis_Interpolate {
       my @items = Vis_Eval("$sigl$rhs");
 
       my $varlabel = "";
-      if ($display_mode) {
+      if ($d_or_s eq 'd') {
         # Don't show initial $ if it's a non-special scalar variable name
         $varlabel = (($sigl eq '$' && $rhs =~ /^[A-Za-z]/) ? "" : $sigl)
                         . $rhs . "=" ;
@@ -904,7 +904,7 @@ sub DB_Vis_Interpolate {
       my $rawtext = $action->[1];
       if ($rawtext =~ /\b((?:ARRAY|HASH)\(0x[^\)]*\))/) {
         state $warned=0;
-        Carp::carp "Warning: String passed to svis or dvis may have been interpolated by Perl\n(use 'single quotes' to avoid this)\n" unless $warned++;
+        Carp::carp "Warning: String passed to ${d_or_s}vis may have been interpolated by Perl\n(use 'single quotes' to avoid this)\n" unless $warned++;
       }
       print "### PLAIN «$rawtext»\n" if $debug;
       my $saved_eval_err = $@;
