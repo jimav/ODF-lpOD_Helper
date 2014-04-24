@@ -8,7 +8,7 @@ use strict; use warnings; use 5.010;
 # (Perl assumes Latin-1 by default).
 use utf8;
 
-$Vis::VERSION = sprintf "%d.%03d", q$Revision: 1.83 $ =~ /(\d+)/g;
+$Vis::VERSION = sprintf "%d.%03d", q$Revision: 1.84 $ =~ /(\d+)/g;
 
 # Copyright © Jim Avera 2012-2014.  Released into the Public Domain
 # by the copyright owner.  (james_avera AT yahoo dot com).
@@ -712,31 +712,31 @@ sub forceqsh($) {
   }
 }
 
-sub qsh(_;@) {
-  my @args = @_;
-  join " ",
-       map {
-         defined $_
-           ? (/[^-\w_\/:\.,]/ || $_ eq "" || ref) ? forceqsh($_) : $_
-           : "undef";
-       }
-       @args;
+sub qsh(_;@) {  # N.B. "_" prototype defaults to $_
+  my @args = @_;  # needed in case $_ is being used
+  my @results = map {
+                  defined $_
+                    ? (/[^-\w_\/:\.,]/ || $_ eq "" || ref) ? forceqsh($_) : $_
+                    : "undef";
+                }
+                @args;
+  return wantarray ? @results : join(" ",@results);
 }
 
 # Quote paths for shell: Like qsh but doesn't quote an initial ~ or ~username
 sub qshpath(_;@) {
   my @args = @_;
-  join " ",
-       map {
-         defined $_
-           ? do {
-               local $_ = $_;
-               my ($tilde_prefix, $rest) = /(^~[^\/\\]*\/?)?(.*)/s;
-               $rest eq "" ? $tilde_prefix : ($tilde_prefix // "").qsh($rest);
-             }
-           : "undef";
-       }
-       @args;
+  my @results = map {
+                  defined $_
+                    ? do {
+                        local $_ = $_;
+                        my ($tilde_prefix, $rest) = /(^~[^\/\\]*\/?)?(.*)/s;
+                        $rest eq "" ? $tilde_prefix : ($tilde_prefix // "").qsh($rest);
+                      }
+                    : "undef";
+                }
+                @args;
+  return wantarray ? @results : join(" ",@results);
 }
 
 our @saved;
@@ -1182,7 +1182,7 @@ argument(s) are replaced by the string "undef".  Refs are not stringified.
 
 The "words" ($_ by default) are quoted if necessary for parsing
 by /bin/sh, which has different quoting rules than Perl.
-Multiple items are concatenated, separated by spaces.
+In scalar context multiple items are concatenated separated by spaces.
 "Double quotes" are used when no escapes would be needed, 
 otherwise 'single quotes'.
 
@@ -1198,7 +1198,7 @@ unquoted.  Useful with shells such as bash or csh.
 
 The argument is quoted for /bin/sh even if not necessary.
 
-Unlike C<qsh>, C<forceqsh> requires exactly one argument.
+Unlike C<qsh>, C<forceqsh> requires a single argument which must be defined.
 
 =head1 PERFORMANCE
 
@@ -1358,16 +1358,22 @@ sub timed_run(&$@) {
   if (wantarray) {return @result} else {return $result};
 }
 
-sub check($$$) {
-  my ($code, $expected, $actual) = @_;
+sub check($$@) {
+  my ($code, $expected_arg, @actual) = @_;
   confess "BUG(EVAL ERR): $@" if $@;
-  $actual //= '<undef>';
-  local $_;
-  #print $actual;{ local $_;print "<no newline>\n" unless $actual =~ /\n\z/s; }
+  my @expected = ref($expected_arg) ? @$expected_arg : ($expected_arg);
+  $actual[0] //= 'undef';
   confess "\nTEST FAILED: $code\n"
-         ."Expected:\n${expected}«end»\n"
-         ."Got:\n${actual}«end»\n"
-    unless $actual eq $expected;
+         ."Expected ".(@expected)." results, but got ".(@actual).":\n"
+         ."(@actual)\n"
+    if @expected != @actual;
+  foreach my $actual (@actual) {
+    my $expected = shift @expected;
+    confess "\nTEST FAILED: $code\n"
+           ."Expected:\n${expected}«end»\n"
+           ."Got:\n${actual}«end»\n"
+      unless $actual eq $expected;
+  }
 }
 
 $Vis::Maxwidth = 72;
@@ -1411,6 +1417,8 @@ $_ = "GroupA.GroupB";
 /(.*)\W(.*)/sp or die "nomatch"; # set $1 and $2
 
 { my $code = 'qsh("a b")';           check $code, "'a b'",  eval $code; }
+{ my $code = 'qsh(undef)';           check $code, "undef",  eval $code; }
+{ my $code = 'qsh("a b","c d","e",undef,"g")';       check $code, ["'a b'","'c d'","e","undef","g"], eval $code; }
 { my $code = 'qshpath("a b")';       check $code, "'a b'",  eval $code; }
 { my $code = 'qshpath("~user")';     check $code, "~user",  eval $code; }
 { my $code = 'qshpath("~user/a b")'; check $code, "~user/'a b'", eval $code; }
