@@ -8,7 +8,7 @@ use strict; use warnings; use 5.010;
 # (Perl assumes Latin-1 by default).
 use utf8;
 
-$Vis::VERSION = sprintf "%d.%03d", q$Revision: 1.84 $ =~ /(\d+)/g;
+$Vis::VERSION = sprintf "%d.%03d", q$Revision: 1.85 $ =~ /(\d+)/g;
 
 # Copyright © Jim Avera 2012-2014.  Released into the Public Domain
 # by the copyright owner.  (james_avera AT yahoo dot com).
@@ -597,81 +597,85 @@ sub Dump {
   # ]
 
   # Combine appropriate lines to make it more "horizontal"
-  my $restart = 0;
-  while ($restart < $#lines)
-  {
-    print "RESTART at $restart \n" if $debug;
-    LOOP:
-    for (my $I=$restart, my $J=$restart+1, $restart=INT_MAX-1;
-         $J <= $#lines;
-         $I=$J, $J=$I+1)
+  eval {
+    use warnings FATAL => 'all';
+    my $restart = 0;
+    while ($restart < $#lines)
     {
-      # Find the next pair of lines which haven't been "deleted" yet
-      while ($lines[$J] eq "") { next LOOP if ++$J > $#lines; }
-      while ($lines[$I] eq "") { next LOOP if ++$I >= $J; }
-
-      my ($Iprefix,$Icode) = ($lines[$I] =~ /^( *)(.*)\n\z/s);
-      my $Iindent = length($Iprefix);
-
-      my ($Jprefix,$Jcode) = ($lines[$J] =~ /^( *)(.*)\n\z/s);
-      my $Jindent = length($Jprefix);
-
-      my $J_is_closing = ($Jcode =~ /[\]\}]$/);
-
-      _debug_show(\@lines, $I, $Iindent, $J, $Jindent, $restart) if $debug;
-
-      if (($Iindent <= $Jindent)
-          # I is not closing an aggregate
-          && $Icode !~ /^[\]\}]/ 
-
-          # J does not end with an un-closed block (we only join atoms or
-          # [whole blocks]).  This prevents hard-to-see keys such as KEY2:
-          #    { "KEY" => [ 1, 2, 3, 4,
-          #      "five", "six", 7 ], "KEY2" => ... }
-          && $Jcode !~ /^ (?> ${balanced_or_safe_re}) [\{\[] /x
-         )
+      print "RESTART at $restart \n" if $debug;
+      LOOP:
+      for (my $I=$restart, my $J=$restart+1, $restart=INT_MAX-1;
+           $J <= $#lines;
+           $I=$J, $J=$I+1)
       {
-        # The lines are elegible to be joined, if there is enough space
-        # (or in any case if the joining would not increase line length)
-        my $Ilen = $Iindent + length($Icode);
-        my $Jlen = length($Jcode);
-        my $sep  = $Icode =~ /,$/ && $Jcode =~ / => ${balanced_or_safe_re},?$/x
-                    ? " " : "";
-        my $adj = $Ilen + length($sep) - $Jindent; # posn change, + or -
-        print "[Iind=$Iindent Ilen=$Ilen Jlen=$Jlen sep='${sep}' adj=$adj mw=$maxwidth]\n" if $debug;
-
-        if ($Ilen + $Jlen + length($sep) <= $maxwidth || $adj <= 0) {
-          substr($lines[$I],$Ilen) = $sep.substr($lines[$J], $Jindent); 
-          $lines[$J] = "";
-          print "## joined:",debugvis($lines[$I]),"\n" if $debug;
-          if ($J < $#lines && $adj < 0) {
-            # Adjust the indentation of remaining items in the same block
-            # to line up with the item just joined, the indent decreased.
-            # This occurs when joining members onto an opening bracket.
-            #my $extra_prefix = " " x $adj;
-            for (my $K=$J+1; ;$K++) {
-              die "bug" if $K > $#lines;
-              $lines[$K] =~ /^( *)/;
-              last if length($1) <= $Iindent; # end of nested block
-              #if ($adj > 0) {
-              #  $lines[$K] = $extra_prefix . $lines[$K];
-              #} else { 
-                substr($lines[$K],0,-$adj) = "";
-              #}              
+        # Find the next pair of lines which haven't been "deleted" yet
+        while ($lines[$J] eq "") { next LOOP if ++$J > $#lines; }
+        while ($lines[$I] eq "") { next LOOP if ++$I >= $J; }
+  
+        my ($Iprefix,$Icode) = ($lines[$I] =~ /^( *)(.*)\n\z/s);
+        my $Iindent = length($Iprefix);
+  
+        my ($Jprefix,$Jcode) = ($lines[$J] =~ /^( *)(.*)\n\z/s);
+        my $Jindent = length($Jprefix);
+  
+        my $J_is_closing = ($Jcode =~ /[\]\}]$/);
+  
+        _debug_show(\@lines, $I, $Iindent, $J, $Jindent, $restart) if $debug;
+  
+        if (($Iindent <= $Jindent)
+            # I is not closing an aggregate
+            && $Icode !~ /^[\]\}]/ 
+  
+            # J does not end with an un-closed block (we only join atoms or
+            # [whole blocks]).  This prevents hard-to-see keys such as KEY2:
+            #    { "KEY" => [ 1, 2, 3, 4,
+            #      "five", "six", 7 ], "KEY2" => ... }
+            && $Jcode !~ /^ (?> ${balanced_or_safe_re}) [\{\[] /x
+           )
+        {
+          # The lines are elegible to be joined, if there is enough space
+          # (or in any case if the joining would not increase line length)
+          my $Ilen = $Iindent + length($Icode);
+          my $Jlen = length($Jcode);
+          my $sep  = $Icode =~ /,$/ && $Jcode =~ / => ${balanced_or_safe_re},?$/x
+                      ? " " : "";
+          my $adj = $Ilen + length($sep) - $Jindent; # posn change, + or -
+          print "[Iind=$Iindent Ilen=$Ilen Jlen=$Jlen sep='${sep}' adj=$adj mw=$maxwidth]\n" if $debug;
+  
+          if ($Ilen + $Jlen + length($sep) <= $maxwidth || $adj <= 0) {
+            substr($lines[$I],$Ilen) = $sep.substr($lines[$J], $Jindent); 
+            $lines[$J] = "";
+            print "## joined:",debugvis($lines[$I]),"\n" if $debug;
+            if ($J < $#lines && $adj < 0) {
+              # Adjust the indentation of remaining items in the same block
+              # to line up with the item just joined, the indent decreased.
+              # This occurs when joining members onto an opening bracket.
+              #my $extra_prefix = " " x $adj;
+              for (my $K=$J+1; ;$K++) {
+                die "bug" if $K > $#lines;
+                $lines[$K] =~ /^( *)/;
+                last if length($1) <= $Iindent; # end of nested block
+                #if ($adj > 0) {
+                #  $lines[$K] = $extra_prefix . $lines[$K];
+                #} else { 
+                  substr($lines[$K],0,-$adj) = "";
+                #}              
+              }
             }
+            #$restart = $I if $I < $restart;
+            $restart = 0 if $I < $restart;
+            last LOOP if ++$J > $#lines;
+            redo LOOP;
+          } else {
+            print "NO ROOM\n" if $debug;
           }
-          #$restart = $I if $I < $restart;
-          $restart = 0 if $I < $restart;
-          last LOOP if ++$J > $#lines;
-          redo LOOP;
         } else {
-          print "NO ROOM\n" if $debug;
+          print "NOT ELEGIBLE\n" if $debug;
         }
-      } else {
-        print "NOT ELEGIBLE\n" if $debug;
       }
     }
-  }
+  }; # eval
+  unshift @lines, "VIS ERROR:$@" if $@; # show the error, but keep the Data::Dumper output
 
   $_ = join "", @lines;
 
