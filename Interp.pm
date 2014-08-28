@@ -8,10 +8,10 @@ use strict; use warnings; use 5.010;
 # (Perl assumes Latin-1 by default).
 use utf8;
 
-$Vis::VERSION = sprintf "%d.%03d", q$Revision: 1.85 $ =~ /(\d+)/g;
+$Vis::VERSION = sprintf "%d.%03d", q$Revision: 1.86 $ =~ /(\d+)/g;
 
 # Copyright © Jim Avera 2012-2014.  Released into the Public Domain
-# by the copyright owner.  (james_avera AT yahoo dot com).
+# by the copyright owner.  (jim.avera AT gmail dot com)
 # Please retain the preceeding attribution in any copies or derivitives.
 
 # Documentation is at the end
@@ -1222,7 +1222,7 @@ Data::Dumper
 
 =head1 AUTHOR
 
-Jim Avera (james_avera AT yahoo)
+Jim Avera  (jim.avera AT gmail dot com)
 
 =cut
 
