@@ -8,7 +8,7 @@ use strict; use warnings; use 5.010;
 # (Perl assumes Latin-1 by default).
 use utf8;
 
-$Vis::VERSION = sprintf "%d.%03d", q$Revision: 1.86 $ =~ /(\d+)/g;
+$Vis::VERSION = sprintf "%d.%03d", q$Revision: 1.87 $ =~ /(\d+)/g;
 
 # Copyright © Jim Avera 2012-2014.  Released into the Public Domain
 # by the copyright owner.  (jim.avera AT gmail dot com)
@@ -597,6 +597,7 @@ sub Dump {
   # ]
 
   # Combine appropriate lines to make it more "horizontal"
+  local $@;  # preserve user's $@ value
   eval {
     use warnings FATAL => 'all';
     my $restart = 0;
