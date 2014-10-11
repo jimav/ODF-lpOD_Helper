@@ -8,7 +8,7 @@ use strict; use warnings; use 5.010;
 # (Perl assumes Latin-1 by default).
 use utf8;
 
-$Vis::VERSION = sprintf "%d.%03d", q$Revision: 1.87 $ =~ /(\d+)/g;
+$Vis::VERSION = sprintf "%d.%03d", q$Revision: 1.88 $ =~ /(\d+)/g;
 
 # Copyright © Jim Avera 2012-2014.  Released into the Public Domain
 # by the copyright owner.  (jim.avera AT gmail dot com)
@@ -477,26 +477,25 @@ sub _debug_show($$$$$$) {
 sub trunc_strings {
   my $self = shift;
   my $ret = 0;
-  given(ref $_[0]) {
-    when("") {  # scalar
-      my $maxlen = $self->{MaxStringwidth};
-      if (length($_[0]) > $maxlen) {
-        $_[0] = substr($_[0],0,$maxlen).$self->{Truncsuffix};
-        $ret = 1;
-      }
+  my $kind = ref($_[0]);
+  if ($kind eq "") { # scalar
+    my $maxlen = $self->{MaxStringwidth};
+    if (length($_[0]) > $maxlen) {
+      $_[0] = substr($_[0],0,$maxlen).$self->{Truncsuffix};
+      $ret = 1;
     }
-    when("ARRAY") {
-      foreach (@{$_[0]}) {
-        $ret = 1 if $self->trunc_strings($_);
-      }
-    }
-    when("HASH") {
-      foreach (values %{$_[0]}) {
-        $ret = 1 if $self->trunc_strings($_);
-      }
-    }
-    default { die }
   }
+  elsif($kind eq "ARRAY") {
+    foreach (@{$_[0]}) {
+      $ret = 1 if $self->trunc_strings($_);
+    }
+  }
+  elsif($kind eq "HASH") {
+    foreach (values %{$_[0]}) {
+      $ret = 1 if $self->trunc_strings($_);
+    }
+  }
+  else { die }
   return $ret;
 }
 
@@ -699,7 +698,7 @@ sub forceqsh($) {
   # embedded single-quotes so they can be contatenated as \' or "'"
   #
 
-  my $_ = shift;
+  local $_ = shift;
   if (ref) {
     # If a ref to an aggregate, convert to a string
     $_ = __PACKAGE__->vnew($_)->Useqq(0)->Dump;
@@ -1525,7 +1524,7 @@ sub doquoting($$) {
 }
 
 sub show_white($) {
-  my $_ = shift;
+  local $_ = shift;
   s/\t/<tab>/msg;
   s/( +)$/"<space>" x length($1)/mseg;
   $_
