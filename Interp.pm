@@ -8,7 +8,7 @@ use strict; use warnings; use 5.010;
 # (Perl assumes Latin-1 by default).
 use utf8;
 
-$Vis::VERSION = sprintf "%d.%03d", q$Revision: 1.88 $ =~ /(\d+)/g;
+$Vis::VERSION = sprintf "%d.%03d", q$Revision: 1.89 $ =~ /(\d+)/g;
 
 # Copyright © Jim Avera 2012-2014.  Released into the Public Domain
 # by the copyright owner.  (jim.avera AT gmail dot com)
@@ -645,7 +645,7 @@ sub Dump {
           if ($Ilen + $Jlen + length($sep) <= $maxwidth || $adj <= 0) {
             substr($lines[$I],$Ilen) = $sep.substr($lines[$J], $Jindent); 
             $lines[$J] = "";
-            print "## joined:",debugvis($lines[$I]),"\n" if $debug;
+            print "## joined:",debugvis($lines[$I])," (len=",length($lines[$I]),")\n" if $debug;
             if ($J < $#lines && $adj < 0) {
               # Adjust the indentation of remaining items in the same block
               # to line up with the item just joined, the indent decreased.
