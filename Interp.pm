@@ -8,7 +8,7 @@ use strict; use warnings; use 5.010;
 # (Perl assumes Latin-1 by default).
 use utf8;
 
-$Vis::VERSION = sprintf "%d.%03d", q$Revision: 1.89 $ =~ /(\d+)/g;
+$Vis::VERSION = sprintf "%d.%03d", q$Revision: 1.90 $ =~ /(\d+)/g;
 
 # Copyright © Jim Avera 2012-2014.  Released into the Public Domain
 # by the copyright owner.  (jim.avera AT gmail dot com)
@@ -1299,7 +1299,7 @@ if (Vis::_unix_compatible_os()) {
   $s =~ s/^"(.*)"$/$1/s or die "bug";
   print "         Vis with Useqq('utf8'):$s\n";
   if ($s ne $unicode_str.'\x{ffff}') {
-    die "Useqq('utf8') fix does not work!\n","s=<${s}>\n";
+    die "***Useqq('utf8') fix does not work!\n","s=<${s}>\n";
   } else {
     print "Useqq('utf8') works with Vis.\n";
   }
