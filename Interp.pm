@@ -1,4 +1,4 @@
-use strict; use warnings; use 5.010;
+use strict; use warnings FATAL => 'all'; use 5.010;
 
 # This file contains UTF-8 characters in debug-output strings (e.g. « and »).
 # But to see them correctly on a non-Latin1 terminal (e.g. utf-8), your 
@@ -8,7 +8,7 @@ use strict; use warnings; use 5.010;
 # (Perl assumes Latin-1 by default).
 use utf8;
 
-$Vis::VERSION = sprintf "%d.%03d", q$Revision: 1.90 $ =~ /(\d+)/g;
+$Vis::VERSION = sprintf "%d.%03d", q$Revision: 1.91 $ =~ /(\d+)/g;
 
 # Copyright © Jim Avera 2012-2014.  Released into the Public Domain
 # by the copyright owner.  (jim.avera AT gmail dot com)
@@ -39,6 +39,7 @@ sub Vis_Eval {   # Many ideas here were stolen from perl5db.pl
   # Get @_ values from the closest frame above the user's call which
   # has arguments.  This will be the very next frame (i.e. frame 3)
   # unless the user was called using "&subname;".
+  # (caller() leaves the args in @DB::args)
   for ($Vis::DistToArgs = 3; ; $Vis::DistToArgs++) {
     my ($pkg,undef,undef,undef,$hasargs) = caller $Vis::DistToArgs;
     if (! $pkg) {
@@ -53,7 +54,8 @@ sub Vis_Eval {   # Many ideas here were stolen from perl5db.pl
                ? \@DB::args
                : ['<@_ is not defined in the outer scope>'] ;
 
-  # At this point, nothing is in scope except the name of this sub!
+  # At this point, nothing is in scope except the name of this sub
+  # and the simulated @_
 
   #OLD:
   #@Vis::result = eval '($@, $!, $^E, $,, $/, $\, $^W) = @Vis::saved;'
@@ -64,11 +66,12 @@ sub Vis_Eval {   # Many ideas here were stolen from perl5db.pl
   {
     no strict 'refs';
     ($!, $^E, $,, $/, $\, $^W) = @Vis::saved[1..6];
-    eval 
-      "package $Vis::pkg; \$@=\$Vis::saved[0]; \@Vis::result=$Vis::evalarg ";
+    eval 'package '.$Vis::pkg.'; $@=$Vis::saved[0]; @Vis::result='.$Vis::evalarg.' ';
   };
 
+
   package Vis;
+
   our (@saved, $evalarg, @result);
 
   my $at = $@;
@@ -90,10 +93,27 @@ sub Vis_Eval {   # Many ideas here were stolen from perl5db.pl
   if ($at) {
     $at =~ s/ at (?:\(eval \d+\)|\S+) line \d+\.?\n?\z//s;
     push @DB::CARP_NOT, 'Vis';
+#    { ###TEMP
+#      require PadWalker;
+#      for (my $level=1; defined(caller($level-1)); $level++) {
+#        my ($pkg,$fn,$line) = caller($level-1);
+#        my (undef,undef,undef,$subr) = caller($level-1+1);
+#        $subr //= "";
+#        my $my_h = PadWalker::peek_my($level);
+#        warn "--- level $level ${fn}:$line ($pkg)($subr) ---\n";
+#        while (my ($vn, $vr) = each %$my_h) {
+#          warn "  my $vn = ", debugvis($vr), "\n";
+#        }
+#        my $our_h = PadWalker::peek_our($level);
+#        while (my ($vn, $vr) = each %$our_h) {
+#          warn "  our $vn = ", debugvis($vr), "\n";
+#        }
+#      }
+#    }
     Carp::croak(
       $Vis::error_prefix,
       (index($at,$evalarg) >= 0 ? "" : "Error interpolating '$evalarg', "),
-      "$at\n");
+      "$at (package ",scalar(caller),")\n");
   }
 
   return @result;
@@ -112,19 +132,6 @@ our $Utf8patch //= 1;
 
 use Data::Dumper ();
 
-# Over-ride Data::Dumper::qquote to fix bug with Useqq('utf8')
-# N.B. This might not work if the sub ref has been cached by Perl
-$Vis::original_qquote = \&Data::Dumper::qquote;
-sub qquote_wrapper {
-  goto &fixed_qquote if $_[1] eq 'utf8';
-  goto &{$Vis::original_qquote};
-}
-if ($Vis::Utf8patch 
-    && &{$Vis::original_qquote}("\N{U+263A}","utf8") =~ /263a/i) {
-  # Data::Dumper still has the bug with Useqq("utf8")
-  no warnings;
-  *Data::Dumper::qquote = \&Vis::qquote_wrapper;
-}
 my %esc = (  
     "\a" => "\\a",
     "\b" => "\\b",
@@ -139,6 +146,7 @@ my %esc = (
 sub fixed_qquote {
   local($_) = shift;
   s/([\\\"\@\$])/\\$1/g;
+  # ...do not replace [:^ascii:] with hex escapes here...
   return qq("$_") unless 
     /[^ !"\#\$%&'()*+,\-.\/0-9:;<=>?\@A-Z[\\\]^_`a-z{|}~]/;  # fast exit
 
@@ -176,7 +184,7 @@ sub fixed_qquote {
             $new .= substr($_,$prevpos,pos()-$prevpos); # use ${^MATCH} with /p?
             $prevpos = pos;
           }
-          while (/\G${nonprintable_re}+/gsc) {
+          while (/\G${nonprintable_re}+/gscp) {
             my $fmt = "\\x{%x}" x length(${^MATCH});
             $new .= sprintf $fmt, map{ord} 
                       split(//, substr($_,$prevpos,pos()-$prevpos));
@@ -205,7 +213,7 @@ sub fixed_qquote {
 sub debugvis($) {  # for our internal debug messages
   local $/ = "\n";
   confess "should call debugavis" if @_ != 1;
-  my $s = Data::Dumper->new([shift])->Useqq(1)->Terse(1)->Indent(1)->Dump;
+  my $s = Data::Dumper->new([shift])->Useqq(1)->Terse(1)->Indent(0)->Dump;
   chomp $s;
   return $s;
 }
@@ -311,10 +319,13 @@ sub _get_default_width() {
   local ($_, $!, $^E);
   my ($self) = @_;
   my $r;
-  if (_unix_compatible_os) {
+  if ($ENV{COLUMNS}) {
+    $r = $ENV{COLUMNS};
+  }
+  elsif (_unix_compatible_os) {
     if (-t STDERR) {
       no warnings;
-      ($r = qx'tput cols') # N.B. linux tput prints 80 even if no tty
+      ($r = qx'tput cols') # on Linux, seems to print 80 even if no tty
       ||
       (($r) = ((qx'stty -a'//"") =~ /.*; columns (\d+);/s))
       ;
@@ -499,7 +510,31 @@ sub trunc_strings {
   return $ret;
 }
 
+sub _qquote_wrapper {
+  goto &fixed_qquote if $_[1] eq 'utf8';
+  goto &{$Vis::original_qquote};
+}
+sub _first_time_init() {
+  $Vis::original_qquote = \&Data::Dumper::qquote;
+  # Over-ride Data::Dumper::qquote to fix bug with Useqq('utf8')
+  # N.B. This might not work if the sub ref has been cached by Perl,
+  # e.g. if the user called Data::Dumper directly before using Vis.
+  if ($Vis::Utf8patch 
+      && &{$Vis::original_qquote}("\N{U+263A}","utf8") =~ /26/i) 
+  {
+    # Data::Dumper still has the bug with Useqq("utf8")
+    { no warnings; *Data::Dumper::qquote = \&Vis::_qquote_wrapper; }
+    # Recent versions of Data::Dumper always call the xs implementation
+    # regardless of Useqq (and it doesn't handle Useqq='utf8' correctly).
+    # So force using the Perl implementation in that case.
+    $Vis::Useperl_for_utf8 =
+      Data::Dumper->new(["\N{U+263A}"])->Useqq('utf8')->Dump() =~ /26/i;
+  }
+}
+
 sub Dump {
+  _first_time_init() unless defined $Vis::original_qquote;
+
   my ($self) = @_;
 
   if (! ref $self) {
@@ -519,6 +554,10 @@ sub Dump {
       $self->Values( \@todump );
     }
   }
+
+  my $useqq = $self->Useqq();
+
+  $self->Useperl(1) if $useqq eq 'utf8' && $Vis::Useperl_for_utf8;
 
   local $_ = $self->SUPER::Dump;
 
@@ -543,7 +582,6 @@ sub Dump {
   # The "delimiter" is the whole (logical) line, including final newline,
   # which is returned because it is in a (capture group).
   my @lines;
-  my $useqq = $self->Useqq();
   my $limit = length($_);
   my $startpos = 0;
   while ($startpos != $limit) {
@@ -746,7 +784,7 @@ sub qshpath(_;@) {
 our @saved;
 sub SaveAndResetPunct {
   # Save things which will later be restored, and reset to sane values.
-  our @saved = ( $@, $!, $^E, $,, $/, $\, $^W );
+  our @saved = ( $@, $!+0, $^E+0, $,, $/, $\, $^W );
   $,  = "";      # output field separator is null string
   $/  = "\n";    # input record separator is newline
   $\  = "";      # output record separator is null string
@@ -1228,7 +1266,7 @@ Jim Avera  (jim.avera AT gmail dot com)
 
 #!/usr/bin/perl
 # Tester for module Vis.  TODO: Convert to CPAN module-test setup
-use strict; use warnings; use feature qw(state switch);
+use strict; use warnings ; use feature qw(state switch);
 use utf8; 
 use open IO => 'utf8', ':std';
 select STDERR; $|=1; select STDOUT; $|=1;
@@ -1237,13 +1275,22 @@ use English qw( -no_match_vars );;
 #use lib "$ENV{HOME}/lib/perl";
 
 my $unicode_str;
+
+# We want to test the original version of the internal function 
+# Data::Dumper::qquote to see if the useqq="utf8" but has been fixed.
+# We used to just load Data::Dumper here in a BEGIN block before Vis
+# is loaded and use Data::Dumper to test it, but Perl now seems to cache
+# the sub lookup immediately in Data::Dumper, making the override 
+# ineffective.
+#
+my $utf8fix_not_needed;
 BEGIN{ 
   # This test must be done before loading Vis, which over-rides an internal
   # function to fix the bug
   $unicode_str = join "",map {eval sprintf "\" \\N{U+%04X}\"",$_} 
                              (0x263A..0x2650); 
-  print "                    unicode_str:$unicode_str\n";
   require Data::Dumper;
+  print "Loaded ", $INC{"Data/Dumper.pm"}, " qquote=", \&Data::Dumper::qquote,"\n";
   { my $s = Data::Dumper->new([$unicode_str],['unicode_str'])->Terse(1)->Useqq('utf8')->Dump;
     chomp $s;
     $s =~ s/^"(.*)"$/$1/s or die "bug";
@@ -1251,15 +1298,21 @@ BEGIN{
       #warn "Data::Dumper with Useqq('utf8'):$s\n";
       warn "WARNING: Useqq('utf8') is broken in your Data::Dumper.\n"
     } else {
-      print "Useqq('utf8') seems to have been fixed in Data::Dumper,\n",
-            "disabling the fix in Vis ...\n";
-      $Vis::Utf8patch = 0;
+      print "Useqq('utf8') seems to have been fixed in Data::Dumper,\n";
+      $utf8fix_not_needed = 1;
     }
   }
 }
-use Vis;
-use Vis 'u';
 
+use Vis;
+#use Vis 'u';  now exported by default...
+
+print "Loaded ", $INC{"Vis.pm"}, " _qquote_wrapper=", \&Vis::_qquote_wrapper, "\n";
+
+# Do an initial read of $[ so arybase will be autoloaded
+# (prevents corrupting $!/ERRNO in subsequent tests)
+eval '$[' // die;
+      
 sub tf($) { $_[0] ? "true" : "false" }
 
 # ---------- Check stuff other than formatting or interpolation --------
@@ -1276,25 +1329,43 @@ for my $varname (qw(PREMATCH MATCH POSTMATCH)) {
 
 my $byte_str = join "",map { chr $_ } 10..30;
 
+##################################################
+# Check default $Vis::Maxwidth 
+##################################################
 die "Expected initial Vis::Maxwidth to be undef" if defined $Vis::Maxwidth;
+{ local $ENV{COLUMNS} = 66;
+  vis(123); 
+  die "Vis::Maxwidth does not honor ENV{COLUMNS}" unless $Vis::Maxwidth == 66;
+  undef $Vis::Maxwidth;  # re-enable auto-detect
+}
 if (Vis::_unix_compatible_os()) {
-  # We can't test auto-detection of terminal size because that will vary.
-  # However we can test the default width when there is no tty.
+  delete local $ENV{COLUMNS};
+  my $expected = `tput cols`;  # may default to 80 if no tty
+  vis(123); 
+  die "Vis::Maxwidth no defaulted correctly" unless $Vis::Maxwidth == $expected;
+  undef $Vis::Maxwidth;  # re-enable auto-detect
+}
+if (Vis::_unix_compatible_os()) {
+  delete local $ENV{COLUMNS};
   my $pid = fork();
   if ($pid==0) {
     require POSIX;
     die "bug" unless POSIX::setsid()==$$;
-    POSIX::close 0;
-    POSIX::close 1;
-    POSIX::close 2;
+    POSIX::close $_ for (0,1,2);
     vis(123); 
-    exit( $Vis::Maxwidth==80 ? 0 : 1 );
+    exit($Vis::Maxwidth // 253);
   }
   waitpid($pid,0);
-  die "Vis::Maxwidth did not default to 80 with no tty" unless $? == 0;
+  die "Vis::Maxwidth defaulted to ", ($? >> 8)|($? & !0xFF), " (not 80 as expected)\n"
+    unless $? == (80 << 8);
 }
 
-{ my $s = Vis->new([$unicode_str."\x{FFFF}"],['unicode_strplusFFFF'])->Terse(1)->Useqq('utf8')->Dump;
+##################################################
+# Check Useqq('utf8') support
+##################################################
+{
+  print "                   unicode_str=\"$unicode_str\"\n";
+  my $s = Vis->new([$unicode_str."\x{FFFF}"])->Terse(1)->Useqq('utf8')->Dump;
   chomp $s;
   $s =~ s/^"(.*)"$/$1/s or die "bug";
   print "         Vis with Useqq('utf8'):$s\n";
@@ -1538,15 +1609,23 @@ sub get_closure(;$) {
  my $closure_ar = \@closure_a;
  my $closure_hr = \%closure_h;
  if ($clobber) { # try to over-write deleted objects
-   @closure_a = ("bogusa".."boguzz");
+   @closure_a = ("bogusa".."bogusz");
  }
 
  return sub {
 
-  # Since we later generate references symbolically at run-time, 
-  # we have to explicitly save those which would otherwise be deleted
-  # by the time this sub is called.
-  my $saverefs = [ \%closure_h, \@closure_a, \$closure_ar, \$closure_hr ];
+  # Perl is inconsistent about whether an eval in package DB can see 
+  # lexicals in enclosing scopes.  Sometimes it can, sometimes not.
+  # However explicitly referencing those "global lexicals" in the closure
+  # seems to make it work.
+  my $forget_me_not = [ \$unicode_str, \$byte_str, \$toplex_hr, \$toplex_ar,
+                        \%global_h, \@global_a, \$global_ar, \$global_hr, 
+                      ];
+
+  # Referencing these intermediate variables also prevents them from
+  # being destroyed before this closure is executed:
+  my $saverefs = [ \%closure_h, \@closure_a, \$closure_ar, \$closure_hr, ];
+  
 
   my $zero = 0;
   my $one = 1;
@@ -1708,6 +1787,7 @@ EOF
     my $actual;
     { # Verify that special vars are preserved and don't affect Vis
       # (except if testing a punctuation var, then don't change it's value)
+
       my @fake = (do {$dvis_input =~ /\$(?: [\@!,\/\\] | \^[EW] )/x})
                     ? ($@, $!, $^E, $,, $/, $\, $^W)
                     : ('FakeAt', 111, 111, 'Fake,', 'Fake/', 'FakeBS\\', 333);
@@ -1719,7 +1799,8 @@ EOF
       for my $i (0..5) {
         no warnings;
         my $varname = (qw($@ $! $^E $, $/ $\ $^W))[$i];
-        warn "ERROR: $varname was not preserved (expected $fake[$i], got $nfake[$i])\n"
+        # was warn...
+        die "ERROR: $varname was not preserved (expected $fake[$i], got $nfake[$i])\n"
           unless ($fake[$i] =~ /^\d/ ? ($fake[$i]==$nfake[$i]) : ($fake[$i] eq $nfake[$i]));
       }
     }
