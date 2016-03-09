@@ -8,7 +8,7 @@ use strict; use warnings FATAL => 'all'; use 5.010;
 # (Perl assumes Latin-1 by default).
 use utf8;
 
-$Vis::VERSION = sprintf "%d.%03d", q$Revision: 1.91 $ =~ /(\d+)/g;
+$Vis::VERSION = sprintf "%d.%03d", q$Revision: 1.92 $ =~ /(\d+)/g;
 
 # Copyright © Jim Avera 2012-2014.  Released into the Public Domain
 # by the copyright owner.  (jim.avera AT gmail dot com)
@@ -29,18 +29,17 @@ sub Vis_Eval {   # Many ideas here were stolen from perl5db.pl
   { ($Vis::evalarg) = $_[0] =~ /(.*)/s; }  # untaint
 
   # The call stack:
-  #   0: DB::DB_Vis_Interpolate calling us
-  #   1: Interface func calling DB::DB_Vis_Interpolate
-  #   2: User calling the interface func (via goto from a trampoline)
-  #   3: The caller of the user's sub (this frame defines @_)
+  #   0: DB::DB_Vis_Interpolate calling us (Vis_Eval)
+  #   1: User calling DB::DB_Vis_Interpolate (via trampoline gotos)
+  #   2: The caller of the user's sub (this frame defines @_)
 
-  ($Vis::pkg) = caller 2;         # name of package containing user's call
+  ($Vis::pkg) = caller 1;   # name of package containing user's call
 
   # Get @_ values from the closest frame above the user's call which
-  # has arguments.  This will be the very next frame (i.e. frame 3)
+  # has arguments.  This will be the very next frame (i.e. frame 2)
   # unless the user was called using "&subname;".
   # (caller() leaves the args in @DB::args)
-  for ($Vis::DistToArgs = 3; ; $Vis::DistToArgs++) {
+  for ($Vis::DistToArgs = 2; ; $Vis::DistToArgs++) {
     my ($pkg,undef,undef,undef,$hasargs) = caller $Vis::DistToArgs;
     if (! $pkg) {
       undef $Vis::DistToArgs;
@@ -127,6 +126,7 @@ use feature qw(switch state);
 use POSIX qw(INT_MAX);
 use Encode ();
 use Scalar::Util qw(looks_like_number);
+use List::Util qw(any);
 
 our $Utf8patch //= 1;
 
@@ -237,7 +237,7 @@ our @EXPORT_OK = qw($Maxwidth $MaxStringwidth $Truncsuffix $Debug
                     $Terse $Indent $Sparseseen);
 
 # Used by non-oo functions, and initial settings for oo constructors.
-our ($Maxwidth, $MaxStringwidth, $Truncsuffix, $Debug, 
+our ($Maxwidth, $MaxStringwidth, $Truncsuffix, $Debug, $Stringify,
      $Useqq, $Quotekeys, $Sortkeys,
      $Terse, $Indent, $Sparseseen);
 
@@ -245,6 +245,7 @@ $Maxwidth       = undef       unless defined $Maxwidth; # undef to auto-detect
 $MaxStringwidth = 0           unless defined $MaxStringwidth;
 $Truncsuffix    = "..."       unless defined $Truncsuffix;
 $Debug          = 0           unless defined $Debug;
+$Stringify      = undef       unless defined $Stringify;
 
 # The following Vis defaults override Data::Dumper defaults
 $Useqq          = 1           unless defined $Useqq;
@@ -261,13 +262,13 @@ sub u(@) {
   @_ == 1 ? (defined($_[0]) ? $_[0] : "undef") :
   wantarray ? (map { u($_) } @_) : croak("u(): Multiple args in scalar context")
 }
-#sub u($)      { defined($_[0]) ? $_[0] : "undef" }
-sub vis(;$)   { return __PACKAGE__->vnew(@_)->Dump; }
-sub visq($)   { return __PACKAGE__->vnew(@_)->Useqq(0)->Dump; }
-sub avis(@)   { return __PACKAGE__->anew(@_)->Dump; }
-sub avisq(@)  { return __PACKAGE__->anew(@_)->Useqq(0)->Dump; }
+
+sub vis(;$)   { return __PACKAGE__->vnew(@_)->Dump1; }
+sub visq($)   { return __PACKAGE__->vnew(@_)->Useqq(0)->Dump1; }
+sub avis(@)   { return __PACKAGE__->anew(@_)->Dump1; }
+sub avisq(@)  { return __PACKAGE__->anew(@_)->Useqq(0)->Dump1; }
 sub hvis(@)   { return __PACKAGE__->hnew(@_)->Dump; }
-sub hvisq(@)  { return __PACKAGE__->hnew(@_)->Useqq(0)->Dump; }
+sub hvisq(@)  { return __PACKAGE__->hnew(@_)->Useqq(0)->Dump1; }
 
 # trampolines
 #   The interpolation code for svis, etc. must live in package DB and
@@ -279,9 +280,9 @@ sub dvisq($;@) { goto &DB::DB_Vis_dvisq }
 
 # Provide Data::Dumper non-oo APIs
 # Declared without prototypes (would be just (@)) to match Data::Dumper
-sub Dumper { return __PACKAGE__->Dump([@_]); }
-sub Dumpf  { return __PACKAGE__->Dump(@_); }
-sub Dumpp  { print __PACKAGE__->Dump(@_); }
+sub Dumper { return __PACKAGE__->Dump1([@_]); }
+sub Dumpf  { return __PACKAGE__->Dump1(@_); }
+sub Dumpp  { print __PACKAGE__->Dump1(@_); }
 
 # Note: All Data::Dumper methods can be called on Vis objects
 
@@ -355,6 +356,7 @@ sub _config_defaults {
     ->Terse($Terse)
     ->Indent($Indent)
     ->Debug($Debug)
+    ->Stringify($Stringify)
     ->Useqq($Useqq)
     ->Maxwidth($Maxwidth)
     ->MaxStringwidth($MaxStringwidth)
@@ -436,6 +438,10 @@ sub MaxStringwidth {
 sub Truncsuffix {
   my($s, $v) = @_;
   @_ >= 2 ? (($s->{Truncsuffix} = $v), return $s) : $s->{Truncsuffix};
+}
+sub Stringify {
+  my($s, $v) = @_;
+  @_ >= 2 ? (($s->{Stringify} = $v), return $s) : $s->{Stringify};
 }
 
 my $qstr_re = qr{ " (?: [^"\\]++ | \\. )*+ " | ' (?: [^'\\]++ | \\. )*+ ' }x;
@@ -533,6 +539,13 @@ sub _first_time_init() {
 }
 
 sub Dump {
+  ### BUG HERE: Should do implicit new if extra args are passed
+  ### (same as Data::Dumper::Dump)
+  return Dump1(@_);
+} 
+  
+# Dump1 is like Dump but assumes the callers frame is up one level
+sub Dump1 {
   _first_time_init() unless defined $Vis::original_qquote;
 
   my ($self) = @_;
@@ -556,10 +569,62 @@ sub Dump {
   }
 
   my $useqq = $self->Useqq();
-
   $self->Useperl(1) if $useqq eq 'utf8' && $Vis::Useperl_for_utf8;
 
-  local $_ = $self->SUPER::Dump;
+  # Allow top level objects of certain classes to stringify themselves;
+  # all others will apper as "bless(...content...), 'modulename'" i.e. as
+  # formatted by Data::Dumper.  Stringification is attempted by concatenating
+  # a string to the object.
+  #
+  # The Stringify property may be a ref to an array of module (i.e. class) 
+  # names and qr/regexs/ to match class names.  Items blessed into
+  # a matching class will be allowed to stringify themselves.
+  #
+  # If Stringify == undef (the default), then an appropriate class names
+  # are assumed if 'use bigint' or similar directives are in effect
+  # for the caller (e.g. Math::BigInt).
+  #
+  # Setting Stringify = [] disables this feature completely.
+  #
+  # Note: This applies only to variables interplated by dvis() and friends which
+  # directly contain object references, and single objects passed directly
+  # to vis().  It does NOT apply to items passed to avis(), or objects
+  # reached indirectly via a container (array or hash); the latter are always 
+  # displayed as "bless(...) 'modname'".  This is because we do not directly 
+  # touch such objects, they are always formatted by Data::Dumper before
+  # we massage the result.
+  #
+  my $stringify = $self->Stringify();
+  if (! defined $stringify) {
+    # N.B. Trampolines arrange to interpose exactly one level, so 
+    # caller(1) is always the user's context
+    if (my $hinthash = (caller(1))[10]) {
+      if (any {/^big/} keys %$hinthash) {
+         push @$stringify, qr/^Math::Big/;
+      }
+    }
+  }
+
+  local $_;
+  if (defined $stringify) {
+    $stringify = [$stringify] unless ref($stringify) eq 'ARRAY';
+    my @values = $self->Values;
+    if (@values==1) {
+      if (my $ref = ref($values[0])) {
+        foreach my $mod (@$stringify) {
+          if (ref($mod) ? $ref =~ /$mod/ : $ref eq $mod) {
+            # Allow this object to stringify itself.  The result is a
+            # raw unformatted string, not enclosed in quotes, 
+            # followed by a newline (mimicing Data::Dumper output)
+            $_ = $values[0]."\n";
+          }
+        }
+      }
+    }
+  }
+
+  # If not stringified above, call Data::Dumper to do it
+  $_ //= $self->SUPER::Dump;
 
   my $pad = $self->Pad();
   if ($pad ne ""){
@@ -794,11 +859,17 @@ sub SaveAndResetPunct {
 package DB;
 
 # Interface functions, entered by goto from trampolines called by the user
-sub DB_Vis_svis(@)  { DB_Vis_Interpolate(Vis->snew(@_)); }
-sub DB_Vis_dvis(@)  { DB_Vis_Interpolate(Vis->dnew(@_)); }
-sub DB_Vis_svisq(@) { DB_Vis_Interpolate(Vis->snew(@_)->Useqq(0)); }
-sub DB_Vis_dvisq(@) { DB_Vis_Interpolate(Vis->dnew(@_)->Useqq(0)); }
-sub DB_Vis_Dump     { DB_Vis_Interpolate($_[0]); }
+#sub DB_Vis_svis(@)  { DB_Vis_Interpolate(Vis->snew(@_)); }
+#sub DB_Vis_dvis(@)  { DB_Vis_Interpolate(Vis->dnew(@_)); }
+#sub DB_Vis_svisq(@) { DB_Vis_Interpolate(Vis->snew(@_)->Useqq(0)); }
+#sub DB_Vis_dvisq(@) { DB_Vis_Interpolate(Vis->dnew(@_)->Useqq(0)); }
+#sub DB_Vis_Dump     { DB_Vis_Interpolate($_[0]); }
+
+sub DB_Vis_svis(@)  { @_ = (Vis->snew(@_)); goto &DB_Vis_Interpolate; }
+sub DB_Vis_dvis(@)  { @_ = (Vis->dnew(@_)); goto &DB_Vis_Interpolate; }
+sub DB_Vis_svisq(@) { @_ = (Vis->snew(@_)->Useqq(0)); goto &DB_Vis_Interpolate; }
+sub DB_Vis_dvisq(@) { @_ = (Vis->dnew(@_)->Useqq(0)); goto &DB_Vis_Interpolate; }
+sub DB_Vis_Dump     { @_ = ($_[0]); goto &DB_Vis_Interpolate; }
 
 # Interpolate strings for svis and dvis.   This must be in package
 # DB and the closest scope not in package DB must be the user's context.
@@ -894,6 +965,7 @@ sub DB_Vis_Interpolate {
   # DO NOT use regex with (capture groups) between here and the eval below
   # except inside { interior blocks }.
 
+  print "### actions=",Vis::debugavis(@actions),"\n" if $debug;
   my $result = $pad;
   foreach my $action (@actions) {
     my $act = $action->[0];
@@ -904,6 +976,7 @@ sub DB_Vis_Interpolate {
       # (because braces can not be used that way in expressions, only strings)
 
       my @items = Vis_Eval("$sigl$rhs");
+      print "### items=",Vis::debugavis(@items),"\n" if $debug;
 
       my $varlabel = "";
       if ($d_or_s eq 'd') {
@@ -936,7 +1009,7 @@ sub DB_Vis_Interpolate {
       }
       else { die "bug" }
 
-      my $s = $self->Dump;
+      my $s = $self->Dump1;
       #print "### Dump result:\n«$s»\n";
       substr($s, 0, length($autopad)) = $varlabel;
       $result .= $s;
@@ -1007,6 +1080,15 @@ Vis - Enhance Data::Dumper for use in messages
   print Vis->dnew('Howdy! $var @ary %hash\n')->Dump;  # like dvis()
   print Vis->vnew($scalar)->Dump, "\n";               # like vis()
   print Vis->anew(@array)->Dump, "\n";                # like avis()
+
+  { use bigint;
+    # Show large number values
+    my $big = 1_000_000_000 * 1_234_567_890;
+    print "Value is ", vis($big), "\n";
+    # disable evaluating big numbers
+    $Vis::Stringify = []; 
+    print "Object is ", vis($big), "\n";
+  }
 
   # Avoid unnecessary hex escaping in Unicode strings
   $Vis::Useqq = 'utf8';
@@ -1270,6 +1352,7 @@ use strict; use warnings ; use feature qw(state switch);
 use utf8; 
 use open IO => 'utf8', ':std';
 select STDERR; $|=1; select STDOUT; $|=1;
+use Scalar::Util qw(blessed);
 use Carp;
 use English qw( -no_match_vars );;
 #use lib "$ENV{HOME}/lib/perl";
@@ -1493,7 +1576,8 @@ $_ = "GroupA.GroupB";
 
 { my $code = 'qsh("a b")';           check $code, "'a b'",  eval $code; }
 { my $code = 'qsh(undef)';           check $code, "undef",  eval $code; }
-{ my $code = 'qsh("a b","c d","e",undef,"g")';       check $code, ["'a b'","'c d'","e","undef","g"], eval $code; }
+{ my $code = 'qsh("a b","c d","e",undef,"g",q{\'ab\'"cd"})';       
+   check $code, ["'a b'","'c d'","e","undef","g","''\\''ab'\\''\"cd\"'"], eval $code; }
 { my $code = 'qshpath("a b")';       check $code, "'a b'",  eval $code; }
 { my $code = 'qshpath("~user")';     check $code, "~user",  eval $code; }
 { my $code = 'qshpath("~user/a b")'; check $code, "~user/'a b'", eval $code; }
@@ -1507,14 +1591,7 @@ $_ = "GroupA.GroupB";
 { my $code = 'qshpath';              check $code, "${_}",   eval $code; } 
 { my $code = 'forceqsh($_)';         check $code, "'${_}'", eval $code; }
 
-# Check that $1 etc. can be passed (this was once a bug...)
-{ my $code = '" a~b" =~ / (.*)/ && qsh($1)'; check $code, '"a~b"', eval $code; }
-{ my $code = '" a~b" =~ / (.*)/ && qshpath($1)'; check $code, '"a~b"', eval $code; }
-{ my $code = '" a~b" =~ / (.*)/ && forceqsh($1)'; check $code, '"a~b"', eval $code; }
-{ my $code = '" a~b" =~ / (.*)/ && vis($1)'; check $code, '"a~b"', eval $code; }
-
-{ my $code = 'my $vv=123; \' a $vv b\' =~ / (.*)/ && dvis($1)'; check $code, 'a vv=123 b', eval $code; }
-
+# Basic checks
 { my $code = 'vis($_)'; check $code, "\"${_}\"", eval $code; }
 { my $code = 'vis()'; check $code, "\"${_}\"", eval $code; }
 { my $code = 'vis'; check $code, "\"${_}\"", eval $code; }
@@ -1537,6 +1614,93 @@ $_ = "GroupA.GroupB";
 
 { my $code = q/my $s; my @a=sort{ $s=dvis('$a $b'); $a<=>$b }(3,2); "@a $s"/ ;
   check $code, '2 3 a=3 b=2', eval $code; 
+}
+
+# Check that $1 etc. can be passed (this was once a bug...)
+{ my $code = '" a~b" =~ / (.*)/ && qsh($1)'; check $code, '"a~b"', eval $code; }
+{ my $code = '" a~b" =~ / (.*)/ && qshpath($1)'; check $code, '"a~b"', eval $code; }
+{ my $code = '" a~b" =~ / (.*)/ && forceqsh($1)'; check $code, '"a~b"', eval $code; }
+{ my $code = '" a~b" =~ / (.*)/ && vis($1)'; check $code, '"a~b"', eval $code; }
+
+{ my $code = 'my $vv=123; \' a $vv b\' =~ / (.*)/ && dvis($1)'; check $code, 'a vv=123 b', eval $code; }
+
+# bigint, bignum, bigrat support (works only for top-level arguments)
+{
+  use bignum;
+
+  my $bigfdisp = '9988776655443322112233445566778899.8877';
+  my $bigf = eval $bigfdisp // die;
+  die unless blessed($bigf) =~ /^Math::BigFloat/;
+
+  my $bigidisp = '9988776655443322112233445566778899887766';
+  my $bigi = eval $bigidisp // die;
+  die unless blessed($bigi) =~ /^Math::BigInt/;
+
+  { my $code = 'Vis->vnew($bigf)->Dump'; check $code, "${bigfdisp}", eval $code; }
+  { my $code = 'vis($bigf)'; check $code, "${bigfdisp}", eval $code; }
+  { my $code = 'visq($bigf)'; check $code, "${bigfdisp}", eval $code; }
+  { my $code = 'svis("foo","\$"."bigf")'; check $code, "foo${bigfdisp}", eval $code; }
+  { my $code = 'svisq("foo","\$"."bigf")'; check $code, "foo${bigfdisp}", eval $code; }
+  { my $code = 'dvis("foo","\$"."bigf")'; check $code, "foobigf=${bigfdisp}", eval $code; }
+  { my $code = 'dvisq("foo","\$"."bigf")'; check $code, "foobigf=${bigfdisp}", eval $code; }
+
+  { my $code = 'vis($bigi)'; check $code, "${bigidisp}", eval $code; }
+  { my $code = 'visq($bigi)'; check $code, "${bigidisp}", eval $code; }
+  { my $code = 'svis("foo","\$"."bigi")'; check $code, "foo${bigidisp}", eval $code; }
+  { my $code = 'svisq("foo","\$"."bigi")'; check $code, "foo${bigidisp}", eval $code; }
+  { my $code = 'dvis("foo","\$"."bigi")'; check $code, "foobigi=${bigidisp}", eval $code; }
+  { my $code = 'dvisq("foo","\$"."bigi")'; check $code, "foobigi=${bigidisp}", eval $code; }
+  
+  # Confirm that Stringify=[] disables
+  { local $Vis::Stringify = [];
+    my $s = vis($bigf); die "bug($s)" unless $s =~ /^\(?bless.*BigFloat/s; 
+  }
+
+  # Confirm that indirectly-referenced objects are _not_ self-stringified
+  { my $s = avis($bigf); die "Unexpected($s)" unless $s =~ /^\(?bless.*BigFloat/s; }
+  { my $s = avis($bigi); die "Unexpected($s)" unless $s =~ /^\(?bless.*BigInt/s; }
+}
+{
+  use bigrat;
+
+  my $ratdisp = '1/9';
+  my $rat = eval $ratdisp // die;
+  die unless blessed($rat) =~ /^Math::BigRat/;
+
+  { my $code = 'vis($rat)'; check $code, "${ratdisp}", eval $code; }
+  { my $code = 'Vis->vnew($rat)->Dump'; check $code, "${ratdisp}", eval $code; }
+  { my $code = 'visq($rat)'; check $code, "${ratdisp}", eval $code; }
+  { my $code = 'svis("foo","\$"."rat")'; check $code, "foo${ratdisp}", eval $code; }
+  { my $code = 'svisq("foo","\$"."rat")'; check $code, "foo${ratdisp}", eval $code; }
+  { my $code = 'dvis("foo","\$"."rat")'; check $code, "foorat=${ratdisp}", eval $code; }
+  { my $code = 'dvisq("foo","\$"."rat")'; check $code, "foorat=${ratdisp}", eval $code; }
+}
+{
+  use Math::BigFloat;
+  my $bigfdisp = '9988776655443322112233445566778899.8877';
+  my $bigf = Math::BigFloat->new($bigfdisp);
+
+  my $bigidisp = '9988776655443322112233445566778899887766';
+  my $bigi = Math::BigInt->new($bigidisp);
+
+  { local $Vis::Stringify = [qr/^Math::BigFloat/];
+    { my $code = 'vis($bigf)'; check $code, "${bigfdisp}", eval $code; }
+    { my $code = 'visq($bigf)'; check $code, "${bigfdisp}", eval $code; }
+    { my $code = 'svis("foo","\$"."bigf")'; check $code, "foo${bigfdisp}", eval $code; }
+    { my $code = 'svisq("foo","\$"."bigf")'; check $code, "foo${bigfdisp}", eval $code; }
+    { my $code = 'dvis("foo","\$"."bigf")'; check $code, "foobigf=${bigfdisp}", eval $code; }
+    { my $code = 'dvisq("foo","\$"."bigf")'; check $code, "foobigf=${bigfdisp}", eval $code; }
+  
+    my $s=vis($bigi); die "Unexpected($s)" unless $s =~ /^\(?bless.*BigInt/s; 
+    foreach my $modmatch ('qr/^Math::BigInt/',
+                          '[qr/^Math::BigInt/]',
+                          '["No::Match", qr/^Math::BigInt/]',
+                          '[qr/^Math::BigFloat/, qr/^Math::BigInt/]',
+                         )
+    { my $code = 'Vis->vnew($bigi)->Stringify('.$modmatch.')->Dump';
+      check $code, "${bigidisp}", eval $code; 
+    }
+  }
 }
 
 # Check string truncation
