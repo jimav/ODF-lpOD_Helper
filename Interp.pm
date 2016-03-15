@@ -8,7 +8,7 @@ use strict; use warnings FATAL => 'all'; use 5.010;
 # (Perl assumes Latin-1 by default).
 use utf8;
 
-$Vis::VERSION = sprintf "%d.%03d", q$Revision: 1.92 $ =~ /(\d+)/g;
+$Vis::VERSION = sprintf "%d.%03d", q$Revision: 1.93 $ =~ /(\d+)/g;
 
 # Copyright © Jim Avera 2012-2014.  Released into the Public Domain
 # by the copyright owner.  (jim.avera AT gmail dot com)
@@ -125,7 +125,7 @@ use Carp;
 use feature qw(switch state);
 use POSIX qw(INT_MAX);
 use Encode ();
-use Scalar::Util qw(looks_like_number);
+use Scalar::Util qw(looks_like_number blessed);
 use List::Util qw(any);
 
 our $Utf8patch //= 1;
@@ -538,17 +538,45 @@ sub _first_time_init() {
   }
 }
 
-sub Dump {
-  ### BUG HERE: Should do implicit new if extra args are passed
-  ### (same as Data::Dumper::Dump)
-  return Dump1(@_);
-} 
+sub _try_stringify($$);
+sub _try_stringify($$) {
+  my ($item, $stringify) = @_;
+  if (my $class = blessed($item)) {
+    foreach my $mod (@$stringify) {
+      next if $mod eq "";
+      if (ref($mod) ? $class =~ /$mod/ : $class eq $mod) {
+        # Allow this object to stringify itself.  The changed is a
+        # unfortunately-always-quoted string
+        $_[0] .= "";
+        return 1;
+      }
+    }
+  }
+  my $ref = ref $item;
+  return 0 if $ref eq "";
+  my $changed = 0;
+  if ($ref eq 'ARRAY') {
+    foreach (@$item) {
+      $changed=1 if _try_stringify($_, $stringify);
+    }
+  }
+  elsif ($ref eq 'HASH') {
+    foreach (values %$item) {
+      $changed=1 if _try_stringify($_, $stringify);
+    }
+  }
+  $changed;
+}
+
+sub Dump { return Dump1(@_); }
   
 # Dump1 is like Dump but assumes the callers frame is up one level
 sub Dump1 {
+  local $_;
   _first_time_init() unless defined $Vis::original_qquote;
 
-  my ($self) = @_;
+  my $self = shift;
+  $self = $self->new(@_) unless ref $self; # mimic Data::Dumper::Dump(...)
 
   if (! ref $self) {
     $self = $self->new(@_[1..$#_]);
@@ -571,31 +599,9 @@ sub Dump1 {
   my $useqq = $self->Useqq();
   $self->Useperl(1) if $useqq eq 'utf8' && $Vis::Useperl_for_utf8;
 
-  # Allow top level objects of certain classes to stringify themselves;
-  # all others will apper as "bless(...content...), 'modulename'" i.e. as
-  # formatted by Data::Dumper.  Stringification is attempted by concatenating
-  # a string to the object.
-  #
-  # The Stringify property may be a ref to an array of module (i.e. class) 
-  # names and qr/regexs/ to match class names.  Items blessed into
-  # a matching class will be allowed to stringify themselves.
-  #
-  # If Stringify == undef (the default), then an appropriate class names
-  # are assumed if 'use bigint' or similar directives are in effect
-  # for the caller (e.g. Math::BigInt).
-  #
-  # Setting Stringify = [] disables this feature completely.
-  #
-  # Note: This applies only to variables interplated by dvis() and friends which
-  # directly contain object references, and single objects passed directly
-  # to vis().  It does NOT apply to items passed to avis(), or objects
-  # reached indirectly via a container (array or hash); the latter are always 
-  # displayed as "bless(...) 'modname'".  This is because we do not directly 
-  # touch such objects, they are always formatted by Data::Dumper before
-  # we massage the result.
-  #
   my $stringify = $self->Stringify();
   if (! defined $stringify) {
+    $stringify = [];
     # N.B. Trampolines arrange to interpose exactly one level, so 
     # caller(1) is always the user's context
     if (my $hinthash = (caller(1))[10]) {
@@ -604,26 +610,17 @@ sub Dump1 {
       }
     }
   }
-
-  local $_;
-  if (defined $stringify) {
-    $stringify = [$stringify] unless ref($stringify) eq 'ARRAY';
-    my @values = $self->Values;
-    if (@values==1) {
-      if (my $ref = ref($values[0])) {
-        foreach my $mod (@$stringify) {
-          if (ref($mod) ? $ref =~ /$mod/ : $ref eq $mod) {
-            # Allow this object to stringify itself.  The result is a
-            # raw unformatted string, not enclosed in quotes, 
-            # followed by a newline (mimicing Data::Dumper output)
-            $_ = $values[0]."\n";
-          }
-        }
-      }
+  $stringify = [$stringify] unless ref($stringify) eq 'ARRAY';
+  if (@$stringify > 0 && $stringify->[0] ne "") {
+    require Storable;
+    my @values = map{ Storable::dclone($_) } $self->Values;
+    my $changed = 0;
+    foreach (@values) {
+      $changed=1 if _try_stringify($_, $stringify);
     }
+    $self->Values(\@values) if $changed;
   }
 
-  # If not stringified above, call Data::Dumper to do it
   $_ //= $self->SUPER::Dump;
 
   my $pad = $self->Pad();
@@ -1081,13 +1078,12 @@ Vis - Enhance Data::Dumper for use in messages
   print Vis->vnew($scalar)->Dump, "\n";               # like vis()
   print Vis->anew(@array)->Dump, "\n";                # like avis()
 
-  { use bigint;
-    # Show large number values
+  { use bigint; # Show large numbers as strings
     my $big = 1_000_000_000 * 1_234_567_890;
-    print "Value is ", vis($big), "\n";
-    # disable evaluating big numbers
-    $Vis::Stringify = []; 
-    print "Object is ", vis($big), "\n";
+    print vis($big), "\n";  # "1234567890000000000"
+    # disable stringifying "big" numbers
+    $Vis::Stringify = ""; 
+    print vis($big), "\n"; # bless({...}, 'Math::BigInt')
   }
 
   # Avoid unnecessary hex escaping in Unicode strings
@@ -1230,6 +1226,30 @@ Sets or gets the maximum number of characters to be displayed
 for an individual string.  Longer strings are truncated
 and an ellipsis (...) appended.  Zero or undef for no limit.
 
+=item $Vis::Stringify  I<or>  I<$OBJ>->Stringify(I<[...]>)
+
+Objects of the specified class(es) are allowed to convert themselves to 
+strings before being dumped.  The Stringify property value may be:
+
+1) undef (the default): If the caller has 'use bigint' or 'use bignum' 
+or similar in effect, then appropriate class names are inferred,
+(e.g. Math::BigInt) so that those objects appear as strings.
+
+2) A string giving the name of a class, a qr/regex/ matching class names,
+or a ref to an array of those things; objects blessed into 
+any matching class will be self-stringified by concatenating "".
+
+3) "" or [] : The feature is completely disabled
+
+When self-stringification is performed, a _deep copy_ is made of the 
+entire data, which will impact performance for large structures.
+
+Note: 'Stringify' is conceptually related to the 'Freezer' property
+provided by Data::Dumper.  However 'Freezer' can only be used to modify
+existing objects in-place, not entirely replace them with something else
+such as a string.  Also, 'Stringify' is irreversible; there is no provision 
+for reconstituting the original objects if the output is eval'd.
+  
 =back
 
 The following Methods have the same meaning as in Data::Dumper except that
@@ -1395,7 +1415,7 @@ print "Loaded ", $INC{"Vis.pm"}, " _qquote_wrapper=", \&Vis::_qquote_wrapper, "\
 # Do an initial read of $[ so arybase will be autoloaded
 # (prevents corrupting $!/ERRNO in subsequent tests)
 eval '$[' // die;
-      
+
 sub tf($) { $_[0] ? "true" : "false" }
 
 # ---------- Check stuff other than formatting or interpolation --------
@@ -1441,6 +1461,7 @@ if (Vis::_unix_compatible_os()) {
   waitpid($pid,0);
   die "Vis::Maxwidth defaulted to ", ($? >> 8)|($? & !0xFF), " (not 80 as expected)\n"
     unless $? == (80 << 8);
+  $? = 0;
 }
 
 ##################################################
@@ -1624,72 +1645,88 @@ $_ = "GroupA.GroupB";
 
 { my $code = 'my $vv=123; \' a $vv b\' =~ / (.*)/ && dvis($1)'; check $code, 'a vv=123 b', eval $code; }
 
-# bigint, bignum, bigrat support (works only for top-level arguments)
+# bigint, bignum, bigrat support
 {
-  use bignum;
+  use bignum;  # BigInt and BigFloat together
 
-  my $bigfdisp = '9988776655443322112233445566778899.8877';
-  my $bigf = eval $bigfdisp // die;
+  my $bigfnum = '9988776655443322112233445566778899.8877';
+  my $bigf = eval $bigfnum // die;
   die unless blessed($bigf) =~ /^Math::BigFloat/;
+  my $bigfq = "'$bigfnum'";
+  my $bigfqq = "\"$bigfnum\"";
 
-  my $bigidisp = '9988776655443322112233445566778899887766';
-  my $bigi = eval $bigidisp // die;
+  my $biginum = '9988776655443322112233445566778899887766';
+  my $bigi = eval $biginum // die;
   die unless blessed($bigi) =~ /^Math::BigInt/;
+  my $bigiq = "'$biginum'";
+  my $bigiqq = "\"$biginum\"";
 
-  { my $code = 'Vis->vnew($bigf)->Dump'; check $code, "${bigfdisp}", eval $code; }
-  { my $code = 'vis($bigf)'; check $code, "${bigfdisp}", eval $code; }
-  { my $code = 'visq($bigf)'; check $code, "${bigfdisp}", eval $code; }
-  { my $code = 'svis("foo","\$"."bigf")'; check $code, "foo${bigfdisp}", eval $code; }
-  { my $code = 'svisq("foo","\$"."bigf")'; check $code, "foo${bigfdisp}", eval $code; }
-  { my $code = 'dvis("foo","\$"."bigf")'; check $code, "foobigf=${bigfdisp}", eval $code; }
-  { my $code = 'dvisq("foo","\$"."bigf")'; check $code, "foobigf=${bigfdisp}", eval $code; }
+  { my $code = 'Vis->vnew($bigf)->Dump'; check $code, "${bigfqq}", eval $code; }
+  { my $code = 'vis($bigf)'; check $code, "${bigfqq}", eval $code; }
+  { my $code = 'visq($bigf)'; check $code, "${bigfq}", eval $code; }
+  { my $code = 'svis("foo","\$"."bigf")'; check $code, "foo${bigfqq}", eval $code; }
+  { my $code = 'svisq("foo","\$"."bigf")'; check $code, "foo${bigfq}", eval $code; }
+  { my $code = 'dvis("foo","\$"."bigf")'; check $code, "foobigf=${bigfqq}", eval $code; }
+  { my $code = 'dvisq("foo","\$"."bigf")'; check $code, "foobigf=${bigfq}", eval $code; }
 
-  { my $code = 'vis($bigi)'; check $code, "${bigidisp}", eval $code; }
-  { my $code = 'visq($bigi)'; check $code, "${bigidisp}", eval $code; }
-  { my $code = 'svis("foo","\$"."bigi")'; check $code, "foo${bigidisp}", eval $code; }
-  { my $code = 'svisq("foo","\$"."bigi")'; check $code, "foo${bigidisp}", eval $code; }
-  { my $code = 'dvis("foo","\$"."bigi")'; check $code, "foobigi=${bigidisp}", eval $code; }
-  { my $code = 'dvisq("foo","\$"."bigi")'; check $code, "foobigi=${bigidisp}", eval $code; }
+  { my $code = 'vis($bigi)'; check $code, "${bigiqq}", eval $code; }
+  { my $code = 'visq($bigi)'; check $code, "${bigiq}", eval $code; }
+  { my $code = 'svis("foo","\$"."bigi")'; check $code, "foo${bigiqq}", eval $code; }
+  { my $code = 'svisq("foo","\$"."bigi")'; check $code, "foo${bigiq}", eval $code; }
+  { my $code = 'dvis("foo","\$"."bigi")'; check $code, "foobigi=${bigiqq}", eval $code; }
+  { my $code = 'dvisq("foo","\$"."bigi")'; check $code, "foobigi=${bigiq}", eval $code; }
   
   # Confirm that Stringify=[] disables
   { local $Vis::Stringify = [];
     my $s = vis($bigf); die "bug($s)" unless $s =~ /^\(?bless.*BigFloat/s; 
   }
 
-  # Confirm that indirectly-referenced objects are _not_ self-stringified
-  { my $s = avis($bigf); die "Unexpected($s)" unless $s =~ /^\(?bless.*BigFloat/s; }
-  { my $s = avis($bigi); die "Unexpected($s)" unless $s =~ /^\(?bless.*BigInt/s; }
+  { my $code = 'avis($bigf)'; check $code, "($bigfqq)", eval $code; }
+  { my $code = 'avisq($bigf)'; check $code, "($bigfq)", eval $code; }
+
+  { my $hash = { aaa => 1111111111111, bbb => [ 22222222222222 ] };
+    my $code = 'vis($hash)'; check $code, '{aaa => "1111111111111", bbb => ["22222222222222"]}', eval $code; }
 }
 {
   use bigrat;
 
-  my $ratdisp = '1/9';
-  my $rat = eval $ratdisp // die;
+  my $ratnum = '1/9';
+  my $rat = eval $ratnum // die;
   die unless blessed($rat) =~ /^Math::BigRat/;
+  my $ratq = "'1/9'";
+  my $ratqq = "\"1/9\"";
 
-  { my $code = 'vis($rat)'; check $code, "${ratdisp}", eval $code; }
-  { my $code = 'Vis->vnew($rat)->Dump'; check $code, "${ratdisp}", eval $code; }
-  { my $code = 'visq($rat)'; check $code, "${ratdisp}", eval $code; }
-  { my $code = 'svis("foo","\$"."rat")'; check $code, "foo${ratdisp}", eval $code; }
-  { my $code = 'svisq("foo","\$"."rat")'; check $code, "foo${ratdisp}", eval $code; }
-  { my $code = 'dvis("foo","\$"."rat")'; check $code, "foorat=${ratdisp}", eval $code; }
-  { my $code = 'dvisq("foo","\$"."rat")'; check $code, "foorat=${ratdisp}", eval $code; }
+  { my $code = 'vis($rat)'; check $code, "${ratqq}", eval $code; }
+  { my $code = 'Vis->vnew($rat)->Dump'; check $code, "${ratqq}", eval $code; }
+  { my $code = 'visq($rat)'; check $code, "${ratq}", eval $code; }
+  { my $code = 'svis("foo","\$"."rat")'; check $code, "foo${ratqq}", eval $code; }
+  { my $code = 'svisq("foo","\$"."rat")'; check $code, "foo${ratq}", eval $code; }
+  { my $code = 'dvis("foo","\$"."rat")'; check $code, "foorat=${ratqq}", eval $code; }
+  { my $code = 'dvisq("foo","\$"."rat")'; check $code, "foorat=${ratq}", eval $code; }
 }
 {
+  # no 'bignum' etc. in effect, just explicit class names
   use Math::BigFloat;
-  my $bigfdisp = '9988776655443322112233445566778899.8877';
-  my $bigf = Math::BigFloat->new($bigfdisp);
+  my $bigfnum = '9988733334444555566663445566778899.8877';
+  my $bigf = Math::BigFloat->new($bigfnum);
+  die unless blessed($bigf) =~ /^Math::BigFloat/;
+  my $bigfq = "'$bigfnum'";
+  my $bigfqq = "\"$bigfnum\"";
 
-  my $bigidisp = '9988776655443322112233445566778899887766';
-  my $bigi = Math::BigInt->new($bigidisp);
+  use Math::BigInt;
+  my $biginum = '9988776000000000000222000000000899887766';
+  my $bigi = Math::BigInt->new($biginum);
+  die unless blessed($bigi) =~ /^Math::BigInt/;
+  my $bigiqq = "'$biginum'";
+  my $bigiqq = "\"$biginum\"";
 
   { local $Vis::Stringify = [qr/^Math::BigFloat/];
-    { my $code = 'vis($bigf)'; check $code, "${bigfdisp}", eval $code; }
-    { my $code = 'visq($bigf)'; check $code, "${bigfdisp}", eval $code; }
-    { my $code = 'svis("foo","\$"."bigf")'; check $code, "foo${bigfdisp}", eval $code; }
-    { my $code = 'svisq("foo","\$"."bigf")'; check $code, "foo${bigfdisp}", eval $code; }
-    { my $code = 'dvis("foo","\$"."bigf")'; check $code, "foobigf=${bigfdisp}", eval $code; }
-    { my $code = 'dvisq("foo","\$"."bigf")'; check $code, "foobigf=${bigfdisp}", eval $code; }
+    { my $code = 'vis($bigf)'; check $code, "${bigfqq}", eval $code; }
+    { my $code = 'visq($bigf)'; check $code, "${bigfq}", eval $code; }
+    { my $code = 'svis("foo","\$"."bigf")'; check $code, "foo${bigfqq}", eval $code; }
+    { my $code = 'svisq("foo","\$"."bigf")'; check $code, "foo${bigfq}", eval $code; }
+    { my $code = 'dvis("foo","\$"."bigf")'; check $code, "foobigf=${bigfqq}", eval $code; }
+    { my $code = 'dvisq("foo","\$"."bigf")'; check $code, "foobigf=${bigfq}", eval $code; }
   
     my $s=vis($bigi); die "Unexpected($s)" unless $s =~ /^\(?bless.*BigInt/s; 
     foreach my $modmatch ('qr/^Math::BigInt/',
@@ -1698,7 +1735,7 @@ $_ = "GroupA.GroupB";
                           '[qr/^Math::BigFloat/, qr/^Math::BigInt/]',
                          )
     { my $code = 'Vis->vnew($bigi)->Stringify('.$modmatch.')->Dump';
-      check $code, "${bigidisp}", eval $code; 
+      check $code, "${bigiqq}", eval $code; 
     }
   }
 }
@@ -1937,7 +1974,7 @@ EOF
   )
   {
     my ($dvis_input, $expected) = @$test;
-    # warn "dvis_input=$dvis_input\n";
+    # warn "## dvis_input='$dvis_input' expected='$expected'\n";
     
     { local $@;  # check for bad syntax first, to avoid uncontrolled die later
       # For some reason we can't catch exceptions from inside package DB.
