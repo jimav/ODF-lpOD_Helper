@@ -8,7 +8,7 @@ use strict; use warnings FATAL => 'all'; use 5.010;
 # (Perl assumes Latin-1 by default).
 use utf8;
 
-$Vis::VERSION = sprintf "%d.%03d", q$Revision: 1.93 $ =~ /(\d+)/g;
+$Vis::VERSION = sprintf "%d.%03d", q$Revision: 1.94 $ =~ /(\d+)/g;
 
 # Copyright © Jim Avera 2012-2014.  Released into the Public Domain
 # by the copyright owner.  (jim.avera AT gmail dot com)
@@ -125,7 +125,7 @@ use Carp;
 use feature qw(switch state);
 use POSIX qw(INT_MAX);
 use Encode ();
-use Scalar::Util qw(looks_like_number blessed);
+use Scalar::Util qw(looks_like_number blessed reftype refaddr);
 use List::Util qw(any);
 
 our $Utf8patch //= 1;
@@ -213,7 +213,7 @@ sub fixed_qquote {
 sub debugvis($) {  # for our internal debug messages
   local $/ = "\n";
   confess "should call debugavis" if @_ != 1;
-  my $s = Data::Dumper->new([shift])->Useqq(1)->Terse(1)->Indent(0)->Dump;
+  my $s = Data::Dumper->new([shift])->Useqq(1)->Terse(1)->Indent(0)->Sortkeys(\&_sortkeys)->Dump;
   chomp $s;
   return $s;
 }
@@ -222,8 +222,9 @@ sub debugavis(@) {  # for our internal debug messages
   my $s = "(";
   foreach my $a (@_) {
     $s .= "," unless $s eq "(";
-    $s .= Data::Dumper->new([$a])->Useqq(1)->Terse(1)->Indent(1)->Dump;
-    chomp $s;
+    $s .= debugvis($a);
+    #$s .= Data::Dumper->new([$a])->Useqq(1)->Terse(1)->Indent(1)->Sortkeys(\&_sortkeys)->Dump;
+    #chomp $s;
   }
   return "$s)";
 }
@@ -538,9 +539,9 @@ sub _first_time_init() {
   }
 }
 
-sub _try_stringify($$);
-sub _try_stringify($$) {
-  my ($item, $stringify) = @_;
+sub _try_stringify($$$);
+sub _try_stringify($$$) {
+  my ($item, $stringify, $seen) = @_;
   if (my $class = blessed($item)) {
     foreach my $mod (@$stringify) {
       next if $mod eq "";
@@ -552,18 +553,24 @@ sub _try_stringify($$) {
       }
     }
   }
-  my $ref = ref $item;
-  return 0 if $ref eq "";
+  my $reftype = reftype($item);
+  return 0 if ! defined $reftype;
+  my $refaddr = refaddr($item);
+  return 0 if $seen->{$refaddr}++;
   my $changed = 0;
-  if ($ref eq 'ARRAY') {
+  if ($reftype eq 'ARRAY') {
     foreach (@$item) {
-      $changed=1 if _try_stringify($_, $stringify);
+      $changed=1 if _try_stringify($_, $stringify, $seen);
     }
   }
-  elsif ($ref eq 'HASH') {
+  elsif ($reftype eq 'HASH') {
     foreach (values %$item) {
-      $changed=1 if _try_stringify($_, $stringify);
+      $changed=1 if _try_stringify($_, $stringify, $seen);
     }
+    #while (my($k,$v) = each %$item) {
+    #  print "### BBB k=$k v=",debugvis($v),"\n";
+    #  $changed=1,$item->{$k}=$v if _try_stringify($v, $stringify, $seen);
+    #}
   }
   $changed;
 }
@@ -616,7 +623,8 @@ sub Dump1 {
     my @values = map{ Storable::dclone($_) } $self->Values;
     my $changed = 0;
     foreach (@values) {
-      $changed=1 if _try_stringify($_, $stringify);
+      my %seen;
+      $changed=1 if _try_stringify($_, $stringify, \%seen);
     }
     $self->Values(\@values) if $changed;
   }
@@ -1372,7 +1380,7 @@ use strict; use warnings ; use feature qw(state switch);
 use utf8; 
 use open IO => 'utf8', ':std';
 select STDERR; $|=1; select STDOUT; $|=1;
-use Scalar::Util qw(blessed);
+use Scalar::Util qw(blessed reftype);
 use Carp;
 use English qw( -no_match_vars );;
 #use lib "$ENV{HOME}/lib/perl";
