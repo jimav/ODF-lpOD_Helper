@@ -8,7 +8,7 @@ use strict; use warnings FATAL => 'all'; use 5.010;
 # (Perl assumes Latin-1 by default).
 use utf8;
 
-$Vis::VERSION = sprintf "%d.%03d", q$Revision: 1.95 $ =~ /(\d+)/g;
+$Vis::VERSION = sprintf "%d.%03d", q$Revision: 1.96 $ =~ /(\d+)/g;
 
 # Copyright © Jim Avera 2012-2014.  Released into the Public Domain
 # by the copyright owner.  (jim.avera AT gmail dot com)
@@ -905,12 +905,6 @@ sub DB_Vis_Interpolate {
   
   state $interior_re = qr/${balanced_or_safe_re}/;
 
-  state $scalar_index_re = qr{
-    ( (?:->)? (?: \{ $interior_re \} | \[ $interior_re \] ) )+
-  }x;
-  state $slice_re = qr{
-    (?: \{ $interior_re \} | \[ $interior_re \] )
-  }x;
   state $variable_re = qr/   # sigl could be $ or @
       \#?\w+(?:::\w+)*   # @name $pkg::name $#name $1
     | \#?\$\w+(?:::\w+)* # $$ref $#$ref
@@ -919,6 +913,17 @@ sub DB_Vis_Interpolate {
     | (?<=\$)\$          # $$
     | \{ $interior_re \} # ${ref expression} or ${^SPECIALNAME}
   /x;
+
+  state $scalar_index_re = qr{
+    (?: (?:->)? (?: \{ $interior_re \} | \[ $interior_re \] ) )+
+  }x;
+  state $slice_re = qr{
+    (?: \{ $interior_re \} | \[ $interior_re \] )
+  }x;
+
+  state $method_call_re = qr{
+    (?: -> (?: \w+ | $variable_re ) (?: \( $interior_re \) | (?=[\s=,;]) | \z ) )
+  }x;
 
   my @actions;
   {
@@ -930,6 +935,10 @@ sub DB_Vis_Interpolate {
         # \G does not work with (?|...) in Perl 5.12.4
         # https://rt.perl.org/rt3//Public/Bug/Display.html?id=112894
 
+        # $name->method
+        # $name->method(...)
+        /\G (?!\\)(\$)( $variable_re ${method_call_re} )/xsgc
+        ||
         # $name $name[expr] $name->{expr} ${refexpr}->[expr] etc.
         /\G (?!\\)(\$)( $variable_re ${scalar_index_re}? )/xsgc
         ||
@@ -965,8 +974,8 @@ sub DB_Vis_Interpolate {
       else {
         if (/\G./) {
           my $tmp = $_; $tmp =~ s/[^\x{20}-\x{7E}]/?/g;
-          die "Vis bug: next:",substr($tmp,pos,4),
-              "... pos=",pos," in:\n$tmp\n".(" "x pos)."^\n "
+          die "Vis bug: next:",substr($tmp,pos//0,4),
+              "... pos=",Vis::u(pos)," in:\n$tmp\n".(" "x (pos//0))."^\n "
         }
         last;
       }
@@ -1570,6 +1579,11 @@ sub check($$@) {
   }
 }
 
+sub MyClass::meth {
+  my $self = shift;
+  return @_ ? [ "methargs:", @_ ] : "meth_with_noargs";
+}
+
 $Vis::Maxwidth = 72;
 
 @ARGV = ('fake','argv');
@@ -1580,21 +1594,25 @@ my %toplex_h = ("" => "Emp", A=>111,"B B"=>222,C=>{d=>888,e=>999},D=>{});
 my @toplex_a = (0,1,"C",\%toplex_h,[],[0..9]);
 my $toplex_ar = \@toplex_a;
 my $toplex_hr = \%toplex_h;
+my $toplex_obj = bless {}, 'MyClass';
 
 our %global_h = %toplex_h;
 our @global_a = @toplex_a;
 our $global_ar = \@global_a;
 our $global_hr = \%global_h;
+our $global_obj = bless {}, 'MyClass';
 
 our %maskedglobal_h = (key => "should never be seen");
 our @maskedglobal_a = ("should never be seen");
 our $maskedglobal_ar = \@maskedglobal_a;
 our $maskedglobal_hr = \%maskedglobal_h;
+our $maskedglobal_obj = bless {}, 'ShouldNeverBeUsedClass';
 
 our %localized_h = (key => "should never be seen");
 our @localized_a = ("should never be seen");
 our $localized_ar = \@localized_a;
 our $localized_hr = \%localized_h;
+our $localized_obj = \%localized_h;
 
 our $a = "global-a";  # used specially used by sort()
 our $b = "global-b";
@@ -1604,6 +1622,7 @@ our %ABC_h = %main::global_h;
 our @ABC_a = @main::global_a;
 our $ABC_ar = \@ABC_a;
 our $ABC_hr = \%ABC_h;
+our $ABC_obj = $main::global_obj;
 
 package main;
 
@@ -1832,6 +1851,7 @@ sub get_closure(;$) {
  my @closure_a = (@toplex_a);
  my $closure_ar = \@closure_a;
  my $closure_hr = \%closure_h;
+ my $closure_obj = $toplex_obj;
  if ($clobber) { # try to over-write deleted objects
    @closure_a = ("bogusa".."bogusz");
  }
@@ -1842,13 +1862,15 @@ sub get_closure(;$) {
   # lexicals in enclosing scopes.  Sometimes it can, sometimes not.
   # However explicitly referencing those "global lexicals" in the closure
   # seems to make it work.
-  my $forget_me_not = [ \$unicode_str, \$byte_str, \$toplex_hr, \$toplex_ar,
-                        \%global_h, \@global_a, \$global_ar, \$global_hr, 
-                      ];
+  my $forget_me_not = [ 
+     \$unicode_str, \$byte_str, 
+     \@toplex_a, \%toplex_h, \$toplex_hr, \$toplex_ar, \$toplex_obj,
+     \@global_a, \%global_h, \$global_hr, \$global_ar, \$global_obj,
+  ];
 
   # Referencing these intermediate variables also prevents them from
   # being destroyed before this closure is executed:
-  my $saverefs = [ \%closure_h, \@closure_a, \$closure_ar, \$closure_hr, ];
+  my $saverefs = [ \%closure_h, \@closure_a, \$closure_ar, \$closure_hr, \$closure_obj ];
   
 
   my $zero = 0;
@@ -1863,18 +1885,22 @@ sub get_closure(;$) {
   my @sublex_a = @toplex_a;
   my $sublex_ar = \@sublex_a;
   my $sublex_hr = \%sublex_h;
+  my $sublex_obj = $toplex_obj;
   our %subglobal_h = %toplex_h;
   our @subglobal_a = @toplex_a;
   our $subglobal_ar = \@subglobal_a;
   our $subglobal_hr = \%subglobal_h;
+  our $subglobal_obj = $toplex_obj;
   our %maskedglobal_h = %toplex_h;
   our @maskedglobal_a = @toplex_a;
   our $maskedglobal_ar = \@maskedglobal_a;
   our $maskedglobal_hr = \%maskedglobal_h;
+  our $maskedglobal_obj = $toplex_obj;
   local %localized_h = %toplex_h;
   local @localized_a = @toplex_a;
   local $localized_ar = \@toplex_a;
   local $localized_hr = \%localized_h;
+  local $localized_obj = $toplex_obj;
 
   for my $test (
     [ q(aaa\\\\bbb), q(aaa\bbb) ],
@@ -1971,6 +1997,8 @@ EOF
           ],
         } (['',''], ['$','r'])
         ), #map [$dollar,$r]
+        [ qq(\$${name}_obj->meth ()), qq(${name}_obj->meth="meth_with_noargs" ()) ],
+        [ qq(\$${name}_obj->meth(42)), qq(${name}_obj->meth(42)=["methargs:",42]) ],
         map({ 
           my ($dollar, $r, $arrow) = @$_;
           my $dolname_scalar = ($dollar ? "\$$dollar" : "").$name;
