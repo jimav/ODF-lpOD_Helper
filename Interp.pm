@@ -8,7 +8,7 @@ use strict; use warnings FATAL => 'all'; use 5.010;
 # (Perl assumes Latin-1 by default).
 use utf8;
 
-$Vis::VERSION = sprintf "%d.%03d", q$Revision: 1.96 $ =~ /(\d+)/g;
+$Vis::VERSION = sprintf "%d.%03d", q$Revision: 1.97 $ =~ /(\d+)/g;
 
 # Copyright © Jim Avera 2012-2014.  Released into the Public Domain
 # by the copyright owner.  (jim.avera AT gmail dot com)
@@ -922,7 +922,7 @@ sub DB_Vis_Interpolate {
   }x;
 
   state $method_call_re = qr{
-    (?: -> (?: \w+ | $variable_re ) (?: \( $interior_re \) | (?=[\s=,;]) | \z ) )
+    (?: -> (?: \w+ | $variable_re ) (?: \( $interior_re \) | (?=[\s\\=,;]) | \z ) )
   }x;
 
   my @actions;
@@ -1178,8 +1178,10 @@ Data::Dumper may still be called directly (see "PERFORMANCE").
 The arguments are concatenated, interpolating variables and escapes
 as in in Perl double-quotish strings except that values are formatted
 unambiguously using C<vis()> or C<avis()> 
-for $ or @ expressions, respectively.
-In addition, C<%name> is interpolated as S<<< C<< (key => value ...) >> >>>.
+for $ or @ expressions, respectively.  
+In addition, C<%name> is interpolated as S<<< C<< (key => value ...) >> >>>, and
+C<< $name->method(...) >> is interpolated as a method call (if args are given, 
+no space is allowed before the open parenthesis).
 
 Multi-line structures are indented to line up with their starting position,
 taking into account any preceeding text on the same line.
