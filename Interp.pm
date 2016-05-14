@@ -8,7 +8,7 @@ use strict; use warnings FATAL => 'all'; use 5.010;
 # (Perl assumes Latin-1 by default).
 use utf8;
 
-$Vis::VERSION = sprintf "%d.%03d", q$Revision: 1.97 $ =~ /(\d+)/g;
+$Vis::VERSION = sprintf "%d.%03d", q$Revision: 1.98 $ =~ /(\d+)/g;
 
 # Copyright © Jim Avera 2012-2014.  Released into the Public Domain
 # by the copyright owner.  (jim.avera AT gmail dot com)
@@ -223,13 +223,11 @@ sub debugavis(@) {  # for our internal debug messages
   foreach my $a (@_) {
     $s .= "," unless $s eq "(";
     $s .= debugvis($a);
-    #$s .= Data::Dumper->new([$a])->Useqq(1)->Terse(1)->Indent(1)->Sortkeys(\&_sortkeys)->Dump;
-    #chomp $s;
   }
-  return "$s)";
+  return $s.")";
 }
 
-our @ISA       = qw(Exporter Data::Dumper);
+use Exporter 'import';
 our @EXPORT    = qw(vis  avis  hvis svis  dvis
                     visq avisq svisq dvisq u
                     qsh forceqsh qshpath);
@@ -237,6 +235,8 @@ our @EXPORT    = qw(vis  avis  hvis svis  dvis
 our @EXPORT_OK = qw($Maxwidth $MaxStringwidth $Truncsuffix $Debug 
                     $Useqq $Quotekeys $Sortkeys 
                     $Terse $Indent $Sparseseen);
+
+our @ISA       = ('Data::Dumper');
 
 # Used by non-oo functions, and initial settings for oo constructors.
 our ($Maxwidth, $MaxStringwidth, $Truncsuffix, $Debug, $Stringify,
@@ -274,11 +274,27 @@ sub hvisq(@)  { return __PACKAGE__->hnew(@_)->Useqq(0)->Dump1; }
 
 # trampolines
 #   The interpolation code for svis, etc. must live in package DB and
-#   the closest non-DB call frame must be the user's context.
-sub svis($;@)  { goto &DB::DB_Vis_svis }
-sub svisq($;@) { goto &DB::DB_Vis_svisq }
-sub dvis($;@)  { goto &DB::DB_Vis_dvis }
-sub dvisq($;@) { goto &DB::DB_Vis_dvisq }
+#   it's immediate caller must be the user's context.
+sub svis(@)  { @_ = (Vis->snew(@_)); goto &DB::DB_Vis_Interpolate; }
+sub dvis(@)  { @_ = (Vis->dnew(@_)); goto &DB::DB_Vis_Interpolate; }
+sub svisq(@) { @_ = (Vis->snew(@_)->Useqq(0)); goto &DB::DB_Vis_Interpolate; }
+sub dvisq(@) { @_ = (Vis->dnew(@_)->Useqq(0)); goto &DB::DB_Vis_Interpolate; }
+
+sub Dump { 
+  my $self = $_[0];
+  if (! ref $self) { # ala Data::Dumper
+    $self = $self->new(@_[1..$#_]);
+  } else {
+    die "extraneous args" if @_ != 1;
+  }
+
+  if (($self->{VisType}//"") =~ /^[sd]/) {
+    #@_ = ($self);
+    goto &DB::DB_Vis_Interpolate;
+  }
+
+  goto &DB::DB_Vis_Dump; # calls Dump1 from package DB
+}
 
 # Disabled -- causes "Dumper redefined" warnings if user also has Data::Dumper
 # Provide Data::Dumper non-oo API
@@ -384,7 +400,7 @@ sub anew {
 }
 sub hnew {
   my $class = shift;
-  croak "hvis: Odd number of arguments can not be hash keys and values\n"
+  croak "hvis: Odd number of arguments (expecting hash keys and values)\n"
     if (@_ % 2) != 0;
   my $obj = (bless($class->SUPER::new([{@_}]), $class))->_config_defaults();
   $obj->{VisType} = 'a';
@@ -398,9 +414,10 @@ sub snew {
   # will parse the string and then re-use the dumper object to format
   # each interpolated $varname etc. separately, thereby using any
   # configurations (such as Useqq or Indent) set by the user.
+  
   my $obj = (bless($class->SUPER::new([@_]), $class))->_config_defaults();
   $obj->{VisType} = 's';
-  $obj;
+  return $obj;
 }
 sub dnew {
   my $obj = snew(@_);
@@ -496,9 +513,13 @@ sub trunc_strings {
   my $ret = 0;
   my $kind = ref($_[0]);
   if ($kind eq "") { # scalar
+    my $truncsuf = $self->{Truncsuffix};
+    my $tslen = length($truncsuf);
     my $maxlen = $self->{MaxStringwidth};
-    if (length($_[0]) > $maxlen) {
-      $_[0] = substr($_[0],0,$maxlen).$self->{Truncsuffix};
+    if (length($_[0]) > ($maxlen+$tslen)) {
+      # FIXME
+      ###die "BUG HERE: Must clone before modifying user data!";
+      $_[0] = substr($_[0],0,$maxlen).$truncsuf;
       $ret = 1;
     }
   }
@@ -574,33 +595,28 @@ sub _try_stringify($$$) {
   $changed;
 }
 
-sub Dump { return Dump1(@_); }
-  
-# Dump1 is like Dump but assumes the callers frame is up one level
+# Dump1 is like Dump except:
+#   1. The user's frame is up one level.
+#   2. The immediate caller is in package DB
+# For dvis etc., this is called from the interpolation code in package DB
+# For user-called Dump(), this is called via a thunk in package DB
 sub Dump1 {
   local $_;
   _first_time_init() unless defined $Vis::original_qquote;
 
-  my $self = shift;
-  $self = $self->new(@_) unless ref $self; # mimic Data::Dumper::Dump(...)
+  my $self = $_[0];
 
-  if (! ref $self) {
-    $self = $self->new(@_[1..$#_]);
-  } else {
-    goto &DB::DB_Vis_Dump if ($self->{VisType}//"") =~ /[sd]/;
+  #print "##Dump1 caller(0)=",Vis::debugavis((caller(0))[0,1,2])," VT=",Vis::debugvis($self->{VisType}),"\n";
+  #print "##Dump1 caller(1)=",Vis::debugavis((caller(1))[0,1,2])," VT=",Vis::debugvis($self->{VisType}),"\n";
+
+  if (($self->{VisType}//"") =~ /^[sd]/) {
+    @_ = ($_[0]); goto &DB::DB_Vis_Interpolate;
   }
 
   my ($debug, $maxwidth, $maxstringwidth) 
     = @$self{qw/VisDebug Maxwidth MaxStringwidth/};
 
-  if (($maxstringwidth//0) > 0) {
-    # This could be more efficient if we were willing to reach directly
-    # into Data::Dumper's internals and edit the data without copying
-    my @todump = $self->Values; 
-    if ($self->trunc_strings(\@todump)) {
-      $self->Values( \@todump );
-    }
-  }
+  my $cloned;
 
   my $useqq = $self->Useqq();
   $self->Useperl(1) if $useqq eq 'utf8' && $Vis::Useperl_for_utf8;
@@ -620,12 +636,21 @@ sub Dump1 {
   if (@$stringify > 0 && $stringify->[0] ne "") {
     require Clone;
     my @values = map{ Clone::clone($_) } $self->Values;
+    $cloned = 1;
     my $changed = 0;
     foreach (@values) {
       my %seen;
       $changed=1 if _try_stringify($_, $stringify, \%seen);
     }
     $self->Values(\@values) if $changed;
+  }
+
+  if (($maxstringwidth//0) > 0) {
+    require Clone;
+    my @todump = $cloned ? ($self->Values) : (map{ Clone::clone($_) } $self->Values);
+    if ($self->trunc_strings(\@todump)) {
+      $self->Values( \@todump );
+    }
   }
 
   $_ //= $self->SUPER::Dump;
@@ -870,18 +895,7 @@ sub SaveAndResetPunct {
 
 package DB;
 
-# Interface functions, entered by goto from trampolines called by the user
-#sub DB_Vis_svis(@)  { DB_Vis_Interpolate(Vis->snew(@_)); }
-#sub DB_Vis_dvis(@)  { DB_Vis_Interpolate(Vis->dnew(@_)); }
-#sub DB_Vis_svisq(@) { DB_Vis_Interpolate(Vis->snew(@_)->Useqq(0)); }
-#sub DB_Vis_dvisq(@) { DB_Vis_Interpolate(Vis->dnew(@_)->Useqq(0)); }
-#sub DB_Vis_Dump     { DB_Vis_Interpolate($_[0]); }
-
-sub DB_Vis_svis(@)  { @_ = (Vis->snew(@_)); goto &DB_Vis_Interpolate; }
-sub DB_Vis_dvis(@)  { @_ = (Vis->dnew(@_)); goto &DB_Vis_Interpolate; }
-sub DB_Vis_svisq(@) { @_ = (Vis->snew(@_)->Useqq(0)); goto &DB_Vis_Interpolate; }
-sub DB_Vis_dvisq(@) { @_ = (Vis->dnew(@_)->Useqq(0)); goto &DB_Vis_Interpolate; }
-sub DB_Vis_Dump     { @_ = ($_[0]); goto &DB_Vis_Interpolate; }
+sub DB_Vis_Dump     { return Vis::Dump1(@_) }
 
 # Interpolate strings for svis and dvis.   This must be in package
 # DB and the closest scope not in package DB must be the user's context.
@@ -900,8 +914,11 @@ sub DB_Vis_Interpolate {
 
   local $Vis::error_prefix = "$self->{VisType}vis: "; # see Vis_Eval
 
+  #print "##DB_Vis_Interpolate caller=",Vis::debugavis(caller)," VT=",Vis::debugvis($self->{VisType}),"\n";
+
   # NOTE: These may or may not use capture groups internally, so capture
   # groups must NOT be opened after the first point of use in a regexp!
+  # TODO: Rewrite using named capture groups
   
   state $interior_re = qr/${balanced_or_safe_re}/;
 
@@ -1030,7 +1047,8 @@ sub DB_Vis_Interpolate {
       }
       else { die "bug" }
 
-      my $s = $self->Dump1;
+      my $s = $self->Dump1;  # <<<<<<<<<<<<<<<<<<<<<<<<<<<<
+
       #print "### Dump result:\n«$s»\n";
       substr($s, 0, length($autopad)) = $varlabel;
       $result .= $s;
@@ -1401,6 +1419,14 @@ select STDERR; $|=1; select STDOUT; $|=1;
 use Scalar::Util qw(blessed reftype);
 use Carp;
 use English qw( -no_match_vars );;
+use Data::Compare qw(Compare);
+
+# This script was written before the author knew anything about standard Perl
+# test-harness tools.  Perhaps someday it will be wholly rewritten.
+# Meanwhile, some baby steps...
+use Test::More;
+use Test::Deep qw(cmp_deeply);
+
 #use lib "$ENV{HOME}/lib/perl";
 
 my $unicode_str;
@@ -1443,6 +1469,36 @@ print "Loaded ", $INC{"Vis.pm"}, " _qquote_wrapper=", \&Vis::_qquote_wrapper, "\
 eval '$[' // die;
 
 sub tf($) { $_[0] ? "true" : "false" }
+
+sub timed_run(&$@) {
+  my ($code, $maxcpusecs, @codeargs) = @_;
+  use Time::HiRes qw(clock);
+  my $startclock = clock();
+  my (@result, $result);
+  if (wantarray) {@result = &$code(@codeargs)} else {$result = &$code(@codeargs)};
+  my $cpusecs = clock() - $startclock;
+  confess "TOOK TOO LONG ($cpusecs CPU seconds vs. limit of $maxcpusecs)\n" 
+    if $cpusecs > $maxcpusecs;
+  if (wantarray) {return @result} else {return $result};
+}
+
+sub check($$@) {
+  my ($code, $expected_arg, @actual) = @_;
+  confess "BUG(EVAL ERR): $@" if $@;
+  my @expected = ref($expected_arg) ? @$expected_arg : ($expected_arg);
+  $actual[0] //= 'undef';
+  confess "\nTEST FAILED: $code\n"
+         ."Expected ".(@expected)." results, but got ".(@actual).":\n"
+         ."(@actual)\n"
+    if @expected != @actual;
+  foreach my $actual (@actual) {
+    my $expected = shift @expected;
+    confess "\nTEST FAILED: $code\n"
+           ."Expected:\n${expected}«end»\n"
+           ."Got:\n${actual}«end»\n"
+      unless $actual eq $expected;
+  }
+}
 
 # ---------- Check stuff other than formatting or interpolation --------
 
@@ -1512,6 +1568,13 @@ if (! ref Vis->new([1])->Useqq(undef)) {
   $undef_as_false = 0;
 }
 
+# Basic test of OO interfaces
+{ my $code="Vis->vnew('foo')->Dump;"; check $code, '"foo"',   eval $code }
+{ my $code="Vis->anew('foo')->Dump;"; check $code, '("foo")', eval $code }
+{ my $code="Vis->hnew(k=>'v')->Dump;"; check $code,'(k => "v")',eval $code}
+{ my $code="Vis->dnew('foo')->Dump;"; check $code, 'foo',     eval $code }
+{ my $code="Vis->snew('foo')->Dump;"; check $code, 'foo',     eval $code }
+
 foreach ( 
           ['Maxwidth',0,1,80,9999],
           ['MaxStringwidth',undef,0,1,80,9999],
@@ -1528,10 +1591,10 @@ foreach (
   my ($name, @values) = @$_;
   my $testval = [123];
   foreach my $value (@values) {
-    foreach my $ctor (qw(vnew anew snew dnew)) {
+    foreach my $ctor (qw(vnew anew snew dnew hnew)) {
       {
         my $v = eval "{ local \$Vis::$name = \$value;
-                        Vis->\$ctor([\"test \$testval\"])->$name();
+                        Vis->\$ctor('k',[\"test \$testval\"])->$name();
                       }";
         die "bug:$@ " if $@;
         die "\$Vis::$name value is not preserved by Vis->$ctor\n",
@@ -1539,7 +1602,7 @@ foreach (
          unless (! defined $v and ! defined $value) || ($v eq $value);
       }
       {
-        my $v = eval "{ Vis->\$ctor([\"test \$testval\"])->$name(\$value)->$name() }";
+        my $v = eval "{ Vis->\$ctor('k',[\"test \$testval\"])->$name(\$value)->$name() }";
         die "bug:$@ " if $@;
         die "Vis::$name(v) does not set it's value!\n",
             "(called $name(",u($value),") but $name() returned ",u($v),")\n"
@@ -1550,36 +1613,6 @@ foreach (
 }
 
 # ---------- Check formatting or interpolation --------
-
-sub timed_run(&$@) {
-  my ($code, $maxcpusecs, @codeargs) = @_;
-  use Time::HiRes qw(clock);
-  my $startclock = clock();
-  my (@result, $result);
-  if (wantarray) {@result = &$code(@codeargs)} else {$result = &$code(@codeargs)};
-  my $cpusecs = clock() - $startclock;
-  confess "TOOK TOO LONG ($cpusecs CPU seconds vs. limit of $maxcpusecs)\n" 
-    if $cpusecs > $maxcpusecs;
-  if (wantarray) {return @result} else {return $result};
-}
-
-sub check($$@) {
-  my ($code, $expected_arg, @actual) = @_;
-  confess "BUG(EVAL ERR): $@" if $@;
-  my @expected = ref($expected_arg) ? @$expected_arg : ($expected_arg);
-  $actual[0] //= 'undef';
-  confess "\nTEST FAILED: $code\n"
-         ."Expected ".(@expected)." results, but got ".(@actual).":\n"
-         ."(@actual)\n"
-    if @expected != @actual;
-  foreach my $actual (@actual) {
-    my $expected = shift @expected;
-    confess "\nTEST FAILED: $code\n"
-           ."Expected:\n${expected}«end»\n"
-           ."Got:\n${actual}«end»\n"
-      unless $actual eq $expected;
-  }
-}
 
 sub MyClass::meth {
   my $self = shift;
@@ -1761,7 +1794,7 @@ $_ = "GroupA.GroupB";
   my $biginum = '9988776000000000000222000000000899887766';
   my $bigi = Math::BigInt->new($biginum);
   die unless blessed($bigi) =~ /^Math::BigInt/;
-  my $bigiqq = "'$biginum'";
+  my $bigiq  = "'$biginum'";
   my $bigiqq = "\"$biginum\"";
 
   { local $Vis::Stringify = [qr/^Math::BigFloat/];
@@ -1784,18 +1817,20 @@ $_ = "GroupA.GroupB";
   }
 }
 
-# Check string truncation
-{ local $Vis::MaxStringwidth = 3;
-  { my $code = 'vis("abcde")'; check $code, "\"abc...\"", eval $code; }
-  { my $code = 'vis(["abcDE","xyzAB"])'; check $code, "[\"abc...\",\"xyz...\"]", eval $code; }
-  { my $code = 'vis(["abcDE", ["xyzAB", {longkey => "fghI"}, ]])'; 
-       check $code, '["abc...",["xyz...",{longkey => "fgh..."}]]', eval $code; }
-  local $Vis::Truncsuffix = "(trunc)";
-  { my $code = 'vis("abcde")'; check $code, "\"abc(trunc)\"", eval $code; }
-  foreach my $MSw (-1, 0, undef) {
+# Check string truncation, and that the original data is not modified in-place
+{ my $orig_str  = '["abcDEFG",["xyzABCD",{longkey => "fghIJKL"}]]';
+  my $check_data = eval $orig_str; die "bug" if $@;
+  my $orig_data  = eval $orig_str; die "bug" if $@;
+  foreach my $MSw (1..9) {
+    # hand-truncate to create "expected result" data
+    (my $exp_str = $orig_str) =~ s/\b([a-zA-Z]{$MSw})([a-zA-Z]*)/
+                                    $1 . (length($2) > 3 && $1.$2 ne "longkey"
+                                           ? "..." : $2)
+                                  /seg;
     local $Vis::MaxStringwidth = $MSw;
-    { my $code = 'vis(["abcDE", ["xyzAB", {longkey => "fghI"}, ]])'; 
-         check $code, '["abcDE",["xyzAB",{longkey => "fghI"}]]', eval $code; }
+    check "with MaxStringwidth=$MSw", $exp_str, eval 'vis($orig_data)';
+    die "MaxStringwidth=$MSw : Original data corrupted"
+      unless Compare($orig_data, $check_data);
   }
 }
 
@@ -2038,30 +2073,37 @@ EOF
         if $@ or ! defined $ev;
     }
 
-    my $actual;
-    { # Verify that special vars are preserved and don't affect Vis
-      # (except if testing a punctuation var, then don't change it's value)
-
-      my @fake = (do {$dvis_input =~ /\$(?: [\@!,\/\\] | \^[EW] )/x})
-                    ? ($@, $!, $^E, $,, $/, $\, $^W)
-                    : ('FakeAt', 111, 111, 'Fake,', 'Fake/', 'FakeBS\\', 333);
-      my @nfake;
-      { local ($@, $!, $^E, $,, $/, $\, $^W) = @fake;
-        $actual = dvis $dvis_input; ### HERE IT IS ###
-        @nfake = ($@, $!, $^E, $,, $/, $\, $^W);
+    for my $use_oo (0,1) {
+      my $actual;
+      { # Verify that special vars are preserved and don't affect Vis
+        # (except if testing a punctuation var, then don't change it's value)
+  
+        my @fake = (do {$dvis_input =~ /\$(?: [\@!,\/\\] | \^[EW] )/x})
+                      ? ($@, $!, $^E, $,, $/, $\, $^W)
+                      : ('FakeAt', 111, 111, 'Fake,', 'Fake/', 'FakeBS\\', 333);
+        my @nfake;
+        { local ($@, $!, $^E, $,, $/, $\, $^W) = @fake;
+  
+          $actual = $use_oo
+                      ? Vis->dnew($dvis_input)->Dump   # <<<<<<<<<<<<<<< HERE
+                      : dvis($dvis_input);
+  
+          @nfake = ($@, $!, $^E, $,, $/, $\, $^W);
+        }
+        for my $i (0..5) {
+          no warnings;
+          my $varname = (qw($@ $! $^E $, $/ $\ $^W))[$i];
+          # was warn...
+          die "ERROR: $varname was not preserved (expected $fake[$i], got $nfake[$i])\n"
+            unless ($fake[$i] =~ /^\d/ ? ($fake[$i]==$nfake[$i]) : ($fake[$i] eq $nfake[$i]));
+        }
       }
-      for my $i (0..5) {
-        no warnings;
-        my $varname = (qw($@ $! $^E $, $/ $\ $^W))[$i];
-        # was warn...
-        die "ERROR: $varname was not preserved (expected $fake[$i], got $nfake[$i])\n"
-          unless ($fake[$i] =~ /^\d/ ? ($fake[$i]==$nfake[$i]) : ($fake[$i] eq $nfake[$i]));
+      unless ($expected eq $actual) {
+        confess "\ndvis (oo=$use_oo) test failed: input «",
+                show_white($dvis_input),"»\n",
+                "Expected:\n",show_white($expected),"«end»\n",
+                "Got:\n",show_white($actual),"«end»\n"
       }
-    }
-    unless ($expected eq $actual) {
-      confess "\ndvis test failed: input «",show_white($dvis_input),"»\n"
-           ."Expected:\n",show_white($expected),"«end»\n"
-           ."Got:\n",show_white($actual),"«end»\n"
     }
 
     # Check Useqq 
