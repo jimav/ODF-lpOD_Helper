@@ -8,7 +8,7 @@ use strict; use warnings FATAL => 'all'; use 5.010;
 # (Perl assumes Latin-1 by default).
 use utf8;
 
-$Vis::VERSION = sprintf "%d.%03d", q$Revision: 1.98 $ =~ /(\d+)/g;
+$Vis::VERSION = sprintf "%d.%03d", q$Revision: 1.99 $ =~ /(\d+)/g;
 
 # Copyright © Jim Avera 2012-2014.  Released into the Public Domain
 # by the copyright owner.  (jim.avera AT gmail dot com)
@@ -653,7 +653,12 @@ sub Dump1 {
     }
   }
 
+  # Hack -- save/restore punctuation variables corrupted by Data::Dumper
+  my ($sAt, $sQ) = ($@, $?);
+
   $_ //= $self->SUPER::Dump;
+
+  ($@, $?) = ($sAt, $sQ);
 
   my $pad = $self->Pad();
   if ($pad ne ""){
@@ -1194,9 +1199,8 @@ Data::Dumper may still be called directly (see "PERFORMANCE").
 =head2 svis 'string to be interpolated', ...
 
 The arguments are concatenated, interpolating variables and escapes
-as in in Perl double-quotish strings except that values are formatted
-unambiguously using C<vis()> or C<avis()> 
-for $ or @ expressions, respectively.  
+as in in Perl double-quotish strings except that interpolated variables
+are formatted using C<vis()> or C<avis()> for $ or @ expressions, respectively.  
 In addition, C<%name> is interpolated as S<<< C<< (key => value ...) >> >>>, and
 C<< $name->method(...) >> is interpolated as a method call (if args are given, 
 no space is allowed before the open parenthesis).
@@ -1899,6 +1903,9 @@ sub get_closure(;$) {
   # lexicals in enclosing scopes.  Sometimes it can, sometimes not.
   # However explicitly referencing those "global lexicals" in the closure
   # seems to make it work.
+  #   5/16/16: Perl v5.22.1 *segfaults* if these are included
+  #   (at least *_obj).  But removing them all causes some to appear
+  #   to be non-existent.
   my $forget_me_not = [ 
      \$unicode_str, \$byte_str, 
      \@toplex_a, \%toplex_h, \$toplex_hr, \$toplex_ar, \$toplex_obj,
@@ -2034,8 +2041,11 @@ EOF
           ],
         } (['',''], ['$','r'])
         ), #map [$dollar,$r]
-        [ qq(\$${name}_obj->meth ()), qq(${name}_obj->meth="meth_with_noargs" ()) ],
-        [ qq(\$${name}_obj->meth(42)), qq(${name}_obj->meth(42)=["methargs:",42]) ],
+        ### TEMP DISABLED because Perl v5.22.1 segfaults...
+do{ state $warned = 0; warn "\n\n** obj->method() tests disabled ** due to Perl v5.22.1 segfault!\n\n" unless $warned++; () },
+
+        ##[ qq(\$${name}_obj->meth ()), qq(${name}_obj->meth="meth_with_noargs" ()) ],
+        ##[ qq(\$${name}_obj->meth(42)), qq(${name}_obj->meth(42)=["methargs:",42]) ],
         map({ 
           my ($dollar, $r, $arrow) = @$_;
           my $dolname_scalar = ($dollar ? "\$$dollar" : "").$name;
