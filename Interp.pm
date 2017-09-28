@@ -8,7 +8,7 @@ use strict; use warnings FATAL => 'all'; use 5.010;
 # (Perl assumes Latin-1 by default).
 use utf8;
 
-$Vis::VERSION = sprintf "%d.%03d", q$Revision: 1.100 $ =~ /(\d+)/g;
+$Vis::VERSION = sprintf "%d.%03d", q$Revision: 1.101 $ =~ /(\d+)/g;
 
 # Copyright © Jim Avera 2012-2014.  Released into the Public Domain
 # by the copyright owner.  (jim.avera AT gmail dot com)
@@ -461,7 +461,17 @@ sub Stringify {
   @_ >= 2 ? (($s->{Stringify} = $v), return $s) : $s->{Stringify};
 }
 
-my $qstr_re = qr{ " (?: [^"\\]++ | (?:\\.)++ )*+ " | ' (?: [^'\\]++ | (?:\\.)++ )*+ ' }x;
+# perl v5.24.1 gives "regular subexpression recursion limit (32766) exceeded"
+# for very large quoted strings with many \escapes (e.g. binary blobs).
+# This occurs even if (?> ) or the greedy *+ is used; I don't understand
+# why any recursion is needed for (A|B)*+ because backtracking inside of
+# the matched sequence can never occur.  But anyway perl has this limit.
+# To work around, use multiple nested groupings:
+#my $qstr_re = qr{ " (?: [^"\\]++ | (?:\\.)++ )*+ " | ' (?: [^'\\]++ | (?:\\.)++ )*+ ' }x;
+my $qstr_re= qr{ " (?> (?> (?> [^"\\]++ | (?>\\.)* ){0,32760} ){0,32760} )* " 
+                 |
+                 ' (?> (?> (?> [^'\\]++ | (?>\\.)* ){0,32760} ){0,32760} )* ' 
+               }x;
 
 # Match one balanced block (NOTE: Uses one capture group)
 my $balanced_re = qr{
@@ -827,8 +837,8 @@ sub Dump1 {
   if ($self->{VisType}) {
     s/\s+\z//s;  # omit final newline except when emulating Data::Dumper
     if ($self->{VisType} eq 'a') {
-      s/^( *)[\[{]/$1\(/ or confess "bug($_)"; # convert to "(list,of,args)"
-      s/[\]}]$/\)/ or confess "bug($_)";
+      s/^( *)[\[{]/$1\(/ or confess "bug1($_)"; # convert to "(list,of,args)"
+      s/[\]}]$/\)/ or confess "bug2($_)";
     }
   }
 
