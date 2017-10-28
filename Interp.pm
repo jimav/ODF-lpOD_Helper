@@ -8,7 +8,7 @@ use strict; use warnings FATAL => 'all'; use 5.010;
 # (Perl assumes Latin-1 by default).
 use utf8;
 
-$Vis::VERSION = sprintf "%d.%03d", q$Revision: 1.101 $ =~ /(\d+)/g;
+$Vis::VERSION = sprintf "%d.%03d", q$Revision: 1.102 $ =~ /(\d+)/g;
 
 # Copyright © Jim Avera 2012-2014.  Released into the Public Domain
 # by the copyright owner.  (jim.avera AT gmail dot com)
@@ -605,82 +605,8 @@ sub _try_stringify($$$) {
   $changed;
 }
 
-# Dump1 is like Dump except:
-#   1. The user's frame is up one level.
-#   2. The immediate caller is in package DB
-# For dvis etc., this is called from the interpolation code in package DB
-# For user-called Dump(), this is called via a thunk in package DB
-sub Dump1 {
-  local $_;
-  _first_time_init() unless defined $Vis::original_qquote;
-
-  my $self = $_[0];
-
-  #print "##Dump1 caller(0)=",Vis::debugavis((caller(0))[0,1,2])," VT=",Vis::debugvis($self->{VisType}),"\n";
-  #print "##Dump1 caller(1)=",Vis::debugavis((caller(1))[0,1,2])," VT=",Vis::debugvis($self->{VisType}),"\n";
-
-  if (($self->{VisType}//"") =~ /^[sd]/) {
-    @_ = ($_[0]); goto &DB::DB_Vis_Interpolate;
-  }
-
-  my ($debug, $maxwidth, $maxstringwidth) 
-    = @$self{qw/VisDebug Maxwidth MaxStringwidth/};
-
-  my $cloned;
-
-  my $useqq = $self->Useqq();
-  $self->Useperl(1) if $useqq eq 'utf8' && $Vis::Useperl_for_utf8;
-
-  my $stringify = $self->Stringify();
-  if (! defined $stringify) {
-    $stringify = [];
-    # N.B. Trampolines arrange to interpose exactly one level, so 
-    # caller(1) is always the user's context
-    if (my $hinthash = (caller(1))[10]) {
-      if (any {/^big/} keys %$hinthash) {
-         push @$stringify, qr/^Math::Big/;
-      }
-    }
-  }
-  $stringify = [$stringify] unless ref($stringify) eq 'ARRAY';
-  if (@$stringify > 0 && $stringify->[0] ne "") {
-    require Clone;
-    my @values = map{ Clone::clone($_) } $self->Values;
-    $cloned = 1;
-    my $changed = 0;
-    foreach (@values) {
-      my %seen;
-      $changed=1 if _try_stringify($_, $stringify, \%seen);
-    }
-    $self->Values(\@values) if $changed;
-  }
-
-  if (($maxstringwidth//0) > 0) {
-    require Clone;
-    my @todump = $cloned ? ($self->Values) : (map{ Clone::clone($_) } $self->Values);
-    if ($self->trunc_strings(\@todump)) {
-      $self->Values( \@todump );
-    }
-  }
-
-  # Hack -- save/restore punctuation variables corrupted by Data::Dumper
-  my ($sAt, $sQ) = ($@, $?);
-
-  $_ //= $self->SUPER::Dump;
-
-  ($@, $?) = ($sAt, $sQ);
-
-  my $pad = $self->Pad();
-  if ($pad ne ""){
-    s/^\Q${pad}\E//mg; # will be put back later
-    $maxwidth -= length($pad);
-    if ($maxwidth < 20) {
-      #state $warned;
-      #$warned=1, warn "Warning: Pad is too wide, Vis may exceed Maxwidth\n"
-      #  if (! $warned);
-      $maxwidth = $self->{Maxwidth};
-    }
-  }
+sub _reformat_dumper_output {
+  my ($self, $maxwidth, $debug, $useqq) = @_;
 
   print "===== RAW =====\n${_}---------------\n" if $debug;
   
@@ -833,6 +759,94 @@ sub Dump1 {
   unshift @lines, "VIS ERROR:$@" if $@; # show the error, but keep the Data::Dumper output
 
   $_ = join "", @lines;
+}
+
+# Dump1 is like Dump except:
+#   1. The user's frame is up one level.
+#   2. The immediate caller is in package DB
+# For dvis etc., this is called from the interpolation code in package DB
+# For user-called Dump(), this is called via a thunk in package DB
+sub Dump1 {
+  local $_;
+  _first_time_init() unless defined $Vis::original_qquote;
+
+  my $self = $_[0];
+
+  #print "##Dump1 caller(0)=",Vis::debugavis((caller(0))[0,1,2])," VT=",Vis::debugvis($self->{VisType}),"\n";
+  #print "##Dump1 caller(1)=",Vis::debugavis((caller(1))[0,1,2])," VT=",Vis::debugvis($self->{VisType}),"\n";
+
+  if (($self->{VisType}//"") =~ /^[sd]/) {
+    @_ = ($_[0]); goto &DB::DB_Vis_Interpolate;
+  }
+
+  my ($debug, $maxwidth, $maxstringwidth) 
+    = @$self{qw/VisDebug Maxwidth MaxStringwidth/};
+
+  my $cloned;
+
+  my $useqq = $self->Useqq();
+  $self->Useperl(1) if $useqq eq 'utf8' && $Vis::Useperl_for_utf8;
+
+  my $stringify = $self->Stringify();
+  if (! defined $stringify) {
+    $stringify = [];
+    # N.B. Trampolines arrange to interpose exactly one level, so 
+    # caller(1) is always the user's context
+    if (my $hinthash = (caller(1))[10]) {
+      if (any {/^big/} keys %$hinthash) {
+         push @$stringify, qr/^Math::Big/;
+      }
+    }
+  }
+  $stringify = [$stringify] unless ref($stringify) eq 'ARRAY';
+  if (@$stringify > 0 && $stringify->[0] ne "") {
+    require Clone;
+    my @values = map{ Clone::clone($_) } $self->Values;
+    $cloned = 1;
+    my $changed = 0;
+    foreach (@values) {
+      my %seen;
+      $changed=1 if _try_stringify($_, $stringify, \%seen);
+    }
+    $self->Values(\@values) if $changed;
+  }
+
+  if (($maxstringwidth//0) > 0) {
+    require Clone;
+    my @todump = $cloned ? ($self->Values) : (map{ Clone::clone($_) } $self->Values);
+    if ($self->trunc_strings(\@todump)) {
+      $self->Values( \@todump );
+    }
+  }
+
+  # Data::Dumper objects can only be used once, so this is ok...
+  $self->Indent(0) if $maxwidth==0;
+
+  # Hack -- save/restore punctuation variables corrupted by Data::Dumper
+  my ($sAt, $sQ) = ($@, $?);
+
+  $_ //= $self->SUPER::Dump;
+
+  ($@, $?) = ($sAt, $sQ);
+
+  my $pad = $self->Pad();
+  if ($pad ne ""){
+    s/^\Q${pad}\E//mg; # will be put back later
+    if ($maxwidth > 0) {
+      $maxwidth -= length($pad);
+      if ($maxwidth < 20) {
+        #state $warned;
+        #$warned=1, warn "Warning: Pad is too wide, Vis may exceed Maxwidth\n"
+        #  if (! $warned);
+        $maxwidth = $self->{Maxwidth};
+      }
+    }
+  }
+
+  if ($maxwidth > 0) {
+    $self->_reformat_dumper_output($maxwidth, $debug, $useqq);
+  }
+  # else: one long line, produced by Indent(0) above;
 
   if ($self->{VisType}) {
     s/\s+\z//s;  # omit final newline except when emulating Data::Dumper
