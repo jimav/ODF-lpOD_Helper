@@ -8,7 +8,7 @@ use strict; use warnings FATAL => 'all'; use 5.010;
 # (Perl assumes Latin-1 by default).
 use utf8;
 
-$Vis::VERSION = sprintf "%d.%03d", q$Revision: 1.102 $ =~ /(\d+)/g;
+$Vis::VERSION = sprintf "%d.%03d", q$Revision: 1.103 $ =~ /(\d+)/g;
 
 # Copyright © Jim Avera 2012-2014.  Released into the Public Domain
 # by the copyright owner.  (jim.avera AT gmail dot com)
@@ -228,9 +228,9 @@ sub debugavis(@) {  # for our internal debug messages
 }
 
 use Exporter 'import';
-our @EXPORT    = qw(vis  avis  hvis svis  dvis
-                    visq avisq svisq dvisq u
-                    qsh forceqsh qshpath);
+our @EXPORT    = qw(vis  avis  lvis  svis  dvis  hvis
+                    visq avisq lvisq svisq dvisq hvisq
+                    u qsh forceqsh qshpath);
                     #Dumper
 our @EXPORT_OK = qw($Maxwidth $MaxStringwidth $Truncsuffix $Debug 
                     $Useqq $Quotekeys $Sortkeys 
@@ -269,6 +269,8 @@ sub vis(;$)   { return __PACKAGE__->vnew(@_)->Dump1; }
 sub visq($)   { return __PACKAGE__->vnew(@_)->Useqq(0)->Dump1; }
 sub avis(@)   { return __PACKAGE__->anew(@_)->Dump1; }
 sub avisq(@)  { return __PACKAGE__->anew(@_)->Useqq(0)->Dump1; }
+sub lvis(@)   { return __PACKAGE__->lnew(@_)->Dump1; }
+sub lvisq(@)  { return __PACKAGE__->lnew(@_)->Useqq(0)->Dump1; }
 sub hvis(@)   { return __PACKAGE__->hnew(@_)->Dump; }
 sub hvisq(@)  { return __PACKAGE__->hnew(@_)->Useqq(0)->Dump1; }
 
@@ -396,6 +398,12 @@ sub anew {
   my $class = shift;
   my $obj = (bless($class->SUPER::new([\@_]), $class))->_config_defaults();
   $obj->{VisType} = 'a';
+  $obj;
+}
+sub lnew {
+  my $class = shift;
+  my $obj = (bless($class->SUPER::new([\@_]), $class))->_config_defaults();
+  $obj->{VisType} = 'l';
   $obj;
 }
 sub hnew {
@@ -853,6 +861,10 @@ sub Dump1 {
     if ($self->{VisType} eq 'a') {
       s/^( *)[\[{]/$1\(/ or confess "bug1($_)"; # convert to "(list,of,args)"
       s/[\]}]$/\)/ or confess "bug2($_)";
+    }
+    elsif ($self->{VisType} eq 'l') {
+      s/^( *)[\[{]/$1/ or confess "bug3($_)"; # convert to "bare,list,of,items"
+      s/[\]}]$// or confess "bug4($_)";
     }
   }
 
