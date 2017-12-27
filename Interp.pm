@@ -8,7 +8,7 @@ use strict; use warnings FATAL => 'all'; use 5.010;
 # (Perl assumes Latin-1 by default).
 use utf8;
 
-$Vis::VERSION = sprintf "%d.%03d", q$Revision: 1.104 $ =~ /(\d+)/g;
+$Vis::VERSION = sprintf "%d.%03d", q$Revision: 1.105 $ =~ /(\d+)/g;
 
 # Copyright © Jim Avera 2012-2014.  Released into the Public Domain
 # by the copyright owner.  (jim.avera AT gmail dot com)
@@ -39,7 +39,7 @@ sub Vis_Eval {   # Many ideas here were stolen from perl5db.pl
   # has arguments.  This will be the very next frame (i.e. frame 2)
   # unless the user was called using "&subname;".
   # (caller() leaves the args in @DB::args)
-  for ($Vis::DistToArgs = 2; ; $Vis::DistToArgs++) {
+  for ($Vis::DistToArgs = 2 ; ; $Vis::DistToArgs++) {
     my ($pkg,undef,undef,undef,$hasargs) = caller $Vis::DistToArgs;
     if (! $pkg) {
       undef $Vis::DistToArgs;
@@ -55,10 +55,6 @@ sub Vis_Eval {   # Many ideas here were stolen from perl5db.pl
 
   # At this point, nothing is in scope except the name of this sub
   # and the simulated @_
-
-  #OLD:
-  #@Vis::result = eval '($@, $!, $^E, $,, $/, $\, $^W) = @Vis::saved;'
-  #                   ."package $Vis::pkg; $Vis::evalarg ";
 
   # The LHS of this assignment has to be inside the eval to catch die 
   # from tied variable handlers.
