@@ -8,7 +8,7 @@ use strict; use warnings FATAL => 'all'; use 5.010;
 # (Perl assumes Latin-1 by default).
 use utf8;
 
-$Vis::VERSION = sprintf "%d.%03d", q$Revision: 1.105 $ =~ /(\d+)/g;
+$Vis::VERSION = sprintf "%d.%03d", q$Revision: 1.106 $ =~ /(\d+)/g;
 
 # Copyright © Jim Avera 2012-2014.  Released into the Public Domain
 # by the copyright owner.  (jim.avera AT gmail dot com)
@@ -579,10 +579,10 @@ sub _try_stringify($$$) {
   if (my $class = blessed($item)) {
     foreach my $mod (@$stringify) {
       next if $mod eq "";
-      if (ref($mod) ? $class =~ /$mod/ : $class eq $mod) {
+      if (ref($mod) eq "Regexp" ? $class =~ /$mod/ : $class eq $mod) {
         # Allow this object to stringify itself.  The result is an
         # unfortunately-always-quoted string
-        $_[0] .= "";
+        $_[0] = "".$_[0];
         return 1;
       }
     }
@@ -609,6 +609,7 @@ sub _try_stringify($$$) {
   $changed;
 }
 
+# Reformat Data::Dumper::Dump output in $_
 sub _reformat_dumper_output {
   my ($self, $maxwidth, $debug, $useqq) = @_;
 
@@ -626,10 +627,12 @@ sub _reformat_dumper_output {
   my $startpos = 0;
   while ($startpos != $limit) {
     if ($useqq) {
+      ### FIXME: TODO: BUG HERE:  
       #while (/\G"(?:[^"\\]++|\\.)*+"/gsc || /\G[^"\n]+/gsc) {}
       # Ack!  Perl implements (...)* using recursion even when partial
       # backtracking is not possible, and there is a 64K recursion limit.
       # Benchmarking shows that ~200 is the sweet spot.
+      ###warn "### AAA: «$_»\n";
       while (
         (/\G"/cgs && do{ while(/\G(?:[^"\\]++|\\.){0,200}+/cgs){} /\G"/cgs })
         || 
@@ -643,6 +646,7 @@ sub _reformat_dumper_output {
         /\Gs/gsc         # eat an 's' which was not "sub..."
       ) {}
     } else {
+      #warn "### BBB: «$_»\n";
       #while (/\G'(?:[^'\\]++|\\['\\])*+'/gsc || /\G[^'\n]+/gsc) {}
       while (
         (/\G'/cgs 
@@ -650,7 +654,7 @@ sub _reformat_dumper_output {
         || /\G[^'\n]+/gsc
       ) {}
     }
-    /\G\n/gsc or die "oops";
+    /\G\n/gsc or die "oops:".debugvis(substr($_,pos));
     push @lines, substr($_, $startpos, pos()-$startpos);
     $startpos = pos();
   }
@@ -780,7 +784,8 @@ sub Dump1 {
   #print "##Dump1 caller(1)=",Vis::debugavis((caller(1))[0,1,2])," VT=",Vis::debugvis($self->{VisType}),"\n";
 
   if (($self->{VisType}//"") =~ /^[sd]/) {
-    @_ = ($_[0]); goto &DB::DB_Vis_Interpolate;
+    @_ = ($_[0]); 
+    goto &DB::DB_Vis_Interpolate;
   }
 
   my ($debug, $maxwidth, $maxstringwidth) 
@@ -807,9 +812,9 @@ sub Dump1 {
     require Clone;
     my @values = map{ Clone::clone($_) } $self->Values;
     $cloned = 1;
+    my %seen;
     my $changed = 0;
     foreach (@values) {
-      my %seen;
       $changed=1 if _try_stringify($_, $stringify, \%seen);
     }
     $self->Values(\@values) if $changed;
