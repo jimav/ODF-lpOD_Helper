@@ -8,7 +8,7 @@ use strict; use warnings FATAL => 'all'; use 5.010;
 # (Perl assumes Latin-1 by default).
 use utf8;
 
-$Vis::VERSION = sprintf "%d.%03d", q$Revision: 1.106 $ =~ /(\d+)/g;
+$Vis::VERSION = sprintf "%d.%03d", q$Revision: 1.107 $ =~ /(\d+)/g;
 
 # Copyright © Jim Avera 2012-2014.  Released into the Public Domain
 # by the copyright owner.  (jim.avera AT gmail dot com)
@@ -612,7 +612,6 @@ sub _try_stringify($$$) {
 # Reformat Data::Dumper::Dump output in $_
 sub _reformat_dumper_output {
   my ($self, $maxwidth, $debug, $useqq) = @_;
-
   print "===== RAW =====\n${_}---------------\n" if $debug;
   
   #return $_ if $maxwidth == 0; # no condensation
