@@ -8,7 +8,7 @@ use strict; use warnings FATAL => 'all'; use 5.010;
 # (Perl assumes Latin-1 by default).
 use utf8;
 
-$Vis::VERSION = sprintf "%d.%03d", q$Revision: 1.107 $ =~ /(\d+)/g;
+$Vis::VERSION = sprintf "%d.%03d", q$Revision: 1.108 $ =~ /(\d+)/g;
 
 # Copyright © Jim Avera 2012-2014.  Released into the Public Domain
 # by the copyright owner.  (jim.avera AT gmail dot com)
@@ -254,12 +254,10 @@ $Indent         = 1           unless defined $Indent;
 $Sparseseen     = 1           unless defined $Sparseseen;
 
 # Functional (non-oo) APIs
-sub u(@);
-sub u(@) { 
-  @_ == 0 ? u($_) :
-  @_ == 1 ? (defined($_[0]) ? $_[0] : "undef") :
-  wantarray ? (map { u($_) } @_) : croak("u(): Multiple args in scalar context")
-}
+#
+# N.B. u() used to take a list and return a list, but now only one scalar
+#sub u(@) { map{defined ? $_ : "undef"} (@_==0 ? ($_) : @_) }
+sub u(_) { defined($_[0]) ? $_[0] : "undef" }
 
 sub vis(_)    { return __PACKAGE__->vnew(@_)->Dump1; }
 sub visq(_)   { return __PACKAGE__->vnew(@_)->Useqq(0)->Dump1; }
