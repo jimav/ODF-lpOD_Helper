@@ -8,7 +8,7 @@ use strict; use warnings FATAL => 'all'; use 5.010;
 # (Perl assumes Latin-1 by default).
 use utf8;
 
-$Vis::VERSION = sprintf "%d.%03d", q$Revision: 1.108 $ =~ /(\d+)/g;
+$Vis::VERSION = sprintf "%d.%03d", q$Revision: 1.109 $ =~ /(\d+)/g;
 
 # Copyright © Jim Avera 2012-2014.  Released into the Public Domain
 # by the copyright owner.  (jim.avera AT gmail dot com)
@@ -899,7 +899,7 @@ sub qsh(_;@) {  # N.B. "_" prototype defaults to $_
   my @args = @_;  # needed in case $_ is being used
   my @results = map {
                   defined $_
-                    ? (/[^-\w_\/:\.,]/ || $_ eq "" || ref) ? forceqsh($_) : $_
+                    ? (/[^-=\w_\/:\.,]/ || $_ eq "" || ref) ? forceqsh($_) : $_
                     : "undef";
                 }
                 @args;
