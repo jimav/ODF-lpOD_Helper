@@ -8,7 +8,7 @@ use strict; use warnings FATAL => 'all'; use 5.010;
 # (Perl assumes Latin-1 by default).
 use utf8;
 
-$Vis::VERSION = sprintf "%d.%03d", q$Revision: 1.109 $ =~ /(\d+)/g;
+$Vis::VERSION = sprintf "%d.%03d", q$Revision: 1.110 $ =~ /(\d+)/g;
 
 # Copyright © Jim Avera 2012-2014.  Released into the Public Domain
 # by the copyright owner.  (jim.avera AT gmail dot com)
@@ -520,11 +520,13 @@ sub _debug_show($$$$$$) {
   print "=====================\n";
 }
 
-sub trunc_strings {
+sub trunc_strings { # returns true if anything changed
   my $self = shift;
   my $ret = 0;
   my $kind = ref($_[0]);
-  if ($kind eq "") { # scalar
+  if (! defined $_[0]) {
+  }
+  elsif ($kind eq "") { # defined scalar
     my $truncsuf = $self->{Truncsuffix};
     my $tslen = length($truncsuf);
     my $maxlen = $self->{MaxStringwidth};
@@ -600,7 +602,6 @@ sub _try_stringify($$$) {
       $changed=1 if _try_stringify($_, $stringify, $seen);
     }
     #while (my($k,$v) = each %$item) {
-    #  print "### BBB k=$k v=",debugvis($v),"\n";
     #  $changed=1,$item->{$k}=$v if _try_stringify($v, $stringify, $seen);
     #}
   }
@@ -629,7 +630,6 @@ sub _reformat_dumper_output {
       # Ack!  Perl implements (...)* using recursion even when partial
       # backtracking is not possible, and there is a 64K recursion limit.
       # Benchmarking shows that ~200 is the sweet spot.
-      ###warn "### AAA: «$_»\n";
       while (
         (/\G"/cgs && do{ while(/\G(?:[^"\\]++|\\.){0,200}+/cgs){} /\G"/cgs })
         || 
@@ -643,7 +643,6 @@ sub _reformat_dumper_output {
         /\Gs/gsc         # eat an 's' which was not "sub..."
       ) {}
     } else {
-      #warn "### BBB: «$_»\n";
       #while (/\G'(?:[^'\\]++|\\['\\])*+'/gsc || /\G[^'\n]+/gsc) {}
       while (
         (/\G'/cgs 
