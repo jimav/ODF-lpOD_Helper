@@ -8,7 +8,7 @@ use strict; use warnings FATAL => 'all'; use 5.010;
 # (Perl assumes Latin-1 by default).
 use utf8;
 
-$Vis::VERSION = sprintf "%d.%03d", q$Revision: 1.110 $ =~ /(\d+)/g;
+$Vis::VERSION = sprintf "%d.%03d", q$Revision: 1.111 $ =~ /(\d+)/g;
 
 # Copyright © Jim Avera 2012-2014.  Released into the Public Domain
 # by the copyright owner.  (jim.avera AT gmail dot com)
@@ -257,7 +257,7 @@ $Sparseseen     = 1           unless defined $Sparseseen;
 #
 # N.B. u() used to take a list and return a list, but now only one scalar
 #sub u(@) { map{defined ? $_ : "undef"} (@_==0 ? ($_) : @_) }
-sub u(_) { defined($_[0]) ? $_[0] : "undef" }
+sub u(_) { $_[0] // "undef" }
 
 sub vis(_)    { return __PACKAGE__->vnew(@_)->Dump1; }
 sub visq(_)   { return __PACKAGE__->vnew(@_)->Useqq(0)->Dump1; }
@@ -1587,11 +1587,12 @@ if (Vis::_unix_compatible_os()) {
 # Check Useqq('utf8') support
 ##################################################
 {
+  my $r = Vis->new([$unicode_str."\x{FFFF}"])->Terse(1)->Dump; chomp $r;
+  my $s = Vis->new([$unicode_str."\x{FFFF}"])->Terse(1)->Useqq('utf8')->Dump; chomp $s;
   print "                   unicode_str=\"$unicode_str\"\n";
-  my $s = Vis->new([$unicode_str."\x{FFFF}"])->Terse(1)->Useqq('utf8')->Dump;
-  chomp $s;
+  print "        Vis with Useqq('utf8'):$s\n";
+  print "        Vis default           :$r\n";
   $s =~ s/^"(.*)"$/$1/s or die "bug";
-  print "         Vis with Useqq('utf8'):$s\n";
   if ($s ne $unicode_str.'\x{ffff}') {
     die "***Useqq('utf8') fix does not work!\n","s=<${s}>\n";
   } else {
