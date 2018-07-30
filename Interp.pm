@@ -8,7 +8,7 @@ use strict; use warnings FATAL => 'all'; use 5.010;
 # (Perl assumes Latin-1 by default).
 use utf8;
 
-$Vis::VERSION = sprintf "%d.%03d", q$Revision: 1.111 $ =~ /(\d+)/g;
+$Vis::VERSION = sprintf "%d.%03d", q$Revision: 1.112 $ =~ /(\d+)/g;
 
 # Copyright © Jim Avera 2012-2014.  Released into the Public Domain
 # by the copyright owner.  (jim.avera AT gmail dot com)
@@ -336,11 +336,12 @@ sub _get_default_width() {
     $r = $ENV{COLUMNS};
   }
   elsif (_unix_compatible_os) {
-    if (-t STDERR) {
+    #if (-t STDERR) {
+    {
       no warnings;
-      ($r = qx'tput cols') # on Linux, seems to print 80 even if no tty
+      ($r = qx'tput cols 2>/dev/null') # on Linux, seems to print 80 even if no tty
       ||
-      (($r) = ((qx'stty -a'//"") =~ /.*; columns (\d+);/s))
+      (($r) = ((qx'stty -a 2>/dev/null'//"") =~ /.*; columns (\d+);/s))
       ;
       { local $/ = "\n"; chomp $r if $r; }
       print "## Vis detected terminal width is ",u($r),"\n" if $self->{VisDebug};
@@ -1297,7 +1298,7 @@ Additionally, B<< Vis->new >> provides the same API as Data::Dumper->new.
 
 Sets or gets the maximum number of characters for formatted lines,
 including any prefix set via I<Pad()>.
-Default is the terminal width or 80 if STDERR is not a terminal.
+Default is the your terminal width or 80 if not be detected.
 If Maxwidth=0 output is not folded, appearing similar to Data::Dumper
 (but still without a final newline).
 
