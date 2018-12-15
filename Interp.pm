@@ -8,7 +8,7 @@ use strict; use warnings FATAL => 'all'; use 5.010;
 # (Perl assumes Latin-1 by default).
 use utf8;
 
-$Vis::VERSION = sprintf "%d.%03d", q$Revision: 1.112 $ =~ /(\d+)/g;
+$Vis::VERSION = sprintf "%d.%03d", q$Revision: 1.113 $ =~ /(\d+)/g;
 
 # Copyright © Jim Avera 2012-2014.  Released into the Public Domain
 # by the copyright owner.  (jim.avera AT gmail dot com)
@@ -738,7 +738,7 @@ sub _reformat_dumper_output {
               # This occurs when joining members onto an opening bracket.
               #my $extra_prefix = " " x $adj;
               for (my $K=$J+1; ;$K++) {
-                die "bug" if $K > $#lines;
+                die "bug J=$J K=$K\n   lines=(\n   ",join("\n   ",map{debugvis($_)} @lines),"\n   )" if $K > $#lines;
                 $lines[$K] =~ /^( *)/;
                 last if length($1) <= $Iindent; # end of nested block
                 #if ($adj > 0) {
@@ -1088,7 +1088,7 @@ sub DB_Vis_Interpolate {
 
       my $s = $self->Dump1;  # <<<<<<<<<<<<<<<<<<<<<<<<<<<<
 
-      #print "### Dump result:\n«$s»\n";
+      #print "### Dump result:",debugvis($s),"\n" if $debug;
       substr($s, 0, length($autopad)) = $varlabel;
       $result .= $s;
     }
