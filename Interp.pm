@@ -8,7 +8,7 @@ use strict; use warnings FATAL => 'all'; use 5.010;
 # (Perl assumes Latin-1 by default).
 use utf8;
 
-$Vis::VERSION = sprintf "%d.%03d", q$Revision: 1.113 $ =~ /(\d+)/g;
+$Vis::VERSION = sprintf "%d.%03d", q$Revision: 1.114 $ =~ /(\d+)/g;
 
 # Copyright © Jim Avera 2012-2014.  Released into the Public Domain
 # by the copyright owner.  (jim.avera AT gmail dot com)
@@ -706,6 +706,7 @@ sub _reformat_dumper_output {
   
         my $J_is_closing = ($Jcode =~ /[\]\}]$/);
   
+        warn "##Icode=",debugvis($Icode)," Jcode=",debugvis($Jcode)," maxwidth=$maxwidth\n" if $debug;
         _debug_show(\@lines, $I, $Iindent, $J, $Jindent, $restart) if $debug;
   
         if (($Iindent <= $Jindent)
@@ -726,7 +727,7 @@ sub _reformat_dumper_output {
           my $sep  = $Icode =~ /,$/ && $Jcode =~ / => ${balanced_or_safe_re},?$/x
                       ? " " : "";
           my $adj = $Ilen + length($sep) - $Jindent; # posn change, + or -
-          print "[Iind=$Iindent Ilen=$Ilen Jlen=$Jlen sep='${sep}' adj=$adj mw=$maxwidth]\n" if $debug;
+          print "[Iind=$Iindent Ilen=$Ilen Jind=$Jindent Jlen=$Jlen sep='${sep}' adj=$adj mw=$maxwidth]\n" if $debug;
   
           if ($Ilen + $Jlen + length($sep) <= $maxwidth || $adj <= 0) {
             substr($lines[$I],$Ilen) = $sep.substr($lines[$J], $Jindent); 
@@ -737,14 +738,15 @@ sub _reformat_dumper_output {
               # to line up with the item just joined, the indent decreased.
               # This occurs when joining members onto an opening bracket.
               #my $extra_prefix = " " x $adj;
-              for (my $K=$J+1; ;$K++) {
+              for (my $K=$J+1; $K <= $#lines; $K++) {
                 die "bug J=$J K=$K\n   lines=(\n   ",join("\n   ",map{debugvis($_)} @lines),"\n   )" if $K > $#lines;
                 $lines[$K] =~ /^( *)/;
                 last if length($1) <= $Iindent; # end of nested block
+                die "BUG: WOUld remove non-indent chars" if length($1) < (-$adj);
                 #if ($adj > 0) {
                 #  $lines[$K] = $extra_prefix . $lines[$K];
                 #} else { 
-                  substr($lines[$K],0,-$adj) = "";
+                  substr($lines[$K],0,-$adj) = "";  # N.B. -$adj is positive
                 #}              
               }
             }
