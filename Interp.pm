@@ -8,7 +8,7 @@ use strict; use warnings FATAL => 'all'; use 5.010;
 # (Perl assumes Latin-1 by default).
 use utf8;
 
-$Vis::VERSION = sprintf "%d.%03d", q$Revision: 1.114 $ =~ /(\d+)/g;
+$Vis::VERSION = sprintf "%d.%03d", q$Revision: 1.115 $ =~ /(\d+)/g;
 
 # Copyright © Jim Avera 2012-2014.  Released into the Public Domain
 # by the copyright owner.  (jim.avera AT gmail dot com)
@@ -64,7 +64,6 @@ sub Vis_Eval {   # Many ideas here were stolen from perl5db.pl
     eval 'package '.$Vis::pkg.'; $@=$Vis::saved[0]; @Vis::result='.$Vis::evalarg.' ';
   };
 
-
   package Vis;
 
   our (@saved, $evalarg, @result);
@@ -113,6 +112,8 @@ sub Vis_Eval {   # Many ideas here were stolen from perl5db.pl
 
   return @result;
 }
+package DB;
+our @CARP_NOT;
 
 package Vis;
 
@@ -704,20 +705,22 @@ sub _reformat_dumper_output {
         my ($Jprefix,$Jcode) = ($lines[$J] =~ /^( *)(.*)\n\z/s);
         my $Jindent = length($Jprefix);
   
-        my $J_is_closing = ($Jcode =~ /[\]\}]$/);
+        # The wierd (1||/^[\{]/) is so vim will see a matching bracket
+        my $J_is_closing = (1||/^[\{]/) && ($Jcode =~ /[\]\}]$/);
   
         warn "##Icode=",debugvis($Icode)," Jcode=",debugvis($Jcode)," maxwidth=$maxwidth\n" if $debug;
         _debug_show(\@lines, $I, $Iindent, $J, $Jindent, $restart) if $debug;
   
         if (($Iindent <= $Jindent)
             # I is not closing an aggregate
-            && $Icode !~ /^[\]\}]/ 
+            && (1||/^[\{]/) && $Icode !~ /^[\]\}]/ 
   
             # J does not end with an un-closed block (we only join atoms or
             # [whole blocks]).  This prevents hard-to-see keys such as KEY2:
             #    { "KEY" => [ 1, 2, 3, 4,
             #      "five", "six", 7 ], "KEY2" => ... }
             && $Jcode !~ /^ (?> ${balanced_or_safe_re}) [\{\[] /x
+            && (1||/^[\}]/)
            )
          { 
           # The lines are elegible to be joined, if there is enough space
@@ -945,7 +948,6 @@ sub DB_Vis_Dump     { return Vis::Dump1(@_) }
 # which just goto a function in package DB without modifying @_.
 #
 sub DB_Vis_Interpolate {
-
   &Vis::SaveAndResetPunct;
 
   my ($self) = @_;
@@ -971,6 +973,7 @@ sub DB_Vis_Interpolate {
     | (?<=\$)\$          # $$
     | \{ $interior_re \} # ${ref expression} or ${^SPECIALNAME}
   /x;
+  state $dummy_for_vim = qr/\}/; # (provide matching '}')
 
   state $scalar_index_re = qr{
     (?: (?:->)? (?: \{ $interior_re \} | \[ $interior_re \] ) )+
@@ -1122,6 +1125,12 @@ ViSEoF
     print "### After act '$act' : result=«${result}»\n" if $debug;
   }
   ( $@, $!, $^E, $,, $/, $\, $^W ) = @saved;
+
+  # Erase package variables which might contain references to user objects
+  # which would otherwise not be destroyed when expected
+  #@Vis::saved = (); @Vis::result = (); $Vis::evalarg = undef;
+  undef @Vis::saved; undef @Vis::result; undef $Vis::evalarg;
+
   return $result;
 }
 
