@@ -8,7 +8,7 @@ use strict; use warnings FATAL => 'all'; use 5.010;
 # (Perl assumes Latin-1 by default).
 use utf8;
 
-$Vis::VERSION = sprintf "%d.%03d", q$Revision: 1.115 $ =~ /(\d+)/g;
+$Vis::VERSION = sprintf "%d.%03d", q$Revision: 1.116 $ =~ /(\d+)/g;
 
 # Copyright © Jim Avera 2012-2014.  Released into the Public Domain
 # by the copyright owner.  (jim.avera AT gmail dot com)
@@ -1006,11 +1006,11 @@ sub DB_Vis_Interpolate {
         # ${name} ${name->[expr]} etc. (loosing the curlies)
         /\G (?!\\)(\$) \{ ( $variable_re ${scalar_index_re}? ) \}/xsgc
         ||
-        # @name @name[slice] @name{slice} @{refexpr}[slice] etc.
-        /\G (?!\\)(\@)( $variable_re ${slice_re}? )/xsgc
+        # @name @name[slice] @name{slice} @{refexpr}[slice1][slice2] etc.
+        /\G (?!\\)(\@)( $variable_re ${slice_re}* )/xsgc
         ||
         # @{name} @{name[slice]} etc. (loosing the curlies)
-        /\G (?!\\)(\@) \{ ( $variable_re ${slice_re}? ) \}/xsgc
+        /\G (?!\\)(\@) \{ ( $variable_re ${slice_re}* ) \}/xsgc
         ||
         # %name
         /\G (?!\\)(\%)( $variable_re )/xsgc
