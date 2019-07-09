@@ -8,7 +8,7 @@ use strict; use warnings FATAL => 'all'; use 5.010;
 # (Perl assumes Latin-1 by default).
 use utf8;
 
-$Vis::VERSION = sprintf "%d.%03d", q$Revision: 1.116 $ =~ /(\d+)/g;
+$Vis::VERSION = sprintf "%d.%03d", q$Revision: 1.117 $ =~ /(\d+)/g;
 
 # Copyright © Jim Avera 2012-2014.  Released into the Public Domain
 # by the copyright owner.  (jim.avera AT gmail dot com)
@@ -708,7 +708,7 @@ sub _reformat_dumper_output {
         # The wierd (1||/^[\{]/) is so vim will see a matching bracket
         my $J_is_closing = (1||/^[\{]/) && ($Jcode =~ /[\]\}]$/);
   
-        warn "##Icode=",debugvis($Icode)," Jcode=",debugvis($Jcode)," maxwidth=$maxwidth\n" if $debug;
+        print "##Icode=",debugvis($Icode)," Jcode=",debugvis($Jcode)," maxwidth=$maxwidth\n" if $debug;
         _debug_show(\@lines, $I, $Iindent, $J, $Jindent, $restart) if $debug;
   
         if (($Iindent <= $Jindent)
@@ -830,8 +830,18 @@ sub Dump1 {
     }
   }
 
-  # Data::Dumper objects can only be used once, so this is ok...
-  $self->Indent(0) if $maxwidth==0;
+  my $pad = $self->Pad();
+
+  # Maxwidth==0 means do not fold at all, so we use Indent(0) when
+  # calling Data::Dumper.  However in that case Data::Dumper inserts Pad()
+  # between every token; so we have to force Pad() to "" and prepend 
+  # the user's Pad() string ourself to the overall result.
+  my $user_Indent;
+  if ($maxwidth == 0) {
+    $user_Indent = $self->Indent(0);
+    #$self->Pad("");
+    $self->Pad(" ");
+  }
 
   # Hack -- save/restore punctuation variables corrupted by Data::Dumper
   my ($sAt, $sQ) = ($@, $?);
@@ -840,9 +850,11 @@ sub Dump1 {
 
   ($@, $?) = ($sAt, $sQ);
 
-  my $pad = $self->Pad();
+  s/^ *// if $maxwidth==0;  # remove initial forced pad from Indent(0)
+
   if ($pad ne ""){
-    s/^\Q${pad}\E//mg; # will be put back later
+    # Remove initial pad; will be put back later
+    s/^\Q${pad}\E//mg || $maxwidth==0 || die "bug($_)";
     if ($maxwidth > 0) {
       $maxwidth -= length($pad);
       if ($maxwidth < 20) {
@@ -857,7 +869,7 @@ sub Dump1 {
   if ($maxwidth > 0) {
     $self->_reformat_dumper_output($maxwidth, $debug, $useqq);
   }
-  # else: one long line, produced by Indent(0) above;
+  # else: one long line, produced using Indent(0) above;
 
   if ($self->{VisType}) {
     s/\s+\z//s;  # omit final newline except when emulating Data::Dumper
@@ -872,6 +884,13 @@ sub Dump1 {
   }
 
   s/^/$pad/meg if $pad ne "";
+
+  if ($maxwidth == 0) {
+    $self->Pad($pad);
+    $self->Indent($user_Indent);
+  }
+
+  #print "### Dump1 pad=",Vis::debugvis($pad)," returning ",Vis::debugvis($_),"\n";
 
   return $_;
 }
@@ -959,7 +978,7 @@ sub DB_Vis_Interpolate {
 
   #print "##DB_Vis_Interpolate caller=",Vis::debugavis(caller)," VT=",Vis::debugvis($self->{VisType}),"\n";
 
-  # NOTE: These may or may not use capture groups internally, so capture
+  # NOTE: These REs may or may not use capture groups internally, so capture
   # groups must NOT be opened after the first point of use in a regexp!
   # TODO: Rewrite using named capture groups
   
@@ -1076,6 +1095,7 @@ sub DB_Vis_Interpolate {
           $result .= "\n$pad";
           redo;
         }
+        print "### extra_padlen=$extra_padlen\n" if $debug;
       }
 
       my $autopad = $pad.(" " x $extra_padlen);
@@ -1093,7 +1113,8 @@ sub DB_Vis_Interpolate {
 
       my $s = $self->Dump1;  # <<<<<<<<<<<<<<<<<<<<<<<<<<<<
 
-      #print "### Dump result:",debugvis($s),"\n" if $debug;
+      print "### Vis::Indent=$Vis::Indent Indent()=", $self->Indent(), 
+            " Dump1 result=", Vis::debugvis($s),"\n" if $debug;
       substr($s, 0, length($autopad)) = $varlabel;
       $result .= $s;
     }
@@ -1310,8 +1331,8 @@ Additionally, B<< Vis->new >> provides the same API as Data::Dumper->new.
 Sets or gets the maximum number of characters for formatted lines,
 including any prefix set via I<Pad()>.
 Default is the your terminal width or 80 if not be detected.
-If Maxwidth=0 output is not folded, appearing similar to Data::Dumper
-(but still without a final newline).
+If Maxwidth=0 output is not folded at all, appearing similar to Data::Dumper
+with Indent(0) but without a final newline.
 
 =item $Vis::MaxStringwidth  I<or>  I<$OBJ>->MaxStringwidth(I<[NEWVAL]>)
 
