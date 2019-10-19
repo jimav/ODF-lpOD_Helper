@@ -8,7 +8,7 @@ use strict; use warnings FATAL => 'all'; use 5.010;
 # (Perl assumes Latin-1 by default).
 use utf8;
 
-$Vis::VERSION = sprintf "%d.%03d", q$Revision: 1.117 $ =~ /(\d+)/g;
+$Vis::VERSION = sprintf "%d.%03d", q$Revision: 1.118 $ =~ /(\d+)/g;
 
 # Copyright © Jim Avera 2012-2014.  Released into the Public Domain
 # by the copyright owner.  (jim.avera AT gmail dot com)
@@ -525,19 +525,10 @@ sub _debug_show($$$$$$) {
 sub trunc_strings { # returns true if anything changed
   my $self = shift;
   my $ret = 0;
+  # ** FIXME: Maybe should use Scalar::Util::reftype() here (and elsewhere!)
+  # so as to recurse into object internals?
   my $kind = ref($_[0]);
   if (! defined $_[0]) {
-  }
-  elsif ($kind eq "") { # defined scalar
-    my $truncsuf = $self->{Truncsuffix};
-    my $tslen = length($truncsuf);
-    my $maxlen = $self->{MaxStringwidth};
-    if (length($_[0]) > ($maxlen+$tslen)) {
-      # FIXME
-      ###die "BUG HERE: Must clone before modifying user data!";
-      $_[0] = substr($_[0],0,$maxlen).$truncsuf;
-      $ret = 1;
-    }
   }
   elsif($kind eq "ARRAY") {
     foreach (@{$_[0]}) {
@@ -549,7 +540,20 @@ sub trunc_strings { # returns true if anything changed
       $ret = 1 if $self->trunc_strings($_);
     }
   }
-  else { die }
+  elsif ($kind eq "") { # a defined scalar
+    my $truncsuf = $self->{Truncsuffix};
+    my $tslen = length($truncsuf);
+    my $maxlen = $self->{MaxStringwidth};
+    if (length($_[0]) > ($maxlen+$tslen)) {
+      # FIXME
+      ###die "BUG HERE: Must clone before modifying user data!";
+      $_[0] = substr($_[0],0,$maxlen).$truncsuf;
+      $ret = 1;
+    }
+  }
+  else {
+    # Something else, REGEXP, CODE, etc. or an object ref
+  }
   return $ret;
 }
 
