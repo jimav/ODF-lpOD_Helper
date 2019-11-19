@@ -8,7 +8,7 @@ use strict; use warnings FATAL => 'all'; use 5.010;
 # (Perl assumes Latin-1 by default).
 use utf8;
 
-$Vis::VERSION = sprintf "%d.%03d", q$Revision: 1.119 $ =~ /(\d+)/g;
+$Vis::VERSION = sprintf "%d.%03d", q$Revision: 1.120 $ =~ /(\d+)/g;
 
 # Copyright © Jim Avera 2012-2014.  Released into the Public Domain
 # by the copyright owner.  (jim.avera AT gmail dot com)
@@ -1486,734 +1486,1019 @@ Jim Avera  (jim.avera AT gmail dot com)
 =cut
 
 #!/usr/bin/perl
-# Tester for module Vis.  TODO: Convert to CPAN module-test setup
-use strict; use warnings ; use feature qw(state switch);
-use utf8; 
-use open IO => 'utf8', ':std';
-select STDERR; $|=1; select STDOUT; $|=1;
-use Scalar::Util qw(blessed reftype);
-use Carp;
-use English qw( -no_match_vars );;
-use Data::Compare qw(Compare);
+# Tester
+use strict; use warnings; use 5.010;
+our @ISA;
 
-# This script was written before the author knew anything about standard Perl
-# test-harness tools.  Perhaps someday it will be wholly rewritten.
-# Meanwhile, some baby steps...
 use Test::More;
-use Test::Deep qw(cmp_deeply);
+my $debug = @ARGV && $ARGV[0] =~ /^(-d|--debug)/;
 
-#use lib "$ENV{HOME}/lib/perl";
+plan tests => ($debug ? 1 : 2);
 
-my $unicode_str;
-
-# We want to test the original version of the internal function 
-# Data::Dumper::qquote to see if the useqq="utf8" but has been fixed.
-# We used to just load Data::Dumper here in a BEGIN block before Vis
-# is loaded and use Data::Dumper to test it, but Perl now seems to cache
-# the sub lookup immediately in Data::Dumper, making the override 
-# ineffective.
+# Run this script with --debug to see debug output!
 #
-my $utf8fix_not_needed;
-BEGIN{ 
-  # This test must be done before loading Vis, which over-rides an internal
-  # function to fix the bug
-  $unicode_str = join "",map {eval sprintf "\" \\N{U+%04X}\"",$_} 
-                             (0x263A..0x2650); 
-  require Data::Dumper;
-  print "Loaded ", $INC{"Data/Dumper.pm"}, " qquote=", \&Data::Dumper::qquote,"\n";
-  { my $s = Data::Dumper->new([$unicode_str],['unicode_str'])->Terse(1)->Useqq('utf8')->Dump;
-    chomp $s;
-    $s =~ s/^"(.*)"$/$1/s or die "bug";
-    if ($s ne $unicode_str) {
-      #warn "Data::Dumper with Useqq('utf8'):$s\n";
-      warn "WARNING: Useqq('utf8') is broken in your Data::Dumper.\n"
-    } else {
-      print "Useqq('utf8') seems to have been fixed in Data::Dumper,\n";
-      $utf8fix_not_needed = 1;
-    }
-  }
+sub dprint(@)   { print(@_)                if $debug };
+sub dprintf($@) { printf($_[0],@_[1..$#_]) if $debug };
+
+my ($infile, $testdata);
+my ($infile2, $testdata2);
+BEGIN {
+  select STDERR; $|=1; select STDOUT; $|=1;
+  # N.B. &title_info encodes knowledge about this data!
+  $infile = "/tmp/input.csv";
+  $testdata = <<'EOF' ;
+Pre-title-row stuff (this is rowx 0)
+Atitle,Btitle,Multi Word Title C,,H,F,Gtitle,Z
+A2,B2,C2,D2,E2,F2,G2,H2
+A3,B3,C3,D3,E3,F3,G3,H3
+A4,B4,C4,D4,E4,F4,G4,H4
+A5,B5,C5,D5,E5,F5,G5,H5
+A6,B6,C6,D6,E6,F6,G6,H6
+EOF
+  dprint "> Creating $infile\n";
+  open(F,">$infile") || die $!; print F $testdata; close F || die "Error writing $infile :$!";
+
+  $infile2 = "/tmp/input2.csv";
+  $testdata2 = <<'EOF' ;
+TitleP,TitleQ,,TitleS,TitleT
+P1,Q1,R1,S1,T1,U1
+P2,Q2,R2,S2,T2,U2
+P3,Q3,R3,S3,T3,U3,V3
+P4,Q4,R4,S4,T4,U4
+P5,Q5,R5,S5,T5,U5
+EOF
+  dprint "> Creating $infile2\n";
+  open(F,">$infile2") || die $!; print F $testdata2; close F || die "Error writing $infile2 :$!";
 }
 
+use Carp;
+use File::Temp qw/ tempfile /;
+use open ':std' => ':locale';  # Make STDOUT/ERR match terminal
+$SIG{__WARN__} = sub {
+  die "bug:$_[0]" if $_[0] =~ "uninitialized value";
+  print STDERR $_[0];
+};
+#$SIG{_1G_DIE__} = sub{ return unless defined($^S) && $^S==0; confess @_ };
 use Vis;
-#use Vis 'u';  now exported by default...
-
-print "Loaded ", $INC{"Vis.pm"}, " _qquote_wrapper=", \&Vis::_qquote_wrapper, "\n";
-
-# Do an initial read of $[ so arybase will be autoloaded
-# (prevents corrupting $!/ERRNO in subsequent tests)
-eval '$[' // die;
-
-sub tf($) { $_[0] ? "true" : "false" }
-
-sub timed_run(&$@) {
-  my ($code, $maxcpusecs, @codeargs) = @_;
-  use Time::HiRes qw(clock);
-  my $startclock = clock();
-  my (@result, $result);
-  if (wantarray) {@result = &$code(@codeargs)} else {$result = &$code(@codeargs)};
-  my $cpusecs = clock() - $startclock;
-  confess "TOOK TOO LONG ($cpusecs CPU seconds vs. limit of $maxcpusecs)\n" 
-    if $cpusecs > $maxcpusecs;
-  if (wantarray) {return @result} else {return $result};
+use Text::CSV::Spreadsheet qw(let2cx cx2let);
+use Guard qw(scope_guard);
+sub bug(@) { @_=("BUG ",@_); goto &Carp::confess }
+sub outercroak (@) { # shows only outer-scope call
+  for my $c (0..5) {
+    warn "caller($c)=",avis(caller($c)),"\n";
+  }
+  my $c=0; while ((caller($c+1))[3] =~ /main::[a-z]/a) { $c++ }
+  $Carp::CarpLevel += $c;
+  goto &Carp::croak;
 }
 
-sub check($$@) {
-  my ($code, $expected_arg, @actual) = @_;
-  confess "BUG(EVAL ERR): $@" if $@;
-  my @expected = ref($expected_arg) ? @$expected_arg : ($expected_arg);
-  $actual[0] //= 'undef';
-  confess "\nTEST FAILED: $code\n"
-         ."Expected ".(@expected)." results, but got ".(@actual).":\n"
-         ."(@actual)\n"
-    if @expected != @actual;
-  foreach my $actual (@actual) {
-    my $expected = shift @expected;
-    confess "\nTEST FAILED: $code\n"
-           ."Expected:\n${expected}«end»\n"
-           ."Got:\n${actual}«end»\n"
-      unless $actual eq $expected;
+sub arrays_eq($$) {
+  my ($a,$b) = @_;
+  return 0 unless @$a == @$b;
+  for(my $i=0; $i <= $#$a; $i++) {
+    return 0 unless $a->[$i] eq $b->[$i];
+  }
+  return 1;
+}
+
+require Exporter;
+BEGIN { $Exporter::Debug = $debug }
+use Text::CSV::Edit qw(:DEFAULT :STDVARS);
+BEGIN { $Exporter::Debug = 0 }
+
+BEGIN {
+  #$Carp::Verbose = 1;
+  $Carp::MaxArgLen = 0;
+  $Carp::MaxArgNums = 25;
+
+  if ($debug) {
+    $Text::CSV::Edit::verbose = 1; # turn on for debugging implied new calls
+    $Text::CSV::Edit::debug   = 1; # turn on for debugging implied new calls
   }
 }
 
-# ---------- Check stuff other than formatting or interpolation --------
+##########################################################################
+package Other;
+BEGIN {*dprint = *main::dprint; *dprintf = *main::dprintf;}
+sub bug(@) { @_=("BUG ",@_); goto &Carp::confess }
+use Text::CSV::Edit qw(:DEFAULT :STDVARS);
+use vars '$Gtitle';
+$Gtitle = "non-tied-Gtitle-in-Other";
+new_sheet
+          data_source => "Othersheet",
+          rows => [ [qw(OtitleA OtitleB OtitleC)],
+                    [   999,    000,    26      ],
+                    [   314,    159,    26      ],
+                    [   777,    888,    999     ],
+                  ],
+          linenums => [ 1..4 ],
+          silent => (! $debug),
+          ;
+our $Othersheet = sheet();
+dprint "Othersheet = $Othersheet\n";
+title_rx 0;
+tie_column_vars qw(OtitleA OtitleB);
+our ($OtitleA, $OtitleB);
 
-print "Vis::VERSION = $Vis::VERSION\n";
+our ($OtitleC);
 
-for my $varname (qw(PREMATCH MATCH POSTMATCH)) {
-  $_ = "test"; /(\w+)/;
-  no strict 'vars';
-  die "Vis imports high-overhead English ($varname)"
-    if eval "defined \$Vis::$varname";
-  die "EVAL ERR: $@ " if $@;
-}
-
-my $byte_str = join "",map { chr $_ } 10..30;
-
-##################################################
-# Check default $Vis::Maxwidth 
-##################################################
-die "Expected initial Vis::Maxwidth to be undef" if defined $Vis::Maxwidth;
-{ local $ENV{COLUMNS} = 66;
-  vis(123); 
-  die "Vis::Maxwidth does not honor ENV{COLUMNS}" unless $Vis::Maxwidth == 66;
-  undef $Vis::Maxwidth;  # re-enable auto-detect
-}
-if (Vis::_unix_compatible_os()) {
-  delete local $ENV{COLUMNS};
-  my $expected = `tput cols`;  # may default to 80 if no tty
-  vis(123); 
-  die "Vis::Maxwidth no defaulted correctly" unless $Vis::Maxwidth == $expected;
-  undef $Vis::Maxwidth;  # re-enable auto-detect
-}
-if (Vis::_unix_compatible_os()) {
-  delete local $ENV{COLUMNS};
-  my $pid = fork();
-  if ($pid==0) {
-    require POSIX;
-    die "bug" unless POSIX::setsid()==$$;
-    POSIX::close $_ for (0,1,2);
-    vis(123); 
-    exit($Vis::Maxwidth // 253);
-  }
-  waitpid($pid,0);
-  die "Vis::Maxwidth defaulted to ", ($? >> 8)|($? & !0xFF), " (not 80 as expected)\n"
-    unless $? == (80 << 8);
-  $? = 0;
-}
-
-##################################################
-# Check Useqq('utf8') support
-##################################################
-{
-  my $r = Vis->new([$unicode_str."\x{FFFF}"])->Terse(1)->Dump; chomp $r;
-  my $s = Vis->new([$unicode_str."\x{FFFF}"])->Terse(1)->Useqq('utf8')->Dump; chomp $s;
-  print "                   unicode_str=\"$unicode_str\"\n";
-  print "        Vis with Useqq('utf8'):$s\n";
-  print "        Vis default           :$r\n";
-  $s =~ s/^"(.*)"$/$1/s or die "bug";
-  if ($s ne $unicode_str.'\x{ffff}') {
-    die "***Useqq('utf8') fix does not work!\n","s=<${s}>\n";
-  } else {
-    print "Useqq('utf8') works with Vis.\n";
-  }
-}
-
-my $undef_as_false = undef;
-if (! ref Vis->new([1])->Useqq(undef)) {
-  warn "WARNING: Data::Dumper methods do not recognize undef boolean args as 'false'.\n";
-  $undef_as_false = 0;
-}
-
-# Basic test of OO interfaces
-{ my $code="Vis->vnew('foo')->Dump;"; check $code, '"foo"',   eval $code }
-{ my $code="Vis->anew('foo')->Dump;"; check $code, '("foo")', eval $code }
-{ my $code="Vis->hnew(k=>'v')->Dump;"; check $code,'(k => "v")',eval $code}
-{ my $code="Vis->dnew('foo')->Dump;"; check $code, 'foo',     eval $code }
-{ my $code="Vis->snew('foo')->Dump;"; check $code, 'foo',     eval $code }
-
-foreach ( 
-          ['Maxwidth',0,1,80,9999],
-          ['MaxStringwidth',undef,0,1,80,9999],
-          ['Truncsuffix',"","...","(trunc)"],
-          ['Debug',undef,0,1],
-          ['Useqq',0,1,'utf8'],
-          ['Quotekeys',0,1],
-          ['Sortkeys',0,1,sub{return sort keys %{shift @_}}],
-          ['Terse',0,1],
-          ['Indent',0,1,2,3],
-          ['Sparseseen',0,1,2,3],
-        )
-{
-  my ($name, @values) = @$_;
-  my $testval = [123];
-  foreach my $value (@values) {
-    foreach my $ctor (qw(vnew anew snew dnew hnew)) {
-      {
-        my $v = eval "{ local \$Vis::$name = \$value;
-                        Vis->\$ctor('k',[\"test \$testval\"])->$name();
-                      }";
-        die "bug:$@ " if $@;
-        die "\$Vis::$name value is not preserved by Vis->$ctor\n",
-            "(Set \$Vis::$name=",u($value)," but $name() returned ",u($v),")\n"
-         unless (! defined $v and ! defined $value) || ($v eq $value);
-      }
-      {
-        my $v = eval "{ Vis->\$ctor('k',[\"test \$testval\"])->$name(\$value)->$name() }";
-        die "bug:$@ " if $@;
-        die "Vis::$name(v) does not set it's value!\n",
-            "(called $name(",u($value),") but $name() returned ",u($v),")\n"
-         unless (! defined $v && ! defined $value) || ($v eq $value);
-      }
-    }
-  }
-}
-
-# ---------- Check formatting or interpolation --------
-
-sub MyClass::meth {
-  my $self = shift;
-  return @_ ? [ "methargs:", @_ ] : "meth_with_noargs";
-}
-
-$Vis::Maxwidth = 72;
-
-@ARGV = ('fake','argv');
-$. = 1234;
-$ENV{EnvVar} = "Test EnvVar Value";
-
-my %toplex_h = ("" => "Emp", A=>111,"B B"=>222,C=>{d=>888,e=>999},D=>{});
-my @toplex_a = (0,1,"C",\%toplex_h,[],[0..9]);
-my $toplex_ar = \@toplex_a;
-my $toplex_hr = \%toplex_h;
-my $toplex_obj = bless {}, 'MyClass';
-
-our %global_h = %toplex_h;
-our @global_a = @toplex_a;
-our $global_ar = \@global_a;
-our $global_hr = \%global_h;
-our $global_obj = bless {}, 'MyClass';
-
-our %maskedglobal_h = (key => "should never be seen");
-our @maskedglobal_a = ("should never be seen");
-our $maskedglobal_ar = \@maskedglobal_a;
-our $maskedglobal_hr = \%maskedglobal_h;
-our $maskedglobal_obj = bless {}, 'ShouldNeverBeUsedClass';
-
-our %localized_h = (key => "should never be seen");
-our @localized_a = ("should never be seen");
-our $localized_ar = \@localized_a;
-our $localized_hr = \%localized_h;
-our $localized_obj = \%localized_h;
-
-our $a = "global-a";  # used specially used by sort()
-our $b = "global-b";
-
-package A::B::C;
-our %ABC_h = %main::global_h;
-our @ABC_a = @main::global_a;
-our $ABC_ar = \@ABC_a;
-our $ABC_hr = \%ABC_h;
-our $ABC_obj = $main::global_obj;
-
+##########################################################################
 package main;
 
-$_ = "GroupA.GroupB";
-/(.*)\W(.*)/sp or die "nomatch"; # set $1 and $2
-
-{ my $code = 'qsh("a b")';           check $code, "'a b'",  eval $code; }
-{ my $code = 'qsh(undef)';           check $code, "undef",  eval $code; }
-{ my $code = 'qsh("a b","c d","e",undef,"g",q{\'ab\'"cd"})';       
-   check $code, ["'a b'","'c d'","e","undef","g","''\\''ab'\\''\"cd\"'"], eval $code; }
-{ my $code = 'qshpath("a b")';       check $code, "'a b'",  eval $code; }
-{ my $code = 'qshpath("~user")';     check $code, "~user",  eval $code; }
-{ my $code = 'qshpath("~user/a b")'; check $code, "~user/'a b'", eval $code; }
-{ my $code = 'qshpath("~user/ab")';  check $code, "~user/ab", eval $code; }
-{ my $code = 'qsh("~user/ab")';      check $code, "'~user/ab'", eval $code; }
-{ my $code = 'qsh($_)';              check $code, "${_}",   eval $code; }
-{ my $code = 'qsh()';                check $code, "${_}",   eval $code; }
-{ my $code = 'qsh';                  check $code, "${_}",   eval $code; }
-{ my $code = 'qshpath($_)';          check $code, "${_}",   eval $code; }
-{ my $code = 'qshpath()';            check $code, "${_}",   eval $code; } 
-{ my $code = 'qshpath';              check $code, "${_}",   eval $code; } 
-{ my $code = 'forceqsh($_)';         check $code, "'${_}'", eval $code; }
-
-# Basic checks
-{ my $code = 'vis($_)'; check $code, "\"${_}\"", eval $code; }
-{ my $code = 'vis()'; check $code, "\"${_}\"", eval $code; }
-{ my $code = 'vis'; check $code, "\"${_}\"", eval $code; }
-{ my $code = 'avis($_,1,2,3)'; check $code, "(\"${_}\",1,2,3)", eval $code; }
-{ my $code = 'hvis("foo",$_)'; check $code, "(foo => \"${_}\")", eval $code; }
-{ my $code = 'avis(@_)'; check $code, '()', eval $code; }
-{ my $code = 'hvis(@_)'; check $code, '()', eval $code; }
-{ my $code = 'svis(q($_ con),q(caten),q(ated\n))';
-  check $code, "\"${_}\" concatenated\n", eval $code;
+sub check_other_package() {
+  bug unless $Other::Gtitle eq "non-tied-Gtitle-in-Other";
+  package Other;
+  bug unless $Gtitle eq "non-tied-Gtitle-in-Other";
+  apply_torx { bug unless $Other::OtitleA == 314 } [2];
+  our $OtitleA;
+  apply_torx { bug unless $OtitleA == 314 } [2];
+  bug unless $Other::Gtitle eq "non-tied-Gtitle-in-Other";
+  bug unless $num_cols == 3;
+  bug unless @rows==4 && $rows[2]->[0]==314;
+  bug unless @Other::rows==4 && $Other::rows[2]->[1]==159;
 }
-{ my $code = 'dvis(q($_ con),q(caten),q(ated\n))';
-  check $code, "\$_=\"${_}\" concatenated\n", eval $code;
-}
-{ my $code = 'avis(undef)'; check $code, "(undef)", eval $code; }
-{ my $code = 'hvis("foo",undef)'; check $code, "(foo => undef)", eval $code; }
-{ my $code = 'vis(undef)'; check $code, "undef", eval $code; }
-{ my $code = 'svis("foo",undef)'; check $code, "foo<undef arg>", eval $code; }
-{ my $code = 'dvis("foo",undef)'; check $code, "foo<undef arg>", eval $code; }
-{ my $code = 'dvisq("foo",undef)'; check $code, "foo<undef arg>", eval $code; }
+check_other_package;
 
-{ my $code = q/my $s; my @a=sort{ $s=dvis('$a $b'); $a<=>$b }(3,2); "@a $s"/ ;
-  check $code, '2 3 a=3 b=2', eval $code; 
+tie_column_vars {package=>'Other'}, qw(OtitleA OtitleB); # redundant call is ok
+check_other_package;
+
+sub hash_subset($@) {
+  my ($hash, @keys) = @_;
+  return undef if ! defined $hash;
+  return { map { exists($hash->{$_}) ? ($_ => $hash->{$_}) : () } @keys }
+}
+sub fmtsheet() {
+  my $s = sheet();
+  return "sheet=undef" if ! defined $s;
+  "sheet->".vis(hash_subset($$s, qw(colx rows linenums num_cols current_rx title_rx)))
+  #"\nsheet=".Vis->vnew($s)->Maxdepth(2)->Dump
 }
 
-# Check that $1 etc. can be passed (this was once a bug...)
-{ my $code = '" a~b" =~ / (.*)/ && qsh($1)'; check $code, '"a~b"', eval $code; }
-{ my $code = '" a~b" =~ / (.*)/ && qshpath($1)'; check $code, '"a~b"', eval $code; }
-{ my $code = '" a~b" =~ / (.*)/ && forceqsh($1)'; check $code, '"a~b"', eval $code; }
-{ my $code = '" a~b" =~ / (.*)/ && vis($1)'; check $code, '"a~b"', eval $code; }
-
-{ my $code = 'my $vv=123; \' a $vv b\' =~ / (.*)/ && dvis($1)'; check $code, 'a vv=123 b', eval $code; }
-
-# Check Deparse support
-{ my $data = eval 'BEGIN{ ${^WARNING_BITS} = 0 } no strict; no feature;
-                   sub{ my $x = 42; };';
-  { my $code = 'vis($data)'; check $code, "sub { \"DUMMY\" }", eval $code; }
-  $Data::Dumper::Deparse = 1;
-  { my $code = 'vis($data)'; check $code, "sub {\n    my \$x = 42;\n}", eval $code; }
-}
-
-# bigint, bignum, bigrat support
-{
-  use bignum;  # BigInt and BigFloat together
-
-  my $bigfnum = '9988776655443322112233445566778899.8877';
-  my $bigf = eval $bigfnum // die;
-  die unless blessed($bigf) =~ /^Math::BigFloat/;
-  my $bigfq = "'$bigfnum'";
-  my $bigfqq = "\"$bigfnum\"";
-
-  my $biginum = '9988776655443322112233445566778899887766';
-  my $bigi = eval $biginum // die;
-  die unless blessed($bigi) =~ /^Math::BigInt/;
-  my $bigiq = "'$biginum'";
-  my $bigiqq = "\"$biginum\"";
-
-  { my $code = 'Vis->vnew($bigf)->Dump'; check $code, "${bigfqq}", eval $code; }
-  { my $code = 'vis($bigf)'; check $code, "${bigfqq}", eval $code; }
-  { my $code = 'visq($bigf)'; check $code, "${bigfq}", eval $code; }
-  { my $code = 'svis("foo","\$"."bigf")'; check $code, "foo${bigfqq}", eval $code; }
-  { my $code = 'svisq("foo","\$"."bigf")'; check $code, "foo${bigfq}", eval $code; }
-  { my $code = 'dvis("foo","\$"."bigf")'; check $code, "foobigf=${bigfqq}", eval $code; }
-  { my $code = 'dvisq("foo","\$"."bigf")'; check $code, "foobigf=${bigfq}", eval $code; }
-
-  { my $code = 'vis($bigi)'; check $code, "${bigiqq}", eval $code; }
-  { my $code = 'visq($bigi)'; check $code, "${bigiq}", eval $code; }
-  { my $code = 'svis("foo","\$"."bigi")'; check $code, "foo${bigiqq}", eval $code; }
-  { my $code = 'svisq("foo","\$"."bigi")'; check $code, "foo${bigiq}", eval $code; }
-  { my $code = 'dvis("foo","\$"."bigi")'; check $code, "foobigi=${bigiqq}", eval $code; }
-  { my $code = 'dvisq("foo","\$"."bigi")'; check $code, "foobigi=${bigiq}", eval $code; }
-  
-  # Confirm that Stringify=[] disables
-  { local $Vis::Stringify = [];
-    my $s = vis($bigf); die "bug($s)" unless $s =~ /^\(?bless.*BigFloat/s; 
-  }
-
-  { my $code = 'avis($bigf)'; check $code, "($bigfqq)", eval $code; }
-  { my $code = 'avisq($bigf)'; check $code, "($bigfq)", eval $code; }
-
-  { my $hash = { aaa => 1111111111111, bbb => [ 22222222222222 ] };
-    my $code = 'vis($hash)'; check $code, '{aaa => "1111111111111", bbb => ["22222222222222"]}', eval $code; }
-}
-{
-  use bigrat;
-
-  my $ratnum = '1/9';
-  my $rat = eval $ratnum // die;
-  die unless blessed($rat) =~ /^Math::BigRat/;
-  my $ratq = "'1/9'";
-  my $ratqq = "\"1/9\"";
-
-  { my $code = 'vis($rat)'; check $code, "${ratqq}", eval $code; }
-  { my $code = 'Vis->vnew($rat)->Dump'; check $code, "${ratqq}", eval $code; }
-  { my $code = 'visq($rat)'; check $code, "${ratq}", eval $code; }
-  { my $code = 'svis("foo","\$"."rat")'; check $code, "foo${ratqq}", eval $code; }
-  { my $code = 'svisq("foo","\$"."rat")'; check $code, "foo${ratq}", eval $code; }
-  { my $code = 'dvis("foo","\$"."rat")'; check $code, "foorat=${ratqq}", eval $code; }
-  { my $code = 'dvisq("foo","\$"."rat")'; check $code, "foorat=${ratq}", eval $code; }
-}
-{
-  # no 'bignum' etc. in effect, just explicit class names
-  use Math::BigFloat;
-  my $bigfnum = '9988733334444555566663445566778899.8877';
-  my $bigf = Math::BigFloat->new($bigfnum);
-  die unless blessed($bigf) =~ /^Math::BigFloat/;
-  my $bigfq = "'$bigfnum'";
-  my $bigfqq = "\"$bigfnum\"";
-
-  use Math::BigInt;
-  my $biginum = '9988776000000000000222000000000899887766';
-  my $bigi = Math::BigInt->new($biginum);
-  die unless blessed($bigi) =~ /^Math::BigInt/;
-  my $bigiq  = "'$biginum'";
-  my $bigiqq = "\"$biginum\"";
-
-  { local $Vis::Stringify = [qr/^Math::BigFloat/];
-    { my $code = 'vis($bigf)'; check $code, "${bigfqq}", eval $code; }
-    { my $code = 'visq($bigf)'; check $code, "${bigfq}", eval $code; }
-    { my $code = 'svis("foo","\$"."bigf")'; check $code, "foo${bigfqq}", eval $code; }
-    { my $code = 'svisq("foo","\$"."bigf")'; check $code, "foo${bigfq}", eval $code; }
-    { my $code = 'dvis("foo","\$"."bigf")'; check $code, "foobigf=${bigfqq}", eval $code; }
-    { my $code = 'dvisq("foo","\$"."bigf")'; check $code, "foobigf=${bigfq}", eval $code; }
-  
-    my $s=vis($bigi); die "Unexpected($s)" unless $s =~ /^\(?bless.*BigInt/s; 
-    foreach my $modmatch ('qr/^Math::BigInt/',
-                          '[qr/^Math::BigInt/]',
-                          '["No::Match", qr/^Math::BigInt/]',
-                          '[qr/^Math::BigFloat/, qr/^Math::BigInt/]',
-                         )
-    { my $code = 'Vis->vnew($bigi)->Stringify('.$modmatch.')->Dump';
-      check $code, "${bigiqq}", eval $code; 
-    }
-  }
-}
-
-# Check string truncation, and that the original data is not modified in-place
-{ my $orig_str  = '["abcDEFG",["xyzABCD",{longkey => "fghIJKL"}]]';
-  my $check_data = eval $orig_str; die "bug" if $@;
-  my $orig_data  = eval $orig_str; die "bug" if $@;
-  foreach my $MSw (1..9) {
-    # hand-truncate to create "expected result" data
-    (my $exp_str = $orig_str) =~ s/\b([a-zA-Z]{$MSw})([a-zA-Z]*)/
-                                    $1 . (length($2) > 3 && $1.$2 ne "longkey"
-                                           ? "..." : $2)
-                                  /seg;
-    local $Vis::MaxStringwidth = $MSw;
-    check "with MaxStringwidth=$MSw", $exp_str, eval 'vis($orig_data)';
-    die "MaxStringwidth=$MSw : Original data corrupted"
-      unless Compare($orig_data, $check_data);
-  }
-}
-
-# There was a bug for s/dvis called direct from outer scope, so don't use eval:
-check 'global divs %toplex_h', 
-      '%toplex_h=("" => "Emp", A => 111, "B B" => 222,'."\n"
-     .'           C => {d => 888, e => 999}, D => {}'."\n"
-     ."          )\n",
-      dvis('%toplex_h\n'); 
-check 'global divs @ARGV', q(@ARGV=("fake","argv")), dvis('@ARGV'); 
-check 'global divs $.', q($.=1234), dvis('$.'); 
-check 'global divs $ENV{EnvVar}', q("Test EnvVar Value"), svis('$ENV{EnvVar}'); 
-sub func {
-  check 'func args', q(@_=(1,2,3)), dvis('@_'); 
-}
-func(1,2,3);
-
-# There was once a "took almost forever" backtracking problem 
-my @backtrack_bugtest_data = (
-  42,
-  {A => 0, BBBBBBBBBBBBB => "foo"},
-);
-timed_run {
-  check 'dvis @backtrack_bugtest_data',
-        '@backtrack_bugtest_data=(42,{A => 0, BBBBBBBBBBBBB => "foo"})',
-        dvis('@backtrack_bugtest_data');
-} 0.01;
-
-sub doquoting($$) {
-  my ($input, $useqq) = @_;
-  my $quoted = $input;
-  if ($useqq) {
-    $quoted =~ s/([\$\@"\\])/\\$1/gs;
-    $quoted =~ s/\n/\\n/gs;
-    $quoted =~ s/\t/\\t/gs;
-    $quoted = "\"${quoted}\"";
+sub expect1($$) {
+  my ($actual, $expected) = @_;
+  if (! defined $expected) {
+    return if ! defined $actual;
   } else {
-    $quoted =~ s/([\\'])/\\$1/gs;
-    $quoted = "'${quoted}'";
+    return if defined($actual) && $actual eq $expected;
   }
-  return $quoted;
+  die "Expected ",vis($expected), " but got ", vis($actual),
+      " at line ", (caller(0))[2], "\n";
 }
 
-sub show_white($) {
-  local $_ = shift;
-  s/\t/<tab>/msg;
-  s/( +)$/"<space>" x length($1)/mseg;
-  $_
+# Return value of a cell in the 'current' row, verifying that various access
+# methods return the same result (could be undef if the item is not defined).
+# RETURNS ($value, undef or "bug description");
+
+sub getcell_bykey($;$) { # title, ABC name, alias, etc.
+  my ($key, $err) = @_;
+  bug unless defined $rx;  # not in apply?
+
+  # Access using the global "current row hash" feature
+  my $v = $row{$key};
+  my $vstr = vis( $v );
+
+  # Access using the overloaded hash-deref operator of the sheet object
+  # (accesses the 'current' row)
+  my $hashov_vstr = vis( sheet()->{$key} );
+  $err //= "\$row{$key} returned $vstr but sheet()->{$key} returned $hashov_vstr"
+    if $vstr ne $hashov_vstr;
+
+  # Access using the overloaded array-deref operator of the sheet object,
+  # indexing the resulting Magicrow with the Title key.
+  my $magicrow = sheet()->[$rx];
+  my $aov_key_vstr = vis( $magicrow->{$key} );
+  $err //= "\$row{$key} returned $vstr but sheet()->[$rx]->{$key} returned $aov_key_vstr"
+    if $vstr ne $aov_key_vstr;
+
+  # Index the Magicrow as an array indexed by cx
+  my $cx = $colx{$key};
+  $err //= "%colx does not match sheet()->colx for key $key"
+    if u($cx) ne u(sheet()->colx->{$key});
+  my $aov_cx_vstr = vis( defined($cx) ? $magicrow->[$cx] : undef );
+  $err //= "\$row{$key} returned $vstr but sheet()->[$rx]->[$cx] returned $aov_cx_vstr"
+    if $vstr ne $aov_cx_vstr;
+
+  return ($v, $err);
+}
+sub getcell_byident($;$) { # access by imported $identifier, and all other ways
+  my ($ident, $inerr) = @_;
+  my ($v, $err) = getcell_bykey($ident, $inerr);
+  my $vstr = vis($v);
+
+  my $id_v = eval "\$$ident";   # undef if not defined, not in apply(), etc.
+  my $id_vstr = vis($id_v);
+  $err //= "\$$ident returned $id_vstr but other access methods returned $vstr"
+    if $vstr ne $id_vstr;
+
+  return ($v, $err);
 }
 
-sub get_closure(;$) {
- my ($clobber) = @_;
+# Given a column data indicator L and current cx, return
+# indicators of what titles should be usable.
+sub title_info($$) {
+  my ($L,$cx) = @_;
 
- my %closure_h = (%toplex_h);
- my @closure_a = (@toplex_a);
- my $closure_ar = \@closure_a;
- my $closure_hr = \%closure_h;
- my $closure_obj = $toplex_obj;
- if ($clobber) { # try to over-write deleted objects
-   @closure_a = ("bogusa".."bogusz");
- }
+  # infile:
+  #   Original col D has an empty title
+  #   Original col E has title 'H' which looks like ABC code
+  #   Original col F has title 'F' which looks like ABC code
+  #   Original col H has title 'Z' which looks like ABC code
+  # infile2:
+  #   Original col R has an empty title
+  #   Original col U has a missing title
+  #   Original col V has a missing title and irregular data
+  #
+  # Other columns have titles which do not look like ABC codes
 
- return sub {
+  my ($title_L, $ABC_usable, $QT_usable) = ($L,1,1);
 
-  # Perl is inconsistent about whether an eval in package DB can see 
-  # lexicals in enclosing scopes.  Sometimes it can, sometimes not.
-  # However explicitly referencing those "global lexicals" in the closure
-  # seems to make it work.
-  #   5/16/16: Perl v5.22.1 *segfaults* if these are included
-  #   (at least *_obj).  But removing them all causes some to appear
-  #   to be non-existent.
-  my $forget_me_not = [ 
-     \$unicode_str, \$byte_str, 
-     \@toplex_a, \%toplex_h, \$toplex_hr, \$toplex_ar, \$toplex_obj,
-     \@global_a, \%global_h, \$global_hr, \$global_ar, \$global_obj,
-  ];
+  my $ABC = cx2let($cx);
+  if ($ABC eq "H") {
+    $ABC_usable = ($L eq "E");
+  }
+  elsif ($ABC eq "F") {
+    $ABC_usable = ($L eq "F");
+  }
+  elsif ($ABC eq "Z") {
+    $ABC_usable = ($L eq "H");
+  }
 
-  # Referencing these intermediate variables also prevents them from
-  # being destroyed before this closure is executed:
-  my $saverefs = [ \%closure_h, \@closure_a, \$closure_ar, \$closure_hr, \$closure_obj ];
-  
+  if ($L =~ /^[RDUV]$/) {
+    $title_L = "";
+  }
 
-  my $zero = 0;
-  my $one = 1;
-  my $two = 2;
-  my $EnvVarName = 'EnvVar';
-  my $flex = 'Lexical in sub f';
-  my $flex_ref = \$flex;
-  my $ARGV_ref = \@ARGV;
-  eval { die "FAKE DEATH\n" };  # set $@
-  my %sublex_h = %toplex_h;
-  my @sublex_a = @toplex_a;
-  my $sublex_ar = \@sublex_a;
-  my $sublex_hr = \%sublex_h;
-  my $sublex_obj = $toplex_obj;
-  our %subglobal_h = %toplex_h;
-  our @subglobal_a = @toplex_a;
-  our $subglobal_ar = \@subglobal_a;
-  our $subglobal_hr = \%subglobal_h;
-  our $subglobal_obj = $toplex_obj;
-  our %maskedglobal_h = %toplex_h;
-  our @maskedglobal_a = @toplex_a;
-  our $maskedglobal_ar = \@maskedglobal_a;
-  our $maskedglobal_hr = \%maskedglobal_h;
-  our $maskedglobal_obj = $toplex_obj;
-  local %localized_h = %toplex_h;
-  local @localized_a = @toplex_a;
-  local $localized_ar = \@toplex_a;
-  local $localized_hr = \%localized_h;
-  local $localized_obj = $toplex_obj;
+  if ($L eq 'E') {
+    $title_L = "H";
+  }
+  elsif($L eq 'F') {
+    # $title_L = "F";
+  }
+  elsif($L eq 'H') {
+    $title_L = "Z";
+    $ABC_usable = ($cx == let2cx("E"));
+  }
+  elsif($L eq 'Z') { # in case many columns are added...
+    $ABC_usable = ($cx == let2cx("H"));
+  }
 
-  for my $test (
-    [ q(aaa\\\\bbb), q(aaa\bbb) ],
-    [ q($unicode_str\n), qq(unicode_str=\" \\x{263a} \\x{263b} \\x{263c} \\x{263d} \\x{263e} \\x{263f} \\x{2640} \\x{2641} \\x{2642} \\x{2643} \\x{2644} \\x{2645} \\x{2646} \\x{2647} \\x{2648} \\x{2649} \\x{264a} \\x{264b} \\x{264c} \\x{264d} \\x{264e} \\x{264f} \\x{2650}\"\n) ],
-    [ q($byte_str\n), qq(byte_str=\"\\n\\13\\f\\r\\16\\17\\20\\21\\22\\23\\24\\25\\26\\27\\30\\31\\32\\e\\34\\35\\36\"\n) ],
-    [ q($flex\n), qq(flex=\"Lexical in sub f\"\n) ],
-    [ q($$flex_ref\n), qq(\$\$flex_ref=\"Lexical in sub f\"\n) ],
-    [ q($_ $ARG\n), qq(\$_=\"GroupA.GroupB\" ARG=\"GroupA.GroupB\"\n) ],
-    [ q($a\n), qq(a=\"global-a\"\n) ],
-    [ q($b\n), qq(b=\"global-b\"\n) ],
-    [ q($1\n), qq(\$1=\"GroupA\"\n) ],
-    [ q($2\n), qq(\$2=\"GroupB\"\n) ],
-    [ q($3\n), qq(\$3=undef\n) ],
-    [ q($&\n), qq(\$&=\"GroupA.GroupB\"\n) ],
-    [ q(${^MATCH}\n), qq(\${^MATCH}=\"GroupA.GroupB\"\n) ],
-    [ q($.\n), qq(\$.=1234\n) ],
-    [ q($NR\n), qq(NR=1234\n) ],
-    [ q($/\n), qq(\$/=\"\\n\"\n) ],
-    [ q($\\\n), qq(\$\\=undef\n) ],
-    [ q($"\n), qq(\$\"=\" \"\n) ],
-    [ q($~\n), qq(\$~=\"STDOUT\"\n) ],
-    [ q($^\n), qq(\$^=\"STDOUT_TOP\"\n) ],
-    [ q($:\n), qq(\$:=\" \\n-\"\n) ],
-    [ q($^L\n), qq(\$^L=\"\\f\"\n) ],
-    [ q($?\n), qq(\$?=0\n) ],
-    [ q($[\n), qq(\$[=0\n) ],
-    [ q($$\n), qq(\$\$=$$\n) ],
-    [ q($^N\n), qq(\$^N=\"GroupB\"\n) ],
-    [ q($+\n), qq(\$+=\"GroupB\"\n) ],
-    [ q(@+ $#+\n), qq(\@+=(13,6,13) \$#+=2\n) ],
-    [ q(@- $#-\n), qq(\@-=(0,0,7) \$#-=2\n) ],
-    [ q($;\n), qq(\$;=\"\\34\"\n) ],
-    [ q(@ARGV\n), qq(\@ARGV=(\"fake\",\"argv\")\n) ],
-    [ q($ENV{EnvVar}\n), qq(ENV{EnvVar}=\"Test EnvVar Value\"\n) ],
-    [ q($ENV{$EnvVarName}\n), qq(ENV{\$EnvVarName}=\"Test EnvVar Value\"\n) ],
-    [ q(@_\n), <<'EOF' ],  # N.B. Maxwidth was set to 72
-@_=(42,
-    [0,1,"C",
-     {"" => "Emp", A => 111, "B B" => 222,
-      C => {d => 888, e => 999}, D => {}
-     },
-     [],[0,1,2,3,4,5,6,7,8,9]
-    ]
-   )
-EOF
-    [ q($#_\n), qq(\$#_=1\n) ],
-    [ q($@\n), qq(\$\@=\"FAKE DEATH\\n\"\n) ],
-    map({
-      my ($LQ,$RQ) = (/^(.*)(.)$/) or die "bug";
-      map({ 
-        my $name = $_;
-        map({ 
-          my ($dollar, $r) = @$_;
-          my $dolname_scalar = ($dollar ? "\$$dollar" : "").$name;
-          my $p = " " x length("?${dollar}${name}_?${r}");
-          [ qq(%${dollar}${name}_h${r}\\n), <<EOF ],
-\%${dollar}${name}_h${r}=("" => "Emp", A => 111, "B B" => 222,
-${p}  C => {d => 888, e => 999}, D => {}
-${p} )
-EOF
-          [ qq(\@${dollar}${name}_a${r}\\n), <<EOF ],
-\@${dollar}${name}_a${r}=(0,1,"C",
-${p}  {"" => "Emp", A => 111, "B B" => 222,
-${p}   C => {d => 888, e => 999}, D => {}
-${p}  },
-${p}  [],[0,1,2,3,4,5,6,7,8,9]
-${p} )
-EOF
-          [ qq(\$#${dollar}${name}_a${r}),    qq(\$#${dollar}${name}_a${r}=5)   ],
-          [ qq(\$#${dollar}${name}_a${r}\\n), qq(\$#${dollar}${name}_a${r}=5\n) ],
-          [ qq(\$${dollar}${name}_a${r}[3]{C}{e}\\n),
-            qq(${dolname_scalar}_a${r}[3]{C}{e}=999\n)
-          ],
-          [ qq(\$${dollar}${name}_a${r}[3]{C}{e}\\n),
-            qq(${dolname_scalar}_a${r}[3]{C}{e}=999\n)
-          ],
-          [ qq(\$${dollar}${name}_a${r}[3]->{A}\\n),
-            qq(${dolname_scalar}_a${r}[3]->{A}=111\n)
-          ],
-          [ qq(\$${dollar}${name}_a${r}[3]->{$LQ$RQ}\\n),
-            qq(${dolname_scalar}_a${r}[3]->{$LQ$RQ}="Emp"\n)
-          ],
-          [ qq(\$${dollar}${name}_a${r}[3]{C}->{e}\\n),
-            qq(${dolname_scalar}_a${r}[3]{C}->{e}=999\n)
-          ],
-          [ qq(\$${dollar}${name}_a${r}[3]->{C}->{e}\\n),
-            qq(${dolname_scalar}_a${r}[3]->{C}->{e}=999\n)
-          ],
-          [ qq(\@${dollar}${name}_a${r}[\$zero,\$one]\\n),
-            qq(\@${dollar}${name}_a${r}[\$zero,\$one]=(0,1)\n)
-          ],
-          [ qq(\@${dollar}${name}_h${r}{${LQ}A${RQ},${LQ}B B${RQ}}\\n),
-            qq(\@${dollar}${name}_h${r}{${LQ}A${RQ},${LQ}B B${RQ}}=(111,222)\n)
-          ],
-        } (['',''], ['$','r'])
-        ), #map [$dollar,$r]
-        ### TEMP DISABLED because Perl v5.22.1 segfaults...
-do{ state $warned = 0; warn "\n\n** obj->method() tests disabled ** due to Perl v5.22.1 segfault!\n\n" unless $warned++; () },
+  #TODO test dup titles; when we do, set QT_usable = 0
 
-        ##[ qq(\$${name}_obj->meth ()), qq(${name}_obj->meth="meth_with_noargs" ()) ],
-        ##[ qq(\$${name}_obj->meth(42)), qq(${name}_obj->meth(42)=["methargs:",42]) ],
-        map({ 
-          my ($dollar, $r, $arrow) = @$_;
-          my $dolname_scalar = ($dollar ? "\$$dollar" : "").$name;
-          [ qq(\$${dollar}${name}_h${r}${arrow}{\$${name}_a[\$two]}{e}\\n),
-            qq(${dolname_scalar}_h${r}${arrow}{\$${name}_a[\$two]}{e}=999\n)
-          ],
-          [ qq(\$${dollar}${name}_a${r}${arrow}[3]{C}{e}\\n),
-            qq(${dolname_scalar}_a${r}${arrow}[3]{C}{e}=999\n)
-          ],
-          [ qq(\$${dollar}${name}_a${r}${arrow}[3]{C}->{e}\\n),
-            qq(${dolname_scalar}_a${r}${arrow}[3]{C}->{e}=999\n)
-          ],
-          [ qq(\$${dollar}${name}_h${r}${arrow}{A}\\n),
-            qq(${dolname_scalar}_h${r}${arrow}{A}=111\n)
-          ],
-        } (['$','r',''], ['','r','->'])
-        ), #map [$dollar,$r,$arrow]
-        }
-        qw(closure sublex toplex global subglobal maskedglobal localized
-           A::B::C::ABC)
-      ), #map $name
-      } ('""', "''")
-    ), #map ($LQ,$RQ)
-  )
-  {
-    my ($dvis_input, $expected) = @$test;
-    # warn "## dvis_input='$dvis_input' expected='$expected'\n";
-    
-    { local $@;  # check for bad syntax first, to avoid uncontrolled die later
-      # For some reason we can't catch exceptions from inside package DB.
-      # undef is returned but $@ is not set
-      my $ev = eval { "$dvis_input" };
-      die "Bad test string:$dvis_input\nPerl can't interpolate it"
-         .($@ ? ":\n  $@" : "\n")
-        if $@ or ! defined $ev;
-    }
+  if ($title_L eq "") {
+    $QT_usable = undef;
+  }
 
-    for my $use_oo (0,1) {
-      my $actual;
-      { # Verify that special vars are preserved and don't affect Vis
-        # (except if testing a punctuation var, then don't change it's value)
-  
-        my @fake = (do {$dvis_input =~ /\$(?: [\@!,\/\\] | \^[EW] )/x})
-                      ? ($@, $!, $^E, $,, $/, $\, $^W)
-                      : ('FakeAt', 111, 111, 'Fake,', 'Fake/', 'FakeBS\\', 333);
-        my @nfake;
-        { local ($@, $!, $^E, $,, $/, $\, $^W) = @fake;
-  
-          $actual = $use_oo
-                      ? Vis->dnew($dvis_input)->Dump   # <<<<<<<<<<<<<<< HERE
-                      : dvis($dvis_input);
-  
-          @nfake = ($@, $!, $^E, $,, $/, $\, $^W);
-        }
-        for my $i (0..5) {
-          no warnings;
-          my $varname = (qw($@ $! $^E $, $/ $\ $^W))[$i];
-          # was warn...
-          die "ERROR: $varname was not preserved (expected $fake[$i], got $nfake[$i])\n"
-            unless ($fake[$i] =~ /^\d/ ? ($fake[$i]==$nfake[$i]) : ($fake[$i] eq $nfake[$i]));
-        }
+  return ($title_L, $ABC_usable, $QT_usable);
+}
+
+sub check_currow_data($) {
+  my $letters = shift;  # specifies order of columns. "*" means don't check
+  confess dvis 'WRONG #COLUMNS @letters @$row $rx'
+    if length($letters) != @$row;
+  die "\$rx not right" unless ${ sheet() }->{current_rx} == $rx;
+
+  for (my $cx=0, my $ABC="A"; $cx < length($letters); $cx++, $ABC++) {
+    my $L = substr($letters,$cx,1);
+
+    my ($ABC_v, $err) = getcell_byident($ABC);
+    if ($@) { $err //= "ABC $ABC aborts ($@)" }
+    elsif (! defined $ABC_v) { $err //= "ABC $ABC is undef" }
+
+    # Manually locate the cell
+    my $man_v = $row->[$cx];
+
+    # The Titles    H, F, and Z mask the same-named ABC codes, and refer to
+    # orig. columns E, F, and H .
+    if ($L ne "*") { # data not irregular
+      my $exp_v = "$L$rx"; # expected data value
+
+      if ($man_v ne $exp_v) {
+        $err //= svis 'WRONG DATA accessed by cx: Expecting $exp_v, got $man_v';
       }
-      unless ($expected eq $actual) {
-        confess "\ndvis (oo=$use_oo) test failed: input «",
-                show_white($dvis_input),"»\n",
-                "Expected:\n",show_white($expected),"«end»\n",
-                "Got:\n",show_white($actual),"«end»\n"
+
+      if (defined $title_row) { # Access the cell by title
+        # Titles are always valid [with new implementation...]
+        my $title = $title_row->[$cx];
+        my ($title_L, $ABC_usable, $QT_usable) = title_info($L, $cx);
+        if ($title_L ne "") {
+          $err //= dvis('$title_L is TRUE but $title is EMPTY')
+            if $title eq "";
+          my $vt; ($vt, $err) = getcell_bykey($title, $err);
+          if (u($vt) ne $exp_v) {
+            $err //= svis('row{Title=$title} yields $vt but expecting $exp_v')
+          }
+        }
+        if ($QT_usable) {
+          die "bug" if $title_L eq "";
+          my $qtitle = "'$title'";
+          my $vqt; ($vqt, $err) = getcell_bykey($qtitle, $err);
+          if (u($vqt) ne $exp_v) {
+            $err //= svis('row{QT=$qtitle} yields $vt expecting $exp_v')
+          }
+        }
       }
     }
 
-    # Check Useqq 
-    for my $useqq (0, 1) {
-      my $input = $expected.$dvis_input.'qqq@_(\(\))){\{\}\""'."'"; # gnarly
-      my $exp = doquoting($input, $useqq);
-      my $act =  Vis->vnew($input)->Useqq($useqq)->Dump;
-      die "\n\nUseqq ",u($useqq)," bug:\n"
-         ."   Input   «${input}»\n"
-         ."  Expected «${exp}»\n"
-         ."       Got «${act}»\n"
-        unless $exp eq $act;
+    if (defined $err) {
+      confess "BUG DETECTED...\n", fmtsheet(), "\n",
+              dvis('$rx $letters $cx $ABC $L $man_v $row->[$cx]\n$row\n'),
+              $err;
     }
   }
- };
-} # get_closure()
-sub f($) {
-  get_closure(1);
-  my $code = get_closure(0);
-  get_closure(1);
-  get_closure(1);
-  $code->(@_);
+  check_other_package();
 }
-sub g($) {
-  local $_ = 'SHOULD NEVER SEE THIS';
-  goto &f;
+sub check_titles($) {
+  my $letters = shift;  # specifies current order of columns
+  confess dvis('title_row is UNDEF\n').fmtsheet()
+    unless defined $title_row;
+  for (my $cx=0; $cx < length($letters); $cx++) {
+    my $L = substr($letters, $cx, 1);
+    my ($title_L, $ABC_usable, $QT_usable) = title_info($L, $cx);
+    # $title_L is a letter which must appear in the title
+    #   or "" if the title should be empty
+    # $ABC_usable means the column can be accessed via its ABC letter code.
+    # $QT_usable means the column can be accessed via its 'single-quoted Title'
+    # FIXME: Shouldn't QT_usable _always_ be true?!?
+    die "bug" unless $rows[$title_rx]->[$cx] eq $title_row->[$cx];
+    my $title = $title_row->[$cx];
+    my $qtitle = "'${title}'";
+    my $err;
+    if ($title_L eq "") {
+      $err //= svis 'SHOULD HAVE EMPTY TITLE, not $title'
+        unless $title eq "";
+    }
+    elsif ($title !~ /\Q$title_L\E/) {
+      $err //= svis 'WRONG TITLE $title (expecting $title_L)'
+    }
+    apply_torx {
+      if ($row->[$cx] ne $title) {
+        $err //= svis 'apply_torx title_rx : row->[$cx] is WRONG';
+      }
+    } $title_rx;
+    apply_torx {
+      if ($row->[$cx] ne $title) {
+        $err //= svis 'apply_torx [title_rx] : row->[$cx] is WRONG';
+      }
+    } [$title_rx];
+    if ($ABC_usable) {
+      my $ABC = cx2let($cx);
+      my $v = $colx{$ABC};
+      $err //= svis('WRONG colx{ABC=$ABC} : Got $v, expecting $cx')
+        unless u($v) eq $cx;
+    }
+    if ($QT_usable) {
+      my $v = $colx{$qtitle};
+      $err //= svis('WRONG colx{QT=$qtitle} : Got $v, expecting $cx')
+        unless u($v) eq $cx;
+    }
+    if (defined $err) {
+      confess fmtsheet(), "\n", dvis('$L $cx $title_L \n   '), $err;
+    }
+  }
+  check_other_package();
 }
-&g(42,$toplex_ar);
-print "Tests passed.\n";
+
+sub check_both($) {
+  my $letters = shift;  # indicates current column ordering
+
+  my $prev_verbose = options(verbose => 0);
+  scope_guard { options(verbose => $prev_verbose) };
+
+  croak "Expected $num_cols columns" unless length($letters) == $num_cols;
+
+  check_titles $letters;
+
+  apply {
+    return if $rx < $title_rx;  # omit header rows
+    check_currow_data($letters)
+  };
+}
+
+sub verif_eval_err($) {
+  my ($ln) = @_;
+  my $fn = __FILE__;
+  croak "expected error did not occur at line $ln\n" unless $@;
+
+  my $errmsg = "";
+  if ($@ !~ / at $fn line $ln\.?(?:$|\n)/s) {
+    $errmsg .= "Got UN-expected err (did not point to file $fn line $ln)\n";
+  }
+  if ($@ =~ /Text::CSV/ && !$Carp::Verbose) {
+    $errmsg .= "Error traceback mentions internal package:\n"
+  }
+  if ($errmsg) {
+    croak $errmsg, $@;
+  } else {
+    dprint "Got expected err ",vis($@),"\n";
+  }
+}
+
+# Verify that a column title, alias, etc. is NOT defined
+sub check_colspec_is_undef(@) {
+  foreach(@_) {
+    bug "Colspec ".vis($_)." is unexpectedly defined" 
+      if defined $colx{$_};
+  }
+}
+
+# Verify %colx entries, e.g. aliases.  Arguments are any mixture of
+# [ $ident, $CxorABC] or "Ident_CxorABC".
+sub check_colx(@) {
+  my $colx = sheet()->colx;
+  foreach (@_) {
+    my ($ident, $cx_or_abc);
+    if (ref) {
+      ($ident, $cx_or_abc) = @$_
+    } else {
+      ($ident, $cx_or_abc) = (/^(\w+)_(.*)$/);
+    }
+    my $cx = $cx_or_abc =~ /\d/ ? $cx_or_abc : let2cx($cx_or_abc);
+    my $actual_cx = $colx->{$ident};
+    outercroak "colx{$ident}=",vis($actual_cx),", expecting $cx (arg=",vis($_),")\n"
+      unless u($cx) eq u($actual_cx);
+    die "bug" unless sheet()->[2]->{$ident} eq cx2let($cx)."2";
+  }
+}
+
+####### MAIN ######
+
+#our ($A, $B, $C, $D, $E, $F, $Dalias, $Ealias, $Falias, $Atitle, $Gtitle);
+#  Declaration unnecessary because vars tied in BEGIN{...}
+BEGIN {
+  die "current sheet unexpected" if defined sheet();
+  die "current sheet unexpected" if defined sheet();
+
+  # auto-detect title row (on alias)
+  autodetect_title_rx;
+  read_spreadsheet $infile;
+  options silent => (!$debug), verbose => $debug ;  # auto-creates empty sheet
+  die "bug1" unless 1 == alias "_dummy" => "Btitle";
+  die "bug2" unless title_rx == 1;
+  
+  # auto-detect title row (on magic-row-hash deref)
+  sheet(undef);  # forget previous sheet
+  autodetect_title_rx;
+  read_spreadsheet $infile;
+  options silent => (!$debug), verbose => $debug;
+  die "bug1" unless sheet()->[2]->{Btitle} eq "B2";
+  die "bug2" unless title_rx == 1;
+
+  # auto-detect title row (on tied variable reference)
+  package autodetect_test3 { 
+    use Text::CSV::Edit qw(:DEFAULT :STDVARS);
+    sheet(undef);  
+    our $Btitle;
+    tie_column_vars qw($Btitle);
+    autodetect_title_rx;
+    read_spreadsheet $infile;
+    options silent => (!$debug), verbose => $debug;
+    apply_torx { die "bug1" unless $Btitle eq "B2" } 2;
+    die "bug2" unless title_rx == 1;
+  }
+
+  # Do it manually
+  sheet(undef);  # forget previous sheet
+  tie_column_vars;  # auto-tie to columns whenever they become defined
+  options silent => (!$debug);  # auto-creates empty sheet
+  read_spreadsheet $infile;
+  eval { $_ = alias "_dummy" => "Btitle" }; verif_eval_err(__LINE__);
+
+  { my $s=sheet(); dprint dvis('After reading $infile\n   $$s->{rows}\n   $$s->{colx_desc}\n'); }
+
+  # Aliases without title-row
+  alias Aalias => '^';
+  alias Aalia2 => 0;
+  alias Dalias => 'D';
+  alias Ealias => 'E';
+  alias Falias => 'F';
+  alias Falia2 => 5;
+  alias Galias => 'G';
+  alias Halias => 'H';
+  alias Halia2 => '$';
+
+  check_colx qw(Aalias_0 Aalia2_0 Dalias_D Ealias_E Falias_F
+                Falia2_F Galias_G Halias_H Halia2_H);
+
+  # This must be in the BEGIN block so that titles will be auto-exported
+  title_rx 1;
+}
+
+# "H" is now a title for cx 4, so it maskes the ABC code "H".
+# Pre-existing aliases remain pointing to their original columns.
+alias Halia3 => 'H';
+
+die "Halia3 gave wrong val"  unless sheet()->[2]->{Halia3} eq "E2";
+die "Halias stopped working" unless sheet()->[2]->{Halias} eq "H2";
+die "Halia2 stopped working" unless sheet()->[2]->{Halias} eq "H2";
+die "Falias stopped working" unless sheet()->[2]->{Falias} eq "F2";
+
+# "F" is also a now title for cx 5, but is the same as the ABC code
+alias Falia3 => 'F';
+die "Falia3 gave wrong val"  unless sheet()->[2]->{Falia3} eq "F2";
+die "Falias stopped working" unless sheet()->[2]->{Falias} eq "F2";
+
+# An alias created with a regexp matches titles
+my $Halia3cx = alias Halia4 => qr/^H$/;
+die "wrong alias result" unless $Halia3cx == 4;
+die "Halia4 gave wrong val"  unless sheet()->[2]->{Halia4} eq "E2";
+
+# Create user alias "A" to another column.  This succeeds because
+# ABC codes are hidden by user aliases
+alias A => 2;
+die "alias 'A' gave wrong val" unless sheet()->[2]->{A} eq "C2";
+alias Aalia2 => "A";
+die "Aalia2 gave wrong val" unless sheet()->[2]->{Aalia2} eq "C2";
+unalias 'A';
+die "unaliased 'A' is wrong" unless sheet()->[2]->{A} eq "A2";
+die "Aalia2 stopped working" unless sheet()->[2]->{Aalia2} eq "C2";
+
+alias A => 'C';
+die "alias 'A' gave wrong val" unless sheet()->[2]->{A} eq "C2";
+
+unalias 'A';
+die "'A' after unalias gave wrong val" unless sheet()->[2]->{A} eq "A2";
+alias Aalia2 => "A";
+die "Aalia2 wrong val" unless sheet()->[2]->{Aalia2} eq "A2";
+
+unalias "Aalia2";
+die "unaliased 'A' is wrong" unless sheet()->[2]->{A} eq "A2";
+
+# Try to access the now-undefined alias in a magicrow
+eval { $_ = sheet()->[2]->{Aalia2} }; verif_eval_err(__LINE__);
+
+# Try to create a new alias "H" to another column.  This FAILS because
+# "H" is a Title, and Titles are always valid.
+eval { alias H => 0 }; verif_eval_err(__LINE__);
+
+# Be sure no detritus was left behind when exception was thrown
+eval { alias H => 0 } && die "expected exception did not occur";
+
+die "Aalias gave wrong val" unless sheet()->[2]->{Aalias} eq "A2";
+die "Dalias gave wrong val" unless sheet()->[2]->{Dalias} eq "D2";
+die "Ealias gave wrong val" unless sheet()->[2]->{Ealias} eq "E2";
+die "Falias gave wrong val" unless sheet()->[2]->{Falias} eq "F2";
+die "Falia2 gave wrong val" unless sheet()->[2]->{Falia2} eq "F2";
+die "Galias gave wrong val" unless sheet()->[2]->{Galias} eq "G2";
+die "Halias gave wrong val" unless sheet()->[2]->{Halias} eq "H2";
+die "Halia2 gave wrong val" unless sheet()->[2]->{Halia2} eq "H2";
+
+# Atitle,Btitle,Multi Word Title C,,,F,Gtitle,Z
+check_both('ABCDEFGH');
+
+# Verify error checks
+foreach ([f => 0], [flt => 0, f => 1], [lt => $#rows]) {
+  my @pairs = @$_; 
+  my @saved = ($first_data_rx, $last_data_rx, $title_rx);
+  scope_guard {
+    first_data_rx $saved[0];
+    last_data_rx  $saved[1];
+    title_rx      $saved[2];
+  };
+  while (@pairs) {
+    my ($key,$val) = @pairs[0,1]; @pairs = @pairs[2..$#pairs];
+    if ($key =~ /f/) {
+      first_data_rx $val;
+      die 'bug:first_data_rx as getter' unless u(first_data_rx) eq u($val);
+    }
+    if ($key =~ /l/) {
+      last_data_rx $val;
+      die 'bug:last_data_rx as getter' unless u(last_data_rx) eq u($val);
+    }
+    if ($key =~ /l/) {
+      title_rx $val;
+      die 'bug:title_rx as getter' unless u(title_rx) eq u($val);
+    }
+
+    # rx out of range
+    eval { apply_torx {  } [0..$#rows+1]; }; verif_eval_err(__LINE__);
+    eval { apply_torx {  } [-1..$#rows]; }; verif_eval_err(__LINE__);
+    eval { apply_exceptrx {  } [0..$#rows+1]; }; verif_eval_err(__LINE__);
+    eval { apply_exceptrx {  } [-1..$#rows]; }; verif_eval_err(__LINE__);
+
+    # Attempt to modify read-only sheet variables
+    eval { $num_cols = 33 }; verif_eval_err(__LINE__);
+    eval { $title_rx = 33 }; verif_eval_err(__LINE__);
+
+    # Access apply-related sheet vars outside apply
+    eval { my $i = $rx }; verif_eval_err(__LINE__);
+    eval { my $i = $row }; verif_eval_err(__LINE__);
+    eval { my $i = $linenum }; verif_eval_err(__LINE__);
+    eval { my $i = $row->{A} }; verif_eval_err(__LINE__);
+  }
+}
+
+# Flavors of apply
+    my %visited;
+    sub ck_apply(@) {
+      my %actual = map{ $_ => 1 } @_;
+      my $visited_str = join ",", sort { $a <=> $b } grep{$visited{$_}} keys %visited;
+      foreach(@_){ 
+        confess "ck_apply:FAILED TO VISIT $_ (visited $visited_str)" unless $visited{$_}; 
+      }
+      foreach(keys %visited){ 
+        confess "ck_apply:WRONGLY VISITED $_" unless $actual{$_}; 
+      }
+      while (my($rx,$count) = each %visited) {
+        confess "ck_apply:MULTIPLE VISITS TO $rx" if $count != 1;
+      }
+      %visited = ();
+    }
+    sub ck_applyargs($$) {
+      my ($count, $uargs) = @_;
+      die "ck_coldata:WRONG ARG COUNT" unless @$uargs == $count;
+      return if $rx <= $title_rx;
+      my $L = 'A';
+      for my $cx (0..$count-1) {
+        my $expval = "${L}$rx";
+        confess "ck_coldata:WRONG COL rx=$rx cx=$cx exp=$expval act=$uargs->[$cx]"
+          unless $expval eq $uargs->[$cx];
+        $L++;
+      }
+    }
+    apply { $visited{$rx}++; ck_applyargs(0,\@_); } ; ck_apply(2..6);
+
+    first_data_rx 3;
+    apply { $visited{$rx}++; ck_applyargs(0,\@_); } ; ck_apply(3..6);
+    first_data_rx undef;
+    apply { $visited{$rx}++; ck_applyargs(0,\@_); } ; ck_apply(2..6);
+
+    last_data_rx 4;
+    apply { $visited{$rx}++; ck_applyargs(0,\@_); } ; ck_apply(2..4);
+    last_data_rx undef;
+    apply { $visited{$rx}++; ck_applyargs(0,\@_); } ; ck_apply(2..6);
+
+    first_data_rx 0;  # no-op for apply() because <= title_rx
+    apply { $visited{$rx}++; ck_applyargs(0,\@_); } ; ck_apply(2..6);
+    last_data_rx 4;
+    apply { $visited{$rx}++; ck_applyargs(0,\@_); } ; ck_apply(2..4);
+    apply_all { $visited{$rx}++; ck_applyargs(0,\@_); } ; ck_apply(0..6);
+    first_data_rx undef;
+    last_data_rx undef;
+    apply { $visited{$rx}++; ck_applyargs(0,\@_); } ; ck_apply(2..6);
+
+    last_data_rx 0; # less than title_rx+1
+    apply { $visited{$rx}++; ck_applyargs(0,\@_); } ; ck_apply();
+    last_data_rx undef;
+
+    apply_all { $visited{$rx}++; ck_applyargs(0,\@_); } ; ck_apply(0..6);
+    foreach my $i (0..6) {
+      apply_torx { $visited{$rx}++; ck_applyargs(1,\@_); } $i, 0 ; ck_apply($i);
+      apply_torx { $visited{$rx}++; ck_applyargs(2,\@_); } [$i],"Atitle",1 ; ck_apply($i);
+      apply_exceptrx { $visited{$rx}++; ck_applyargs(0,\@_); } $i ; ck_apply(0..$i-1,$i+1..6);
+      apply_exceptrx { $visited{$rx}++; ck_applyargs(2,\@_); } $i,0,"Btitle" ; ck_apply(0..$i-1,$i+1..6);
+      apply_exceptrx { $visited{$rx}++; } [$i] ; ck_apply(0..$i-1,$i+1..6);
+    }
+    apply_torx { $visited{$rx}++; } [0..6] ; ck_apply(0..6);
+    apply_exceptrx { $visited{$rx}++; } [0..6] ; ck_apply();
+    apply_exceptrx { $visited{$rx}++; } [0..5] ; ck_apply(6);
+
+# Change title_rx
+    title_rx 3;
+      bug unless $title_row->[0] eq "A3";
+      apply { $visited{$rx}++; } ; ck_apply(4..6);
+    title_rx 4;
+      bug unless $title_row->[0] eq "A4";
+      bug unless $rows[$title_rx]->[1] eq "B4";
+      apply { $visited{$rx}++; } ; ck_apply(5..6);
+    title_rx undef; #forget_title_rx;
+      apply { $visited{$rx}++; } ; ck_apply(0..6);
+    title_rx 0;
+      apply { $visited{$rx}++; } ; ck_apply(1..6);
+
+    title_rx 1;  # the correct title row
+      apply { $visited{$rx}++; } ; ck_apply(2..6);
+
+# Add and drop rows
+    new_rows 3,4;
+    delete_rows 3,4,5,6;
+    check_both('ABCDEFGH');
+
+    new_rows 0,3;      # insert 3 rows at the top
+
+    delete_rows 0..2;  # take them back out
+    bug if $title_row->[5] ne 'F';
+    check_both('ABCDEFGH');
+
+# Append a new column
+    our $Ktitle;  # will be tied
+    new_cols '>$', "Ktitle";
+    apply {
+      $Ktitle = "K$rx";
+    };
+    check_both('ABCDEFGHK');
+
+# Insert two new columns before that one
+    our ($Ititle, $Jtitle); # will be tied
+    new_cols '<Ktitle', qw(Ititle Jtitle);
+    apply {
+      bug "rx=$rx" if $rx <= $title_rx;
+      $Ititle = "I$rx"; $Jtitle = "J$rx";
+      bug unless $Ktitle eq "K$rx";
+    };
+    check_both('ABCDEFGHIJK');
+
+# Swap A <-> K
+
+    move_cols ">K", "A";
+    check_both('BCDEFGHIJKA');
+
+    move_cols '0', "Ktitle";
+    check_both('KBCDEFGHIJA');
+
+# And back and forth
+
+    move_cols "<11", qw(A);  # 'A' means cx 0, i.e. Ktitle
+    check_both("BCDEFGHIJAK");
+
+    move_cols "^", "Atitle";
+    check_both("ABCDEFGHIJK");
+
+    move_cols '>$', "Multi Word Title C";
+    check_both("ABDEFGHIJKC");
+
+    move_cols '>B', '$';
+    check_both("ABCDEFGHIJK");
+
+# Delete columns
+
+    apply { bug unless $Gtitle eq "G$rx" };
+    delete_cols 'G';
+    apply { check_colspec_is_undef('Gtitle') };
+    check_both('ABCDEFHIJK');
+
+    delete_cols '^', 'Dalias', '$';
+    # "H" (the title of original col E) is no longer a valid ABC code
+    # because there are now only 5 columns; so the title "H" can now
+    # be used normally, e.g. unquoted
+    check_both('BCEFHIJ');
+
+
+# Put them back
+
+
+    new_cols '<^', "Atitle" ; apply { $Atitle = "A$rx" };
+    check_both('ABCEFHIJ');
+
+    apply_all { return unless $rx==0; $row->[0] = "Restored initial stuff" };
+
+    new_cols '>C',""; apply { $row->[3] = "D$rx" };
+    check_both('ABCDEFHIJ');
+
+    new_cols '>F', qw(Gtitle); apply { $Gtitle = "G$rx" };
+    check_both('ABCDEFGHIJ');
+    apply { bug unless $Gtitle eq "G$rx" };
+
+    new_cols '>$', qw(Ktitle); apply { $Ktitle = "K$rx" };
+    check_both('ABCDEFGHIJK');
+    apply { bug unless $Gtitle eq "G$rx" };
+
+# only_cols
+
+    only_cols qw(A B C D E F G Z I J K);   # (no-op)
+    check_both('ABCDEFGHIJK');
+    apply { bug unless $Gtitle eq "G$rx" };
+
+    only_cols qw(A B C D E F Z I J K);  # (deletes G)
+    check_both('ABCDEFHIJK');
+    apply { check_colspec_is_undef('Gtitle') };
+
+    # Restore col G
+    new_cols '>F', "Gtitle" ; apply { $Gtitle = "G$rx" };
+    check_both('ABCDEFGHIJK');
+    apply { bug unless $Gtitle eq "G$rx" };
+
+
+# Reverse
+
+    reverse_cols;
+    check_both('KJIHGFEDCBA');
+    apply { bug unless $Gtitle eq "G$rx" };
+
+    reverse_cols;
+    check_both('ABCDEFGHIJK');
+    apply { bug unless $Gtitle eq "G$rx" };
+
+# Rename
+
+    rename_cols Atitle => "AAAtitle";
+    bug unless $title_row->[0] eq 'AAAtitle';
+
+    our $AAAtitle;  # will be tied, but not imported at start
+    apply { bug unless $AAAtitle eq "A$rx" };
+    check_both('ABCDEFGHIJK');
+
+    rename_cols AAAtitle => "Atitle";
+    check_both('ABCDEFGHIJK');
+    apply { bug unless $Gtitle eq "G$rx" };
+    check_other_package();
+
+# switch sheet
+
+    my $sheet1 = sheet();
+    my $p = sheet();
+    bug unless defined($p) && $p == $sheet1;
+    bug unless $Text::CSV::Edit::OO::pkg2currsheet{"".__PACKAGE__} == $sheet1;
+    check_other_package();
+
+    # replace with no sheet
+    $p = sheet(undef);
+    bug unless $p == $sheet1;
+    bug if defined $Text::CSV::Edit::OO::pkg2currsheet{"".__PACKAGE__};
+    bug if defined eval { my $x = $num_cols; } ; # expect undef or croak
+    bug if defined eval { my $x = $Atitle;   } ; # expect undef or croak
+    bug if defined $Text::CSV::Edit::OO::pkg2currsheet{"".__PACKAGE__};
+    $p = sheet();
+    bug if defined $p;
+    bug if defined $Text::CSV::Edit::OO::pkg2currsheet{"".__PACKAGE__};
+    bug if defined sheet();
+    check_other_package();
+
+    # put back the first sheet
+    check_other_package();
+    $p = sheet($sheet1);
+    bug if defined $p;
+    bug unless $Text::CSV::Edit::OO::pkg2currsheet{"".__PACKAGE__} == $sheet1;
+    apply { bug unless $Gtitle eq "G$rx" };
+    check_both('ABCDEFGHIJK');
+
+    # switch to a different sheet
+    new_sheet { silent => (! $debug) };
+    my $sheet2 = $Text::CSV::Edit::OO::pkg2currsheet{"".__PACKAGE__};
+    read_spreadsheet $infile2;
+    bug unless sheet() == $sheet2;
+    apply { check_colspec_is_undef('Gtitle') };
+    title_rx 0;
+    apply { check_currow_data('PQRSTU*'); };
+    apply{ our $TitleP; bug if defined $TitleP; };
+    tie_column_vars qr/^Title/;
+    apply { our $TitleP; bug unless $TitleP eq "P$rx"; 
+            check_colspec_is_undef('Gtitle');
+          };
+    apply { check_currow_data('PQRSTU*'); };
+
+    # switch back to original sheet
+    $p = sheet($sheet1);
+    bug unless $p == $sheet2;
+    bug unless $Text::CSV::Edit::OO::pkg2currsheet{"".__PACKAGE__} == $sheet1;
+    apply { our $TitleP; bug unless $Gtitle eq "G$rx"; 
+            check_colspec_is_undef('TitleP');
+          };
+    check_both('ABCDEFGHIJK');
+
+    # and back and forth
+    sheet($sheet2);
+    apply { our $TitleP; bug unless $TitleP eq "P$rx";
+            check_colspec_is_undef('Gtitle');
+          };
+    sheet($sheet1);
+    apply { our $TitleP; bug unless $Gtitle eq "G$rx"; 
+            check_colspec_is_undef('TitleP');
+          };
+
+    # Verify that the OO api does not do anything to the "current package"
+    sheet(undef);
+    { my $obj = Text::CSV::Edit->new();
+      bug if defined $Text::CSV::Edit::OO::pkg2currsheet{"".__PACKAGE__};
+    }
+    bug if defined sheet();
+    check_other_package();
+
+    # Test attaching to another package's sheet
+    sheet($sheet1);
+    { my $tmp;
+      our $Gtitle;
+      apply_torx { die "bug($Gtitle)" unless $Gtitle eq "G2" } [2];
+      sheet_from_package("Other");
+      apply_torx { 
+        die "bug($Gtitle)" if defined eval{ $Gtitle };
+      } [2];
+      eval { my $i = defined $Gtitle }; verif_eval_err(__LINE__);
+      apply_torx { bug unless $Other::OtitleA == 314 } [2];
+      bug unless $Other::Gtitle eq "non-tied-Gtitle-in-Other";
+      bug unless $num_cols == 3;
+      bug unless @rows==4 && $rows[2]->[0]==314;
+      bug unless @Other::rows==4 && $Other::rows[2]->[1]==159;
+      check_other_package();
+      sheet(undef);
+      bug if defined $Text::CSV::Edit::OO::pkg2currsheet{"".__PACKAGE__};
+      eval { sheet_from_package(__PACKAGE__) }; bug unless $@ =~ /has no active sheet/;
+      bug if defined $Text::CSV::Edit::OO::pkg2currsheet{"".__PACKAGE__};
+      bug if defined sheet();
+    }
+
+    # Create an empty sheet with defined num_cols, then add new rows
+    my $old_num_cols = $sheet1->num_cols;
+    my $old_rows = $sheet1->rows;
+    my $old_num_rows = scalar @$old_rows;
+    new_sheet(num_cols => $old_num_cols, silent => (!$debug));
+      bug unless $num_cols == $old_num_cols;
+      bug unless @rows == 0;
+    new_rows 0, $old_num_rows;
+      bug unless @rows == $old_num_rows;
+    foreach (0..$old_num_rows-1) {
+      $rows[$_] = $old_rows->[$_];
+    }
+    title_rx 1;
+    check_both('ABCDEFGHIJK');
+
+    # Create a sheet from existing data
+    new_sheet(rows => $old_rows, silent => (!$debug));
+    title_rx 1;
+    check_both('ABCDEFGHIJK');
+
+    # Put back sheet1
+    sheet($sheet1);
+
+# User-defined attributes
+    { my $hash = attributes;
+      expect1(ref($hash), "HASH");
+      expect1(scalar(keys %$hash),0);
+      attributes->{key1} = "val1";
+      expect1(ref($hash), "HASH");
+      expect1(scalar(keys %$hash),1);
+      expect1($hash->{key1}, "val1");
+      expect1(scalar(keys %{ attributes() }),1);
+    }
+
+# invert
+
+    if ($debug) { print "Before invert:\n"; write_csv "/dev/fd/1" }
+    invert;
+    die if defined eval('$title_rx');
+    if ($debug) { print "After  invert:\n"; write_csv "/dev/fd/1" }
+
+    invert;
+    die if defined eval('$title_rx');
+    apply {
+      return if $rx < 2;  # omit header rows
+      check_currow_data('ABCDEFGHIJK');
+    };
+    title_rx 1;
+    check_both('ABCDEFGHIJK');
+
+#FIXME: Add tests of more error conditions, e.g.
+#  magic $cellvar throws if column was deleted (and not if not)
+
+# Get rid of changes
+
+    delete_cols qw(I J K);
+
+# write_csv
+
+    my $outfile = "/tmp/output.csv";
+    write_csv "$outfile";
+
+    { local $/ = undef; # slurp
+      open(CHK, "<:crlf", $outfile) || die "Could not open $outfile : $!";
+      my $finaldata = <CHK>;
+      close CHK;
+      $finaldata =~ s/"//g;
+      $finaldata =~ s/^[^\n]*//;
+      $testdata =~ s/^[^\n]*//;
+      die dvis('\nWRONG DATA WRITTEN\n\n$finaldata\n\n $testdata\n').fmtsheet()
+        unless $finaldata eq $testdata;
+    }
+    check_other_package();
+
+# sort
+{   package Other;
+    dprint "> Running sort_rows test\n";
+
+    sort_rows { my ($p,$q)=@_; $rows[$p]->[$colx{OtitleA}] <=> $rows[$q]->[$colx{OtitleA}] };
+    #dprint dvis('### AFTER SORT:\n  @rows\n   @linenums\n');
+    die "rows wrong after sort"
+      unless main::arrays_eq [map{$_->[0]} @rows], ["OtitleA",314,777,999];
+    die "linenums wrong after sort"
+      unless main::arrays_eq \@linenums, [1,3,4,2];
+    my @Bs;
+    apply { push @Bs, $OtitleB };
+    die "apply broken after sort" unless main::arrays_eq \@Bs, [159, 888, 000];
+}
+
+if ($debug) {
+  ok(1, "With --debug option (run internally or manually)");
+} else {
+  ok(1, "The whole shebang (without verbose & debug)");
+  # Repeat, this time with debug output to a temp file.  Only if it fails
+  # do we dump the debug output.
+  my ($tfh, $tpath) = tempfile();
+  my $pid = fork;
+  if ($pid == 0) {
+    # CHILD
+    close STDERR; open STDERR, ">>", $tpath or die "$tpath : $!";
+    close STDOUT; open STDOUT, ">>", $tpath or die "$tpath : $!";
+    exec $^X, $0, "--debug";
+    die
+  }
+  die "waitpid bork" unless waitpid($pid,0)==$pid;
+  if ($?) {
+    warn sprintf "** SUB-PROCESS WAIT STATUS = 0x%04X\n", $?;
+    seek $tfh,0,0;
+    while (<$tfh>) { print STDERR $_ }
+    die "\n*** TEST FAILED when run with debug";
+  } else {
+    ok(1, "The whole shebang (with verbose & debug)");
+  }
+} 
+
 exit 0;
-# End Tester
+
