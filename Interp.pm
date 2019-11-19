@@ -8,7 +8,7 @@ use strict; use warnings FATAL => 'all'; use 5.010;
 # (Perl assumes Latin-1 by default).
 use utf8;
 
-$Vis::VERSION = sprintf "%d.%03d", q$Revision: 1.118 $ =~ /(\d+)/g;
+$Vis::VERSION = sprintf "%d.%03d", q$Revision: 1.119 $ =~ /(\d+)/g;
 
 # Copyright © Jim Avera 2012-2014.  Released into the Public Domain
 # by the copyright owner.  (jim.avera AT gmail dot com)
@@ -1173,27 +1173,17 @@ Vis - Enhance Data::Dumper for use in messages
   my %hash = ( complicated => ['lengthy', 'stuff', [1..20]] );
   my $ref = \%hash;
 
-  # Interpolate strings, stingifying aggregates with auto-indenting
-  print svis 'ref=$ref\n hash=%hash\n ARGV=@ARGV\n'; # SINGLE quoted!
+  # Interpolate strings, stingifying aggregates with auto-indenting.
+  print svis 'FYI $ref\n Info: %hash\n args are @ARGV\n'; # SINGLE quoted!
 
-  # dvis (d for debug) is like svis but shows variable= prefixes
+  # dvis (d for debug) is like svis but auto-prefixes values with "varname="
   print dvis 'FYI $ref %hash @ARGV\n';
 
   # Format one item at a time (sans final newline)
   print "ref=", vis($ref), "\n";
   print "ARGV=", avis(@ARGV), "\n";  # (array,values,in,parens)
 
-  dvisq(), svisq(), visq(), and avisq() show strings 'single quoted'
-
-  # Equivalent OO APIs allow using configuration methods
-  print Vis->snew('var=$var ary=@ary hash=%hash\n')
-             ->Maxwidth(120)
-             ->Maxdepth($levels)
-             ->Pad("| ")
-             ->Dump;                                  # like svis()
-  print Vis->dnew('Howdy! $var @ary %hash\n')->Dump;  # like dvis()
-  print Vis->vnew($scalar)->Dump, "\n";               # like vis()
-  print Vis->anew(@array)->Dump, "\n";                # like avis()
+  dvisq(), svisq(), visq(), and avisq()  show strings in 'single quoted' style
 
   { use bigint; # Show large numbers as strings
     my $big = 1_000_000_000 * 1_234_567_890;
@@ -1209,8 +1199,18 @@ Vis - Enhance Data::Dumper for use in messages
   my $var = "Just let me read my Unicode \N{U+263A} ";
   print svis('var=$var\n');
 
-  print Dumper($ref);                                 # Data::Dumper
-  print Vis->new([$ref],['$ref'])->Dump;              #  compatible APIs
+  # Equivalent OO APIs allow using configuration methods
+  print Vis->snew('FYI $ref\n Info: %hash\n args are @ARGV\n')
+             ->Maxwidth(120)
+             ->Maxdepth($levels)
+             ->Pad("| ")
+             ->Dump;                                  # like svis()
+  print Vis->dnew('Howdy! $var @ary %hash\n')->Dump;  # like dvis()
+  print Vis->vnew($scalar)->Dump, "\n";               # like vis()
+  print Vis->anew(@array)->Dump, "\n";                # like avis()
+
+  print Dumper($ref);                         # Data::Dumper
+  print Vis->new([$ref],['$ref'])->Dump;      #  compatible APIs
 
   # Change undef to "undef", but otherwise return the argument as-is
   print u($value),"\n";
@@ -1314,7 +1314,8 @@ This allows @arrays to be shown without taking a reference.
 
 =head2 svisq, dvisq, visq, and avisq
 
-These alternatives use 'single quotes' when formatting strings.
+These alternatives use 'single quotes' when formatting strings, with no \=escapes 
+except for \\.
 
 =head2 OO interfaces
 
@@ -1330,21 +1331,21 @@ Additionally, B<< Vis->new >> provides the same API as Data::Dumper->new.
 
 =over 4
 
-=item $Vis::Maxwidth  I<or>  I<$OBJ>->Maxwidth(I<[NEWVAL]>)
+=item $Vis::Maxwidth   or  $OBJ->Maxwidth(B<[NEWVAL]>)
 
 Sets or gets the maximum number of characters for formatted lines,
-including any prefix set via I<Pad()>.
+including any prefix set via C<Pad()>.
 Default is the your terminal width or 80 if not be detected.
 If Maxwidth=0 output is not folded at all, appearing similar to Data::Dumper
 with Indent(0) but without a final newline.
 
-=item $Vis::MaxStringwidth  I<or>  I<$OBJ>->MaxStringwidth(I<[NEWVAL]>)
+=item $Vis::MaxStringwidth   or   $OBJ->MaxStringwidth(B<NEWVAL>)
 
 Sets or gets the maximum number of characters to be displayed
 for an individual string.  Longer strings are truncated
 and an ellipsis (...) appended.  Zero or undef for no limit.
 
-=item $Vis::Stringify  I<or>  I<$OBJ>->Stringify(I<[...]>)
+=item $Vis::Stringify   or   $OBJ->Stringify(B<[...]>)
 
 Objects of the specified class(es) are allowed to convert themselves to 
 strings before being dumped.  The Stringify property value may be:
@@ -1375,17 +1376,17 @@ default values come from global variables in package B<Vis> :
 
 =over 4
 
-=item $Vis::Quotekeys           I<or>  I<$OBJ>->Quotekeys(I<[NEWVAL]>)
+=item $Vis::Quotekeys            or   $OBJ->Quotekeys(B<NEWVAL>)
 
-=item $Vis::Sortkeys            I<or>  I<$OBJ>->Sortkeys(I<[NEWVAL]>)
+=item $Vis::Sortkeys             or   $OBJ->Sortkeys(B<NEWVAL>)
 
-=item $Vis::Terse               I<or>  I<$OBJ>->Terse(I<[NEWVAL]>)
+=item $Vis::Terse                or   $OBJ->Terse(B<NEWVAL>)
 
-=item $Vis::Indent              I<or>  I<$OBJ>->Indent(I<[NEWVAL]>)
+=item $Vis::Indent               or   $OBJ->Indent(B<NEWVAL>)
 
-=item $Vis::Sparseseen          I<or>  I<$OBJ>->Sparseseen(I<[NEWVAL]>)
+=item $Vis::Sparseseen           or   $OBJ->Sparseseen(B<NEWVAL>)
 
-=item $Vis::Useqq               I<or>  I<$OBJ>->Useqq(I<[NEWVAL]>)
+=item $Vis::Useqq                or   $OBJ->Useqq(B<NEWVAL>)
 
 Note that the B<Useqq(0)> is called implicitly
 by B<svisq>, B<dvisq>, B<visq>, and B<avisq>.
@@ -1404,21 +1405,21 @@ from global variables in Data::Dumper .  Here is a partial list:
 
 =over 4
 
-=item $Data::Dumper::Deepcopy   I<or>  I<$OBJ>->Deepcopy(I<[NEWVAL]>)
+=item $Data::Dumper::Deepcopy    or   $OBJ->Deepcopy(B<NEWVAL>)
 
-=item $Data::Dumper::Freezer    I<or>  I<$OBJ>->Freezer(I<[NEWVAL]>)
+=item $Data::Dumper::Freezer     or   $OBJ->Freezer(B<NEWVAL>)
 
-=item $Data::Dumper::Maxdepth   I<or>  I<$OBJ>->Maxdepth(I<[NEWVAL]>)
+=item $Data::Dumper::Maxdepth    or   $OBJ->Maxdepth(B<NEWVAL>)
 
-=item $Data::Dumper::Pad        I<or>  I<$OBJ>->Pad(I<[NEWVAL]>)
+=item $Data::Dumper::Pad         or   $OBJ->Pad(B<NEWVAL>)
 
-=item $Data::Dumper::Purity     I<or>  I<$OBJ>->Purity(I<[NEWVAL]>)
+=item $Data::Dumper::Purity      or   $OBJ->Purity(B<NEWVAL>)
 
-=item $Data::Dumper::Toaster    I<or>  I<$OBJ>->Toaster(I<[NEWVAL]>)
+=item $Data::Dumper::Toaster     or   $OBJ->Toaster(B<NEWVAL>)
 
-=item $Data::Dumper::Varname    I<or>  I<$OBJ>->Varname(I<[NEWVAL]>)
+=item $Data::Dumper::Varname     or   $OBJ->Varname(B<NEWVAL>)
 
-=item $Data::Dumper::Deparse   I<or>  I<$OBJ>->Deparse(I<[NEWVAL]>)
+=item $Data::Dumper::Deparse     or   $OBJ->Deparse(B<NEWVAL>)
 
 =back
 
@@ -1426,7 +1427,7 @@ This inherited method should not be used with Vis :
 
 =over 4
 
-=item $Data::Dumper::Pair      I<or>  I<$OBJ>->Pair(I<[NEWVAL]>)
+=item $Data::Dumper::Pair        or   $OBJ->Pair(B<NEWVAL>)
 
 =back
 
