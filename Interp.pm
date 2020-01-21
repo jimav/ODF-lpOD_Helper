@@ -8,7 +8,7 @@ use strict; use warnings FATAL => 'all'; use 5.010;
 # (Perl assumes Latin-1 by default).
 use utf8;
 
-$Vis::VERSION = sprintf "%d.%03d", q$Revision: 1.120 $ =~ /(\d+)/g;
+$Vis::VERSION = sprintf "%d.%03d", q$Revision: 1.121 $ =~ /(\d+)/g;
 
 # Copyright © Jim Avera 2012-2014.  Released into the Public Domain
 # by the copyright owner.  (jim.avera AT gmail dot com)
@@ -588,7 +588,7 @@ sub _try_stringify($$$) {
       if (ref($mod) eq "Regexp" ? $class =~ /$mod/ : $class eq $mod) {
         # Allow this object to stringify itself.  The result is an
         # unfortunately-always-quoted string
-        $_[0] = "".$_[0];
+        $_[0] = "($class)".$_[0];
         return 1;
       }
     }
@@ -1362,6 +1362,8 @@ any matching class will be self-stringified by concatenating "".
 
 When self-stringification is performed, a _deep copy_ is made of the 
 entire data, which will impact performance for large structures.
+
+Stringified values will include a (classname) prefix.
 
 Note: 'Stringify' is conceptually related to the 'Freezer' property
 provided by Data::Dumper.  However 'Freezer' can only be used to modify
