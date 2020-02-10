@@ -8,7 +8,7 @@ use strict; use warnings FATAL => 'all'; use 5.010;
 # (Perl assumes Latin-1 by default).
 use utf8;
 
-$Vis::VERSION = sprintf "%d.%03d", q$Revision: 1.122 $ =~ /(\d+)/g;
+$Vis::VERSION = sprintf "%d.%03d", q$Revision: 1.123 $ =~ /(\d+)/g;
 
 # Copyright © Jim Avera 2012-2014.  Released into the Public Domain
 # by the copyright owner.  (jim.avera AT gmail dot com)
@@ -124,6 +124,7 @@ use POSIX qw(INT_MAX);
 use Encode ();
 use Scalar::Util qw(looks_like_number blessed reftype refaddr);
 use List::Util qw(any);
+use overload ();
 
 our $Utf8patch //= 1;
 
@@ -244,7 +245,7 @@ $Maxwidth       = undef       unless defined $Maxwidth; # undef to auto-detect
 $MaxStringwidth = 0           unless defined $MaxStringwidth;
 $Truncsuffix    = "..."       unless defined $Truncsuffix;
 $Debug          = 0           unless defined $Debug;
-$Stringify      = undef       unless defined $Stringify;
+$Stringify      = 1           unless defined $Stringify;
 
 # The following Vis defaults override Data::Dumper defaults
 $Useqq          = 1           unless defined $Useqq;
@@ -580,41 +581,6 @@ sub _first_time_init() {
   }
 }
 
-sub _try_stringify($$$);
-sub _try_stringify($$$) {
-  my ($item, $stringify, $seen) = @_;
-  if (my $class = blessed($item)) {
-    foreach my $mod (@$stringify) {
-      next if $mod eq "";
-      if (ref($mod) eq "Regexp" ? $class =~ /$mod/ : $class eq $mod) {
-        # Allow this object to stringify itself.  The result is an
-        # unfortunately-always-quoted string
-        $_[0] = "($class)".$_[0];
-        return 1;
-      }
-    }
-  }
-  my $reftype = reftype($item);
-  return 0 if ! defined $reftype;
-  my $refaddr = refaddr($item);
-  return 0 if $seen->{$refaddr}++;
-  my $changed = 0;
-  if ($reftype eq 'ARRAY') {
-    foreach (@$item) {
-      $changed=1 if _try_stringify($_, $stringify, $seen);
-    }
-  }
-  elsif ($reftype eq 'HASH') {
-    foreach (values %$item) {
-      $changed=1 if _try_stringify($_, $stringify, $seen);
-    }
-    #while (my($k,$v) = each %$item) {
-    #  $changed=1,$item->{$k}=$v if _try_stringify($v, $stringify, $seen);
-    #}
-  }
-  $changed;
-}
-
 # Reformat Data::Dumper::Dump output in $_
 sub _reformat_dumper_output {
   my ($self, $maxwidth, $debug, $useqq) = @_;
@@ -777,6 +743,25 @@ sub _reformat_dumper_output {
   $_ = join "", @lines;
 }
 
+sub _walk($$;$);
+sub _walk($$;$) {  # (coderef, item, seen)
+  my $seen = $_[2] // {};
+  &{ $_[0] }($_[1]);
+  return unless (my $reftype = reftype($_[1]));
+  my $refaddr = refaddr($_[1]);
+  return if $seen->{$refaddr}++;
+  if ($reftype eq 'ARRAY') {
+    foreach (@{$_[1]}) {
+      _walk($_[0], $_, $seen);
+    }
+  }
+  elsif ($reftype eq 'HASH') {
+    foreach (values %{$_[1]}) {
+      _walk($_[0], $_, $seen);
+    }
+  }
+}
+
 # Dump1 is like Dump except:
 #   1. The user's frame is up one level.
 #   2. The immediate caller is in package DB
@@ -804,27 +789,38 @@ sub Dump1 {
   my $useqq = $self->Useqq();
   $self->Useperl(1) if $useqq eq 'utf8' && $Vis::Useperl_for_utf8;
 
-  my $stringify = $self->Stringify();
-  if (! defined $stringify) {
-    $stringify = [];
-    # N.B. Trampolines arrange to interpose exactly one level, so 
-    # caller(1) is always the user's context
-    if (my $hinthash = (caller(1))[10]) {
-      if (any {/^big/} keys %$hinthash) {
-         push @$stringify, qr/^Math::Big/;
-      }
-    }
-  }
-  $stringify = [$stringify] unless ref($stringify) eq 'ARRAY';
-  if (@$stringify > 0 && $stringify->[0] ne "") {
+  if (my $stringify = $self->Stringify()) { # not undef or "0"
+    $stringify = [ $stringify ] unless ref($stringify) eq 'ARRAY';
     require Clone;
     my @values = map{ Clone::clone($_) } $self->Values;
-    $cloned = 1;
-    my %seen;
-    my $changed = 0;
-    foreach (@values) {
-      $changed=1 if _try_stringify($_, $stringify, \%seen);
-    }
+    my $changed;
+    _walk(
+      sub {
+        if (my $class = blessed($_[0])) {
+          die "OOPS" if overload::Method($class,'""') && !overload::Overloaded($class);
+          #if (overload::Overloaded($class) && overload::Method($class,'""')) {
+          if (overload::Method($class,'""')) {
+            # the object implements stringify
+            my $shouldwe;
+            foreach my $mod (@$stringify) {
+              # Stringify element may be class name, a Regexp matching class name,
+              # or a non-zero number (true value)
+              $shouldwe=1, last if 
+                ref($mod) eq "Regexp" 
+                  ? $class =~ /$mod/
+                  : ($class eq $mod || $mod && $mod =~ /^\d+$/)
+            }
+            if ($shouldwe) {
+              # Allow this object to stringify itself.  The result is an
+              # unfortunately-always-quoted string
+              $_[0] = "($class)".$_[0];
+              $changed++;
+            }
+          }
+        }
+      },
+      \@values
+    );
     $self->Values(\@values) if $changed;
   }
 
@@ -1675,8 +1671,8 @@ if (Vis::_unix_compatible_os()) {
   print "        Vis with Useqq('utf8'):$s\n";
   print "        Vis default           :$r\n";
   $s =~ s/^"(.*)"$/$1/s or die "bug";
-  if ($s ne $unicode_str.'\x{ffff}') {
-    die "***Useqq('utf8') fix does not work!\n","s=<${s}>\n";
+  if ($s ne $unicode_str) {
+    die "***Useqq('utf8') fix does not work!\n","s=<${s}>\n ";
   } else {
     print "Useqq('utf8') works with Vis.\n";
   }
@@ -1856,6 +1852,8 @@ my $ratstr  = '1/9';
 {
   use bignum;  # BigInt and BigFloat together
 
+  local $Vis::Stringify = 1;  # stringify everything possible
+
   my $bigf = eval $bigfstr // die;
   die unless blessed($bigf) =~ /^Math::BigFloat/;
   checkstringy(sub{eval $_[0]}, $bigf, qr/(?:\(Math::BigFloat[^\)]*\))?${bigfstr}/);
@@ -1864,14 +1862,14 @@ my $ratstr  = '1/9';
   die unless blessed($bigi) =~ /^Math::BigInt/;
   checkstringy(sub{eval $_[0]}, $bigi, qr/(?:\(Math::BigInt[^\)]*\))?${bigistr}/);
 
-  # Confirm that Stringify=[] disables
-  { local $Vis::Stringify = [];
+  # Confirm that various Stringify values disable
+  foreach my $Sval (0, undef, "", [], [0], [""]) {
+    local $Vis::Stringify = $Sval;
     my $s = vis($bigf); die "bug($s)" unless $s =~ /^\(?bless.*BigFloat/s; 
   }
 }
 {
   use bigrat;
-
   my $rat = eval $ratstr // die;
   die unless blessed($rat) =~ /^Math::BigRat/;
   checkstringy(sub{eval $_[0]}, $rat, qr/(?:\(Math::BigRat[^\)]*\))?${ratstr}/);
@@ -1881,27 +1879,20 @@ my $ratstr  = '1/9';
   use Math::BigFloat;
   my $bigf = Math::BigFloat->new($bigfstr);
   die unless blessed($bigf) =~ /^Math::BigFloat/;
-  # Without stringification
-  { my $s = vis($bigf); die "bug($s)" unless $s =~ /^bless.*BigFloat/s; } 
-  # With explicit stringification
-  { local $Vis::Stringify = [qr/^Math::BigFloat/];
-    checkstringy(sub{eval $_[0]}, $bigf, qr/(?:\(Math::BigFloat[^\)]*\))?${bigfstr}/);
-  }
-
-  use Math::BigInt;
-  my $bigi = Math::BigInt->new($bigistr);
-  die unless blessed($bigi) =~ /^Math::BigInt/;
-  { my $s = vis($bigi); die "bug($s)" unless $s =~ /^bless.*BigInt/s; } 
-  { local $Vis::Stringify = [qr/^Math::Big/];
-    checkstringy(sub{eval $_[0]}, $bigi, qr/(?:\(Math::BigInt[^\)]*\))?${bigistr}/);
-  }
 
   use Math::BigRat;
   my $rat = Math::BigRat->new($ratstr);
   die unless blessed($rat) =~ /^Math::BigRat/;
-  { my $s = vis($rat); die "bug($s)" unless $s =~ /^bless.*Math::Big/s; } 
-  { local $Vis::Stringify = [qr/^Math::Big/];
-    checkstringy(sub{eval $_[0]}, $rat, qr/(?:\(Math::BigRat[^\)]*\))?${ratstr}/);
+
+  # Without stringification
+  { local $Vis::Stringify = 0;
+    my $s = vis($bigf); die "bug($s)" unless $s =~ /^bless.*BigFloat/s; 
+  }
+  # With explicit stringification of BigFloat only
+  { local $Vis::Stringify = [qr/^Math::BigFloat/];
+    checkstringy(sub{eval $_[0]}, $bigf, qr/(?:\(Math::BigFloat[^\)]*\))?${bigfstr}/);
+    # But not other classes
+    my $s = vis($rat); die "bug($s)" unless $s =~ /^bless.*BigRat/s; 
   }
 }
 
