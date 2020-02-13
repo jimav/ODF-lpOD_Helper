@@ -8,7 +8,7 @@ use strict; use warnings FATAL => 'all'; use 5.010;
 # (Perl assumes Latin-1 by default).
 use utf8;
 
-$Vis::VERSION = sprintf "%d.%03d", q$Revision: 1.123 $ =~ /(\d+)/g;
+$Vis::VERSION = sprintf "%d.%03d", q$Revision: 1.124 $ =~ /(\d+)/g;
 
 # Copyright © Jim Avera 2012-2014.  Released into the Public Domain
 # by the copyright owner.  (jim.avera AT gmail dot com)
@@ -96,11 +96,11 @@ sub Vis_Eval {   # Many ideas here were stolen from perl5db.pl
 #        my $my_h = PadWalker::peek_my($level);
 #        warn "--- level $level ${fn}:$line ($pkg)($subr) ---\n";
 #        while (my ($vn, $vr) = each %$my_h) {
-#          warn "  my $vn = ", debugvis($vr), "\n";
+#          print "  my $vn = ", debugvis($vr), "\n";
 #        }
 #        my $our_h = PadWalker::peek_our($level);
 #        while (my ($vn, $vr) = each %$our_h) {
-#          warn "  our $vn = ", debugvis($vr), "\n";
+#          print "  our $vn = ", debugvis($vr), "\n";
 #        }
 #      }
 #    }
@@ -524,41 +524,6 @@ sub _debug_show($$$$$$) {
   print "=====================\n";
 }
 
-sub trunc_strings { # returns true if anything changed
-  my $self = shift;
-  my $ret = 0;
-  # ** FIXME: Maybe should use Scalar::Util::reftype() here (and elsewhere!)
-  # so as to recurse into object internals?
-  my $kind = ref($_[0]);
-  if (! defined $_[0]) {
-  }
-  elsif($kind eq "ARRAY") {
-    foreach (@{$_[0]}) {
-      $ret = 1 if $self->trunc_strings($_);
-    }
-  }
-  elsif($kind eq "HASH") {
-    foreach (values %{$_[0]}) {
-      $ret = 1 if $self->trunc_strings($_);
-    }
-  }
-  elsif ($kind eq "") { # a defined scalar
-    my $truncsuf = $self->{Truncsuffix};
-    my $tslen = length($truncsuf);
-    my $maxlen = $self->{MaxStringwidth};
-    if (length($_[0]) > ($maxlen+$tslen)) {
-      # FIXME
-      ###die "BUG HERE: Must clone before modifying user data!";
-      $_[0] = substr($_[0],0,$maxlen).$truncsuf;
-      $ret = 1;
-    }
-  }
-  else {
-    # Something else, REGEXP, CODE, etc. or an object ref
-  }
-  return $ret;
-}
-
 sub _qquote_wrapper {
   goto &fixed_qquote if $_[1] eq 'utf8';
   goto &{$Vis::original_qquote};
@@ -589,70 +554,46 @@ sub _reformat_dumper_output {
   #WRONG! Maxwidth==0 means no wrap, but we should still condense!
   #return $_ if $maxwidth == 0; # no condensation
   
-  ##return $_ if /sub\s*\{/s && $self->Deparse; # we can't handle this
-
-  # Split into logical lines, being careful to preserve newlines in strings.
-  # The "delimiter" is the whole (logical) line, including final newline,
-  # which is returned because it is in a (capture group).
+  # Split into logical lines.  Basically, split after newlines except
+  # for newlines inside quoted strings, or inside sub{...} definitions
+  # (these are kept together regardless of maxwidth because the parse code
+  # below could not deal with them if spanning multiple lines).
   my @lines;
-  my $limit = length($_);
-  my $startpos = 0;
-  while ($startpos != $limit) {
-    if ($useqq) {
-      ### FIXME: TODO: BUG HERE:  
-      #while (/\G"(?:[^"\\]++|\\.)*+"/gsc || /\G[^"\n]+/gsc) {}
-      # Ack!  Perl implements (...)* using recursion even when partial
-      # backtracking is not possible, and there is a 64K recursion limit.
-      # Benchmarking shows that ~200 is the sweet spot.
-      while (
-        (/\G"/cgs && do{ while(/\G(?:[^"\\]++|\\.){0,200}+/cgs){} /\G"/cgs })
-        || 
-        /\G\s*sub\s*(?=\{)/cgs && do{ require Text::Balanced;
-                                      () = Text::Balanced::extract_bracketed(
-                                                                      $_, '{[(\'"');
-                                    }
-        || 
-        /\G[^s"\n]+/gsc  # eat until just before 's', then loop to catch 'sub' above
-        || 
-        /\Gs/gsc         # eat an 's' which was not "sub..."
-      ) {}
-    } else {
-      #while (/\G'(?:[^'\\]++|\\['\\])*+'/gsc || /\G[^'\n]+/gsc) {}
-      while (
-        (/\G'/cgs 
-         && do{ while(/\G(?:[^'\\]++|\\['\\]){0,200}+/cgs){} /\G'/cgs })
-        || /\G[^'\n]+/gsc
-      ) {}
-    }
-    /\G\n/gsc or die "oops:".debugvis(substr($_,pos));
+  die "oops" if defined pos;
+  while (/\G(?=.)/cgs) {
+    my $startpos = pos;
+    while (
+      ($useqq ? /\G"([^"\\]++|\\.)*"/cg : /\G'([^'\\]++|\\.)*'/cgs)
+      ||
+      /\Gsub\s*
+          \{  # {block}
+          (
+            [^{}"']++
+            |
+            "(?:[^"\\]++|\\.)*"
+            |
+            '(?:[^'\\]++|\\.)*'
+            |
+            \{ (?-1) \}
+            |
+            \( (?-1) \)
+            |
+            \[ (?-1) \]
+          )*
+          \}/cgsx
+      || 
+      /\G[^s"\n]+/gsc  # eat until just before possible sub or "..."
+      || 
+      /\Gs/gsc         # eat an 's' which was not "sub..."
+    )
+    { }
+    /\G\n/gsc or confess "oops:".debugvis(substr($_,pos));
     push @lines, substr($_, $startpos, pos()-$startpos);
     $startpos = pos();
   }
   undef $_;
-#  my $split_re = $self->Useqq()
-#       ? qr/( (?: "(?:[^"\\]++|\\.)*+" | [^"\n]++ )* \n)/xs
-#       : qr/( (?: '(?:[^'\\]++|\\['\\]|\\(?=[^'\\]))*+' | [^'\n]++ )* \n)/xs;
-#  my @lines = (grep {defined($_) && $_ ne ""} split /$split_re/, $_);
 
-  #print "### Useqq=",$self->Useqq()," split_re=/$split_re/ lines:\n  ",debugvis(\@lines),"\n";
-
-  # Data::Dumper output with Indent(1) is very structured, with a
-  # fixed 2-space indent increment:
-  # [
-  #   value,
-  #   value,
-  #   {
-  #     key => [
-  #       value,
-  #       value
-  #     ],
-  #     key => {
-  #       key => value
-  #       longerkey => value,
-  #     },
-  #   },
-  #   value
-  # ]
+  print "===== ",scalar(@lines)," lines: =====",(map{ "\n  ".debugvis($_) } @lines),"\n" if $debug;
 
   # Combine appropriate lines to make it more "horizontal"
   local $@;  # preserve user's $@ value
@@ -743,23 +684,44 @@ sub _reformat_dumper_output {
   $_ = join "", @lines;
 }
 
+# Walk an arbitrary structure calling &coderef on each item, stopping
+# prematurely if &$coderef returns false.  Members of containers are
+# visited after processing the container item itself, and containerness is
+# checked after &$coderef returns so that &$coderef may transform the
+# item (by reference through $_[0]) e.g. to replace a container with a scalar.
+# RETURNS: The final $&coderef return val (i.e. TRUE unless terminated early)
 sub _walk($$;$);
-sub _walk($$;$) {  # (coderef, item, seen)
+sub _walk($$;$) {  # (coderef, item [, seenhash])
   my $seen = $_[2] // {};
-  &{ $_[0] }($_[1]);
-  return unless (my $reftype = reftype($_[1]));
+  return 0 unless &{ $_[0] }($_[1]);
+  return 1 unless (my $reftype = reftype($_[1]));
   my $refaddr = refaddr($_[1]);
-  return if $seen->{$refaddr}++;
+  return 1 if $seen->{$refaddr}++;
   if ($reftype eq 'ARRAY') {
     foreach (@{$_[1]}) {
-      _walk($_[0], $_, $seen);
+      return 0 unless _walk($_[0], $_, $seen);
     }
   }
   elsif ($reftype eq 'HASH') {
     foreach (values %{$_[1]}) {
-      _walk($_[0], $_, $seen);
+      return 0 unless _walk($_[0], $_, $seen);
     }
   }
+  1
+}
+
+# Edit Values: _walk() is called with the specified subref on the
+# array of Values in the object.  The Values are cloned first to
+# avoid corrupting the user's data structure.
+sub Modify_Values { #internal method
+  my ($self, $coderef) = @_;
+  my @values = $self->Values;
+  unless ($self->{VisCloned}++) {
+    require Clone;
+    @values = map{ Clone::clone($_) } @values;
+  }
+  _walk($coderef, \@values);
+  $self->Values(\@values);
 }
 
 # Dump1 is like Dump except:
@@ -791,46 +753,55 @@ sub Dump1 {
 
   if (my $stringify = $self->Stringify()) { # not undef or "0"
     $stringify = [ $stringify ] unless ref($stringify) eq 'ARRAY';
-    require Clone;
-    my @values = map{ Clone::clone($_) } $self->Values;
-    my $changed;
+    my %hits;
     _walk(
       sub {
         if (my $class = blessed($_[0])) {
-          die "OOPS" if overload::Method($class,'""') && !overload::Overloaded($class);
-          #if (overload::Overloaded($class) && overload::Method($class,'""')) {
-          if (overload::Method($class,'""')) {
-            # the object implements stringify
+          if (overload::Method($class,'""')) { # implements stringify
             my $shouldwe;
             foreach my $mod (@$stringify) {
-              # Stringify element may be class name, a Regexp matching class name,
-              # or a non-zero number (true value)
+              # Stringify may be class name, a Regexp matching class name,
+              # or a non-zero number (i.e. "true")
               $shouldwe=1, last if 
                 ref($mod) eq "Regexp" 
                   ? $class =~ /$mod/
-                  : ($class eq $mod || $mod && $mod =~ /^\d+$/)
+                  : ($class eq $mod || ($mod && $mod =~ /^\d+$/))
             }
-            if ($shouldwe) {
-              # Allow this object to stringify itself.  The result is an
-              # unfortunately-always-quoted string
-              $_[0] = "($class)".$_[0];
-              $changed++;
-            }
+            $hits{ref $_[0]} = $class if $shouldwe;
           }
         }
-      },
-      \@values
+        1
+      }, [$self->Values] 
     );
-    $self->Values(\@values) if $changed;
+    if (%hits) {
+      $self->Modify_Values(sub {
+        if (my $class = $hits{ref $_[0]}) {
+          $_[0] = "($class)".$_[0]
+        }
+        1;
+      });
+    }
   }
 
   if (($maxstringwidth//0) > 0) {
-    require Clone;
-    my @todump = $cloned ? ($self->Values) : (map{ Clone::clone($_) } $self->Values);
-    if ($self->trunc_strings(\@todump)) {
-      $self->Values( \@todump );
+    my $truncsuf = $self->{Truncsuffix};
+    my $maxwid = $maxstringwidth + length($truncsuf);
+    if (! _walk(sub{ 
+                 ! (ref($_[0]) eq "" && length($_[0]) > $maxwid)
+                }, [$self->Values])) 
+    {
+      $self->Modify_Values(
+        sub {
+          if (ref($_[0]) eq "") { # a defined scalar
+            if (length($_[0]) > $maxwid) {
+              $_[0] = substr($_[0],0,$maxstringwidth).$truncsuf;
+            }
+          }
+          1
+        }
+      );
     }
-  }
+  } 
 
   my $pad = $self->Pad();
 
@@ -845,19 +816,28 @@ sub Dump1 {
     #$self->Pad(" ");
   }
 
-  # Hack -- save/restore punctuation variables corrupted by Data::Dumper
-  my ($sAt, $sQ) = ($@, $?);
-
-  # HERE is where Data::Dumper formats the value(s)
-  $_ //= $self->SUPER::Dump;
-
-  ($@, $?) = ($sAt, $sQ);
+  # Use a single number as-is without passing through Data::Dumper, which
+  # shows floating values as 'strings' (it does this to avoid cross-platform 
+  # re-parsing issues, see https://github.com/Perl/perl5/issues/9610)
+  { my @values = $self->Values;
+    if (@values==1 && !ref($values[0]) && looks_like_number($values[0])) {
+      $_ = $pad.$values[0]."\n"; # pad and newline to mimic Data::Dumper::Dump
+    } else {
+      # Hack -- save/restore punctuation variables corrupted by Data::Dumper
+      my ($sAt, $sQ) = ($@, $?);
+    
+      # HERE is where Data::Dumper formats the value(s)
+      $_ //= $self->SUPER::Dump;
+    
+      ($@, $?) = ($sAt, $sQ);
+    }
+  }
 
   s/^ *// if $maxwidth==0;  # remove initial forced pad from Indent(0)
 
   if ($pad ne ""){
     # Remove initial pad; will be put back later
-    s/^\Q${pad}\E//mg || $maxwidth==0 || die "bug($_)";
+    s/^\Q${pad}\E//mg || $maxwidth==0 || confess "bug: pad='${pad}' maxwidth=$maxwidth '$_'";
     if ($maxwidth > 0) {
       $maxwidth -= length($pad);
       if ($maxwidth < 20) {
@@ -1838,6 +1818,11 @@ $_ = "GroupA.GroupB";
   { my $code = 'vis($data)'; check $code, "sub {\n    my \$x = 42;\n}", eval $code; }
 }
 
+# Floating point values (single values special-cased to show not as 'string')
+{ my $code = 'vis(3.14)'; check $code, '3.14', eval $code; }
+# But multiple values are sent through Data::Dumper, so...
+{ my $code = 'vis([3.14])'; check $code, '["3.14"]', eval $code; }
+
 # bigint, bignum, bigrat support
 #
 # Recently Vis was changed to prepend (objtype) to stringified values,
@@ -1852,7 +1837,8 @@ my $ratstr  = '1/9';
 {
   use bignum;  # BigInt and BigFloat together
 
-  local $Vis::Stringify = 1;  # stringify everything possible
+  # stringify everything possible
+  local $Vis::Stringify = 1;  # NOTE: the '1' will be a BigInt !
 
   my $bigf = eval $bigfstr // die;
   die unless blessed($bigf) =~ /^Math::BigFloat/;
@@ -1865,7 +1851,8 @@ my $ratstr  = '1/9';
   # Confirm that various Stringify values disable
   foreach my $Sval (0, undef, "", [], [0], [""]) {
     local $Vis::Stringify = $Sval;
-    my $s = vis($bigf); die "bug($s)" unless $s =~ /^\(?bless.*BigFloat/s; 
+    my $s = vis($bigf); 
+    die "bug($Sval)($s)" unless $s =~ /^\(?bless.*BigFloat/s; 
   }
 }
 {
