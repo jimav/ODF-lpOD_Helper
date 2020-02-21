@@ -8,7 +8,7 @@ use strict; use warnings FATAL => 'all'; use 5.010;
 # (Perl assumes Latin-1 by default).
 use utf8;
 
-$Vis::VERSION = sprintf "%d.%03d", q$Revision: 1.124 $ =~ /(\d+)/g;
+$Vis::VERSION = sprintf "%d.%03d", q$Revision: 1.125 $ =~ /(\d+)/g;
 
 # Copyright © Jim Avera 2012-2014.  Released into the Public Domain
 # by the copyright owner.  (jim.avera AT gmail dot com)
@@ -894,11 +894,13 @@ sub forceqsh($) {
   # Don't use Data::Dumper because it will change
   # wide characters to \x{...} escapes.  For qsh() we assume the user
   # will encode the resulting string as needed, so leave wide chars as-is.
-  if (!/["\$`!\\]/ and !/[^\x{20}-\x{7E}]/) {
-    return "\"${_}\"";  # prefer "..." if no escapes needed
-  } else {
+  
+  # Prefer "..." if no shell escapes are needed (we assume all > 7F are safe)
+  if (/["\$`!\\\x{00}-\x{1F}\x{7F}]/) {
     s/'/'\\''/g; # foo'bar => foo'\''bar
     return "'${_}'";
+  } else {
+    return "\"${_}\""; 
   }
 }
 
