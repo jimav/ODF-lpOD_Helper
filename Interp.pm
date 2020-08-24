@@ -8,7 +8,7 @@ use strict; use warnings FATAL => 'all'; use 5.010;
 # (Perl assumes Latin-1 by default).
 use utf8;
 
-$Vis::VERSION = sprintf "%d.%03d", q$Revision: 1.127 $ =~ /(\d+)/g;
+$Vis::VERSION = sprintf "%d.%03d", q$Revision: 1.128 $ =~ /(\d+)/g;
 
 # Copyright © Jim Avera 2012-2014.  Released into the Public Domain
 # by the copyright owner.  (jim.avera AT gmail dot com)
@@ -699,6 +699,7 @@ sub _reformat_dumper_output {
 # RETURNS: The final $&coderef return val (i.e. TRUE unless terminated early)
 sub _walk($$;$);
 sub _walk($$;$) {  # (coderef, item [, seenhash])
+  no warnings 'recursion';
   my $seen = $_[2] // {};
   # Test for recursion both before and after calling the coderef, in case the
   # code unconditionally clones or otherwise replaces the item with new data.
