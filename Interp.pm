@@ -8,7 +8,7 @@ use strict; use warnings FATAL => 'all'; use 5.010;
 # (Perl assumes Latin-1 by default).
 use utf8;
 
-$Vis::VERSION = sprintf "%d.%03d", q$Revision: 1.126 $ =~ /(\d+)/g;
+$Vis::VERSION = sprintf "%d.%03d", q$Revision: 1.127 $ =~ /(\d+)/g;
 
 # Copyright © Jim Avera 2012-2014.  Released into the Public Domain
 # by the copyright owner.  (jim.avera AT gmail dot com)
@@ -94,7 +94,7 @@ sub Vis_Eval {   # Many ideas here were stolen from perl5db.pl
 #        my (undef,undef,undef,$subr) = caller($level-1+1);
 #        $subr //= "";
 #        my $my_h = PadWalker::peek_my($level);
-#        warn "--- level $level ${fn}:$line ($pkg)($subr) ---\n";
+#        print "--- level $level ${fn}:$line ($pkg)($subr) ---\n";
 #        while (my ($vn, $vr) = each %$my_h) {
 #          print "  my $vn = ", debugvis($vr), "\n";
 #        }
@@ -211,7 +211,7 @@ sub fixed_qquote {
 sub debugvis($) {  # for our internal debug messages
   local $/ = "\n";
   confess "should call debugavis" if @_ != 1;
-  my $s = Data::Dumper->new([shift])->Useqq(1)->Terse(1)->Indent(0)->Sortkeys(\&_sortkeys)->Dump;
+  my $s = Data::Dumper->new([shift])->Useqq(1)->Terse(1)->Indent(0)->Maxdepth(2)->Sortkeys(\&_sortkeys)->Dump;
   chomp $s;
   return $s;
 }
@@ -351,7 +351,7 @@ sub _get_default_width() {
   }
   # elsif(...) { ... }
   else {
-    warn "(fixme) Unrecognized OS $^O or no /dev/null"
+    print "(fixme) Unrecognized OS $^O or no /dev/null"
   }
   return $r || 80;
 }
@@ -549,7 +549,9 @@ sub _first_time_init() {
 # Reformat Data::Dumper::Dump output in $_
 sub _reformat_dumper_output {
   my ($self, $maxwidth, $debug, $useqq) = @_;
+
   print "===== RAW =====\n${_}---------------\n" if $debug;
+  #do{ $|=1; require Carp; print Carp::longmess("===== RAW =====\n${_}---------------") } if $debug;
   
   #WRONG! Maxwidth==0 means no wrap, but we should still condense!
   #return $_ if $maxwidth == 0; # no condensation
@@ -563,16 +565,18 @@ sub _reformat_dumper_output {
   while (/\G(?=.)/cgs) {
     my $startpos = pos;
     while (
-      ($useqq ? /\G"([^"\\]++|\\.)*"/cg : /\G'([^'\\]++|\\.)*'/cgs)
+      /\G"(?:[^"\\]++|\\.)*+"/cg 
+      ||
+      /\G'(?:[^'\\]++|\\.)*+'/cgs
       ||
       /\Gsub\s*
           \{  # {block}
           (
             [^{}"']++
             |
-            "(?:[^"\\]++|\\.)*"
+            "(?:[^"\\]++|\\.)*+"
             |
-            '(?:[^'\\]++|\\.)*'
+            '(?:[^'\\]++|\\.)*+'
             |
             \{ (?-1) \}
             |
@@ -582,11 +586,13 @@ sub _reformat_dumper_output {
           )*
           \}/cgsx
       || 
-      /\G[^s"\n]+/gsc  # eat until just before possible sub or "..."
+      /\G[^s"'\n]+/gsc  # eat until just before possible sub or string
       || 
-      /\Gs/gsc         # eat an 's' which was not "sub..."
+      /\Gs/gsc          # eat an 's' which was not "sub..."
     )
-    { }
+    { 
+      #print "### consumed ", debugvis(substr($_,0,pos)), "\n";
+    }
     /\G\n/gsc or confess "oops:".debugvis(substr($_,pos));
     push @lines, substr($_, $startpos, pos()-$startpos);
     $startpos = pos();
@@ -685,18 +691,29 @@ sub _reformat_dumper_output {
 }
 
 # Walk an arbitrary structure calling &coderef on each item, stopping
-# prematurely if &$coderef returns false.  Members of containers are
-# visited after processing the container item itself, and containerness is
-# checked after &$coderef returns so that &$coderef may transform the
+# prematurely if &$coderef returns false, and skipping any reference
+# which was visited previously.  Members of containers are visited after 
+# processing the container item itself, and containerness is checked 
+# after &$coderef returns so that &$coderef may transform the
 # item (by reference through $_[0]) e.g. to replace a container with a scalar.
 # RETURNS: The final $&coderef return val (i.e. TRUE unless terminated early)
 sub _walk($$;$);
 sub _walk($$;$) {  # (coderef, item [, seenhash])
   my $seen = $_[2] // {};
-  return 0 unless &{ $_[0] }($_[1]);
-  return 1 unless (my $reftype = reftype($_[1]));
-  my $refaddr = refaddr($_[1]);
-  return 1 if $seen->{$refaddr}++;
+  # Test for recursion both before and after calling the coderef, in case the
+  # code unconditionally clones or otherwise replaces the item with new data.
+  #my $orig_item = $_[1];
+  #return 0 if (reftype($orig_item) && $seen->{ refaddr($orig_item) }++);
+  if (reftype($_[1])) {
+    my $refaddr0 = refaddr($_[1]);
+    return 1 if $seen->{$refaddr0}; # increment only below
+  } 
+  # Now call the coderef and re-check the item
+  my $r = &{ $_[0] }($_[1]);
+  return $r unless (my $reftype = reftype($_[1]));
+  my $refaddr1 = refaddr($_[1]);
+  return $r if $seen->{$refaddr1}++;
+  return 0 unless $r;
   if ($reftype eq 'ARRAY') {
     foreach (@{$_[1]}) {
       return 0 unless _walk($_[0], $_, $seen);
@@ -757,7 +774,7 @@ sub Dump1 {
     _walk(
       sub {
         if (my $class = blessed($_[0])) {
-          if (overload::Method($class,'""')) { # implements stringify
+          if (overload::Method($class,'""')) { # implements operator stringify
             my $shouldwe;
             foreach my $mod (@$stringify) {
               # Stringify may be class name, a Regexp matching class name,
@@ -1328,23 +1345,27 @@ and an ellipsis (...) appended.  Zero or undef for no limit.
 
 =item $Vis::Stringify   or   $OBJ->Stringify(B<[...]>)
 
-Objects of the specified class(es) are allowed to convert themselves to 
-strings before being dumped.  The Stringify property value may be:
+Objects of the indicated class(es) are allowed to convert themselves to 
+strings before being dumped.  A "(classname)" prefix will be prepended
+to the string provided by the class.
 
-1) undef (the default): If the caller has 'use bigint' or 'use bignum' 
-or similar in effect, then appropriate class names are inferred,
-(e.g. Math::BigInt) so that those objects appear as strings.
+Strinification is done by concatenating "" to the object, and it is
+done only if the class implements the "" operator.  
 
-2) A string giving the name of a class, a qr/regex/ matching class names,
+The Stringify property value may be:
+
+1) 1 (the default) to enable stringification of all objects which 
+implement the "" operator.
+
+2) 0, undef, or [] to completely disable the feature.
+
+3) A string giving the name of a class, a qr/regex/ matching class names,
 or a ref to an array of those things; objects blessed into 
-any matching class will be self-stringified by concatenating "".
+any matching class will be stringified if possible.
 
-3) "" or [] : The feature is completely disabled
-
-When self-stringification is performed, a _deep copy_ is made of the 
+When stringification is performed, a _deep copy_ is first made of the 
 entire data, which will impact performance for large structures.
 
-Stringified values will include a (classname) prefix.
 
 Note: 'Stringify' is conceptually related to the 'Freezer' property
 provided by Data::Dumper.  However 'Freezer' can only be used to modify
