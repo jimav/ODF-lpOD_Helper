@@ -8,9 +8,9 @@ use strict; use warnings FATAL => 'all'; use 5.010;
 # (Perl assumes Latin-1 by default).
 use utf8;
 
-$Vis::VERSION = sprintf "%d.%03d", q$Revision: 1.128 $ =~ /(\d+)/g;
+$Vis::VERSION = sprintf "%d.%03d", q$Revision: 1.129 $ =~ /(\d+)/g;
 
-# Copyright © Jim Avera 2012-2014.  Released into the Public Domain
+# Copyright © Jim Avera 2012-2020.  Released into the Public Domain
 # by the copyright owner.  (jim.avera AT gmail dot com)
 # Please retain the preceeding attribution in any copies or derivitives.
 
