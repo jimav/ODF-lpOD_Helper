@@ -1,14 +1,15 @@
 use strict; use warnings FATAL => 'all'; use 5.010;
 
+use utf8;
 # This file contains UTF-8 characters in debug-output strings (e.g. « and »).
 # But to see them correctly on a non-Latin1 terminal (e.g. utf-8), your 
 # program has to say 
 #   use open ':std' => ':locale';
 # or otherwise set the STDERR encoding to match what your terminal expects
 # (Perl assumes Latin-1 by default).
-use utf8;
 
-$Vis::VERSION = sprintf "%d.%03d", q$Revision: 1.129 $ =~ /(\d+)/g;
+package Vis;
+use version 0.77; our $VERSION = version->declare(sprintf "v%s", q$Revision: 1.130 $ =~ /(\d[.\d]+)/);
 
 # Copyright © Jim Avera 2012-2020.  Released into the Public Domain
 # by the copyright owner.  (jim.avera AT gmail dot com)
@@ -273,10 +274,10 @@ sub hvisq(@)  { return __PACKAGE__->hnew(@_)->Useqq(0)->Dump1; }
 # trampolines
 #   The interpolation code for svis, etc. must live in package DB and
 #   it's immediate caller must be the user's context.
-sub svis(@)  { @_ = (Vis->snew(@_)); goto &DB::DB_Vis_Interpolate; }
-sub dvis(@)  { @_ = (Vis->dnew(@_)); goto &DB::DB_Vis_Interpolate; }
-sub svisq(@) { @_ = (Vis->snew(@_)->Useqq(0)); goto &DB::DB_Vis_Interpolate; }
-sub dvisq(@) { @_ = (Vis->dnew(@_)->Useqq(0)); goto &DB::DB_Vis_Interpolate; }
+sub svis($)  { @_ = (Vis->snew(@_)); goto &DB::DB_Vis_Interpolate; }
+sub dvis($)  { @_ = (Vis->dnew(@_)); goto &DB::DB_Vis_Interpolate; }
+sub svisq($) { @_ = (Vis->snew(@_)->Useqq(0)); goto &DB::DB_Vis_Interpolate; }
+sub dvisq($) { @_ = (Vis->dnew(@_)->Useqq(0)); goto &DB::DB_Vis_Interpolate; }
 
 sub Dump { 
   my $self = $_[0];
@@ -922,15 +923,11 @@ sub forceqsh($) {
   }
 }
 
-sub qsh(_;@) {
-  my @args = @_;  # needed in case $_ is bound by prototype "_"
-  my @results = map {
-                  defined $_
-                    ? (/[^-=\w_\/:\.,]/ || $_ eq "" || ref) ? forceqsh($_) : $_
-                    : "undef";
-                }
-                @args;
-  return wantarray ? @results : join(" ",@results);
+sub qsh(_) {
+  local $_ = shift;
+  defined $_
+    ? (/[^-=\w_\/:\.,]/ || $_ eq "" || ref) ? forceqsh($_) : $_
+    : "undef";
 }
 
 # Quote paths for shell: Like qsh but doesn't quote an initial ~ or ~username
@@ -1011,6 +1008,7 @@ sub DB_Vis_Interpolate {
   my @actions;
   {
     # N.B. The evals are executed below after $_ is restored.
+    # Multiple values are not possible except via internal constructors.
     local $_ = join "", map {defined($_) ? $_ : '<undef arg>'} $self->Values();
     while (1) {
       #print "### pos()=",Vis::u(pos()),"\n" if $debug;
@@ -1265,11 +1263,11 @@ Vis is a subclass of Data::Dumper and is a drop-in replacement.  The old
 APIs are all available through Vis but produce condensed output formatting.
 Data::Dumper may still be called directly (see "PERFORMANCE").
 
-=head2 svis 'string to be interpolated', ...
+=head2 svis 'string to be interpolated'
 
-The arguments are concatenated, interpolating variables and escapes
-as in in Perl double-quotish strings except that interpolated variables
-are formatted using C<vis()> or C<avis()> for $ or @ expressions, respectively.  
+Returns the argument with variable references and escapes interpolated
+as in in Perl double-quotish strings except that variable values are
+formatted using C<vis()> or C<avis()> for $ or @ expressions, respectively.  
 In addition, C<%name> is interpolated as S<<< C<< (key => value ...) >> >>>, and
 C<< $name->method(...) >> is interpolated as a method call (if args are given, 
 no space is allowed before the open parenthesis).
@@ -1277,10 +1275,10 @@ no space is allowed before the open parenthesis).
 Multi-line structures are indented to line up with their starting position,
 taking into account any preceeding text on the same line.
 
-The argument string(s) should be written SINGLE QUOTED so Perl will not
-interpolate them before passing to svis().
+The argument string should be written SINGLE QUOTED so Perl will not
+interpolate it before passing to svis().
 
-=head2 dvis 'string to be interpolated', ...
+=head2 dvis 'string to be interpolated'
 
 'd' is for 'debug display'.  C<dvis> is identical to C<svis>
 except that interpolated expressions are prefixed by
@@ -1471,7 +1469,7 @@ Unlike C<qsh>, C<forceqsh> requires a single argument which must be defined.
 =head1 PERFORMANCE
 
 Vis calls Data::Dumper and then condenses the output.
-C<svis> and C<dvis> must also parse the strings to be interpolated.
+C<svis> and C<dvis> must also parse the string to be interpolated.
 For most purposes the extra overhead is not significant.
 
 Single-quote style (C<Useqq(0)>) runs faster because
@@ -1786,9 +1784,10 @@ $_ = "GroupA.GroupB";
 
 { my $code = 'qsh("a b")';           check $code, '"a b"',  eval $code; }
 { my $code = 'qsh(undef)';           check $code, "undef",  eval $code; }
-{ my $code = 'qsh("a b","c d","e",undef,"g",q{\'ab\'"cd"})';       
-   check $code, ['"a b"','"c d"',"e","undef","g","''\\''ab'\\''\"cd\"'"], eval $code; }
-{ my $code = 'qshpath("a b")';       check $code, '"a b"',  eval $code; }
+#qsh no longer accepts multiple args
+#{ my $code = 'qsh("a b","c d","e",undef,"g",q{\'ab\'"cd"})';       
+#   check $code, ['"a b"','"c d"',"e","undef","g","''\\''ab'\\''\"cd\"'"], eval $code; }
+#{ my $code = 'qshpath("a b")';       check $code, '"a b"',  eval $code; }
 { my $code = 'qshpath("~user")';     check $code, "~user",  eval $code; }
 { my $code = 'qshpath("~user/a b")'; check $code, '~user/"a b"', eval $code; }
 { my $code = 'qshpath("~user/ab")';  check $code, "~user/ab", eval $code; }
@@ -1809,18 +1808,22 @@ $_ = "GroupA.GroupB";
 { my $code = 'hvis("foo",$_)'; check $code, "(foo => \"${_}\")", eval $code; }
 { my $code = 'avis(@_)'; check $code, '()', eval $code; }
 { my $code = 'hvis(@_)'; check $code, '()', eval $code; }
-{ my $code = 'svis(q($_ con),q(caten),q(ated\n))';
-  check $code, "\"${_}\" concatenated\n", eval $code;
-}
-{ my $code = 'dvis(q($_ con),q(caten),q(ated\n))';
-  check $code, "\$_=\"${_}\" concatenated\n", eval $code;
-}
+# dvis & svis no longer accept multiple args
+#{ my $code = 'svis(q($_ con),q(caten),q(ated\n))';
+#  check $code, "\"${_}\" concatenated\n", eval $code;
+#}
+#{ my $code = 'dvis(q($_ con),q(caten),q(ated\n))';
+#  check $code, "\$_=\"${_}\" concatenated\n", eval $code;
+#}
 { my $code = 'avis(undef)'; check $code, "(undef)", eval $code; }
 { my $code = 'hvis("foo",undef)'; check $code, "(foo => undef)", eval $code; }
 { my $code = 'vis(undef)'; check $code, "undef", eval $code; }
-{ my $code = 'svis("foo",undef)'; check $code, "foo<undef arg>", eval $code; }
-{ my $code = 'dvis("foo",undef)'; check $code, "foo<undef arg>", eval $code; }
-{ my $code = 'dvisq("foo",undef)'; check $code, "foo<undef arg>", eval $code; }
+{ my $code = 'svis(undef)'; check $code, "<undef arg>", eval $code; }
+{ my $code = 'dvis(undef)'; check $code, "<undef arg>", eval $code; }
+{ my $code = 'dvisq(undef)'; check $code, "<undef arg>", eval $code; }
+#{ my $code = 'svis("foo",undef)'; check $code, "foo<undef arg>", eval $code; }
+#{ my $code = 'dvis("foo",undef)'; check $code, "foo<undef arg>", eval $code; }
+#{ my $code = 'dvisq("foo",undef)'; check $code, "foo<undef arg>", eval $code; }
 
 { my $code = q/my $s; my @a=sort{ $s=dvis('$a $b'); $a<=>$b }(3,2); "@a $s"/ ;
   check $code, '2 3 a=3 b=2', eval $code; 
