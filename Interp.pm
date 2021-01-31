@@ -9,7 +9,7 @@ use utf8;
 # (Perl assumes Latin-1 by default).
 
 package Vis;
-use version 0.77; our $VERSION = version->declare(sprintf "v%s", q$Revision: 1.130 $ =~ /(\d[.\d]+)/);
+use version 0.77; our $VERSION = version->declare(sprintf "v%s", q$Revision: 1.131 $ =~ /(\d[.\d]+)/);
 
 # Copyright © Jim Avera 2012-2020.  Released into the Public Domain
 # by the copyright owner.  (jim.avera AT gmail dot com)
@@ -914,11 +914,11 @@ sub forceqsh($) {
   # wide characters to \x{...} escapes.  For qsh() we assume the user
   # will encode the resulting string as needed, so leave wide chars as-is.
   
-  # Prefer "..." if no shell escapes are needed (we assume all > 7F are safe)
   if (/["\$`!\\\x{00}-\x{1F}\x{7F}]/) {
     s/'/'\\''/g; # foo'bar => foo'\''bar
     return "'${_}'";
   } else {
+    # Prefer "..." if no shell escapes are needed (assume all > 7F are safe)
     return "\"${_}\""; 
   }
 }
