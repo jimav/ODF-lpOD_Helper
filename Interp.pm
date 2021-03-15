@@ -9,7 +9,7 @@ use utf8;
 # (Perl assumes Latin-1 by default).
 
 package Vis;
-use version 0.77; our $VERSION = version->declare(sprintf "v%s", q$Revision: 1.131 $ =~ /(\d[.\d]+)/);
+use version 0.77; our $VERSION = version->declare(sprintf "v%s", q$Revision: 1.132 $ =~ /(\d[.\d]+)/);
 
 # Copyright © Jim Avera 2012-2020.  Released into the Public Domain
 # by the copyright owner.  (jim.avera AT gmail dot com)
@@ -71,7 +71,6 @@ sub Vis_Eval {   # Many ideas here were stolen from perl5db.pl
 
   my $at = $@;
 
-  # Now save the possibly-modified values of punctuation variables.
   # Because of tied variables, we may have just executed user code!
   # So save the possibly-modified punctuation variables again and 
   # reset them to sane values.
@@ -87,7 +86,7 @@ sub Vis_Eval {   # Many ideas here were stolen from perl5db.pl
 
   if ($at) {
     $at =~ s/ at (?:\(eval \d+\)|\S+) line \d+\.?\n?\z//s;
-    push @DB::CARP_NOT, 'Vis';
+    push @DB::CARP_NOT, 'Vis';  # Is this necessary? 
 #    { ###TEMP
 #      require PadWalker;
 #      for (my $level=1; defined(caller($level-1)); $level++) {
@@ -108,7 +107,7 @@ sub Vis_Eval {   # Many ideas here were stolen from perl5db.pl
     Carp::croak(
       $Vis::error_prefix,
       (index($at,$evalarg) >= 0 ? "" : "Error interpolating '$evalarg', "),
-      "$at (package ",scalar(caller),")\n");
+      "$at (package $Vis::pkg (then ",scalar(caller),"))\n");
   }
 
   return @result;
