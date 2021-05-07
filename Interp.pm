@@ -9,7 +9,7 @@ use utf8;
 # (Perl assumes Latin-1 by default).
 
 package Vis;
-use version 0.77; our $VERSION = version->declare(sprintf "v%s", q$Revision: 1.132 $ =~ /(\d[.\d]+)/);
+use version 0.77; our $VERSION = version->declare(sprintf "v%s", q$Revision: 1.133 $ =~ /(\d[.\d]+)/);
 
 # Copyright © Jim Avera 2012-2020.  Released into the Public Domain
 # by the copyright owner.  (jim.avera AT gmail dot com)
@@ -1011,37 +1011,31 @@ sub DB_Vis_Interpolate {
     local $_ = join "", map {defined($_) ? $_ : '<undef arg>'} $self->Values();
     while (1) {
       #print "### pos()=",Vis::u(pos()),"\n" if $debug;
-      if (
-        # \G does not work with (?|...) in Perl 5.12.4
-        # https://rt.perl.org/rt3//Public/Bug/Display.html?id=112894
-
-        # $name->method
-        # $name->method(...)
-        /\G (?!\\)(\$)( $variable_re ${method_call_re} )/xsgc
-        ||
-        # $name $name[expr] $name->{expr} ${refexpr}->[expr] etc.
-        /\G (?!\\)(\$)( $variable_re ${scalar_index_re}? )/xsgc
-        ||
-        # ${name} ${name->[expr]} etc. (loosing the curlies)
-        /\G (?!\\)(\$) \{ ( $variable_re ${scalar_index_re}? ) \}/xsgc
-        ||
-        # @name @name[slice] @name{slice} @{refexpr}[slice1][slice2] etc.
-        /\G (?!\\)(\@)( $variable_re ${slice_re}* )/xsgc
-        ||
-        # @{name} @{name[slice]} etc. (loosing the curlies)
-        /\G (?!\\)(\@) \{ ( $variable_re ${slice_re}* ) \}/xsgc
-        ||
+        
+      # Recognize $var or @var then collect immediately-following
+      # {key}[index]->[derefindex]->method(args) etc.
+      my ($sigl, $rhs);
+      if (/\G (?!\\)([\$\@])( $variable_re )/xsgc) {
+        ($sigl, $rhs) = ($1, $2);
+        while (
+          /\G ( ${scalar_index_re} )/xsgc  # ->{key} or ->[ix]
+          ||
+          /\G ( ${slice_re} )/xsgc         # {key} or [ix]
+          ||
+          /\G ( ${method_call_re} )/xsgc   # ->method(args)
+        ) {
+          $rhs .= $1
+        }
+      }
+      elsif (/\G (?!\\)(\%)( $variable_re )/xsgc) {
         # %name
-        /\G (?!\\)(\%)( $variable_re )/xsgc
-       )
-      {
-        push @actions, ['e',$1,$2];  # eval $1$2
+        ($sigl, $rhs) = ($1, $2);
+      }
+
+      if (defined $sigl) {
+        push @actions, ['e',$sigl,$rhs];  # eval $sigl$rhs
         if ($debug) {
-          print "### regex match ($_):";
-          for my $i (1..$#+) {
-            eval "print \" $i=«\$$i»\" if defined \$$i;"; die "bug" if $@;
-          }
-          print "\n";
+          print "### regex match ($_): sigl='${sigl}' rhs='${rhs}'\n";
         }
       }
       elsif (/\G ( (?: [^\$\@%\\]+ | \\. )+ ) /xsgc) {
