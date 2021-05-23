@@ -9,7 +9,7 @@ use utf8;
 # (Perl assumes Latin-1 by default).
 
 package Vis;
-use version 0.77; our $VERSION = version->declare(sprintf "v%s", q$Revision: 1.133 $ =~ /(\d[.\d]+)/);
+use version 0.77; our $VERSION = version->declare(sprintf "v%s", q$Revision: 1.134 $ =~ /(\d[.\d]+)/);
 
 # Copyright © Jim Avera 2012-2020.  Released into the Public Domain
 # by the copyright owner.  (jim.avera AT gmail dot com)
@@ -226,8 +226,8 @@ sub debugavis(@) {  # for our internal debug messages
 }
 
 use Exporter 'import';
-our @EXPORT    = qw(vis  avis  lvis  svis  dvis  hvis
-                    visq avisq lvisq svisq dvisq hvisq
+our @EXPORT    = qw(vis  avis  lvis  svis  dvis  hvis  hlvis
+                    visq avisq lvisq svisq dvisq hvisq hlvisq
                     u qsh forceqsh qshpath);
                     #Dumper
 our @EXPORT_OK = qw($Maxwidth $MaxStringwidth $Truncsuffix $Debug 
@@ -269,6 +269,8 @@ sub lvis(@)   { return __PACKAGE__->lnew(@_)->Dump1; }
 sub lvisq(@)  { return __PACKAGE__->lnew(@_)->Useqq(0)->Dump1; }
 sub hvis(@)   { return __PACKAGE__->hnew(@_)->Dump; }
 sub hvisq(@)  { return __PACKAGE__->hnew(@_)->Useqq(0)->Dump1; }
+sub hlvis(@)  { return __PACKAGE__->hlnew(@_)->Dump; }
+sub hlvisq(@) { return __PACKAGE__->hlnew(@_)->Useqq(0)->Dump1; }
 
 # trampolines
 #   The interpolation code for svis, etc. must live in package DB and
@@ -398,9 +400,8 @@ sub anew {
   $obj;
 }
 sub lnew {
-  my $class = shift;
-  my $obj = (bless($class->SUPER::new([\@_]), $class))->_config_defaults();
-  $obj->{VisType} = 'l';
+  my $obj = &anew;
+  $obj->{VisType} = 'l';  # return bare "list,of,items"
   $obj;
 }
 sub hnew {
@@ -409,6 +410,11 @@ sub hnew {
     if (@_ % 2) != 0;
   my $obj = (bless($class->SUPER::new([{@_}]), $class))->_config_defaults();
   $obj->{VisType} = 'a';
+  $obj;
+}
+sub hlnew {
+  my $obj = &hnew;
+  $obj->{VisType} = 'l';  # return bare "key => value, ..." sans parens
   $obj;
 }
 sub snew {
@@ -875,7 +881,8 @@ sub Dump1 {
   if ($self->{VisType}) {
     s/\s+\z//s;  # omit final newline except when emulating Data::Dumper
     if ($self->{VisType} eq 'a') {
-      s/^( *)[\[{]/$1\(/ or confess "bug1($_)"; # convert to "(list,of,args)"
+      # Convert {...} or [...] to (...)
+      s/^( *)[\[{]/$1\(/ or confess "bug1($_)";
       s/[\]}]$/\)/ or confess "bug2($_)";
     }
     elsif ($self->{VisType} eq 'l') {
@@ -1591,7 +1598,9 @@ sub checkstringy(&$$) {
     [ 'visq($_[1])',             '_q_' ],
     [ 'avis($_[1])',             '(_Q_)' ],
     [ 'avisq($_[1])',            '(_q_)' ],
-    #currently brokern due to $VAR problem: [ 'avisq($_[1], $_[1])',     '(_q_, _q_)' ],
+    #currently broken due to $VAR problem: [ 'avisq($_[1], $_[1])',     '(_q_, _q_)' ],
+    [ 'lvis($_[1])',             '_Q_' ],
+    [ 'lvisq($_[1])',            '_q_' ],
     [ 'svis(\'$_[1]\')',         '_Q_' ],
     [ 'svis(\'foo$_[1]\')',      'foo_Q_' ],
     [ 'svis(\'foo$\'."_[1]")',   'foo_Q_' ],
@@ -1799,8 +1808,10 @@ $_ = "GroupA.GroupB";
 { my $code = 'vis'; check $code, "\"${_}\"", eval $code; }
 { my $code = 'avis($_,1,2,3)'; check $code, "(\"${_}\",1,2,3)", eval $code; }
 { my $code = 'hvis("foo",$_)'; check $code, "(foo => \"${_}\")", eval $code; }
+{ my $code = 'hlvis("foo",$_)'; check $code, "foo => \"${_}\"", eval $code; }
 { my $code = 'avis(@_)'; check $code, '()', eval $code; }
 { my $code = 'hvis(@_)'; check $code, '()', eval $code; }
+{ my $code = 'hlvis(@_)'; check $code, '', eval $code; }
 # dvis & svis no longer accept multiple args
 #{ my $code = 'svis(q($_ con),q(caten),q(ated\n))';
 #  check $code, "\"${_}\" concatenated\n", eval $code;
