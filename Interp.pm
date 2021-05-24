@@ -9,7 +9,7 @@ use utf8;
 # (Perl assumes Latin-1 by default).
 
 package Vis;
-use version 0.77; our $VERSION = version->declare(sprintf "v%s", q$Revision: 1.134 $ =~ /(\d[.\d]+)/);
+use version 0.77; our $VERSION = version->declare(sprintf "v%s", q$Revision: 1.135 $ =~ /(\d[.\d]+)/);
 
 # Copyright © Jim Avera 2012-2020.  Released into the Public Domain
 # by the copyright owner.  (jim.avera AT gmail dot com)
@@ -1019,7 +1019,7 @@ sub DB_Vis_Interpolate {
     while (1) {
       #print "### pos()=",Vis::u(pos()),"\n" if $debug;
         
-      # Recognize $var or @var then collect immediately-following
+      # Recognize $var or ${...} or @var etc. then collect immediately-following
       # {key}[index]->[derefindex]->method(args) etc.
       my ($sigl, $rhs);
       if (/\G (?!\\)([\$\@])( $variable_re )/xsgc) {
@@ -1055,7 +1055,7 @@ sub DB_Vis_Interpolate {
       else {
         if (/\G./) {
           my $tmp = $_; $tmp =~ s/[^\x{20}-\x{7E}]/?/g;
-          die "Vis bug: next:",substr($tmp,pos//0,4),
+          die "Syntax error (or Vis bug): next:",substr($tmp,pos//0,4),
               "... pos=",Vis::u(pos)," in:\n$tmp\n".(" "x (pos//0))."^\n "
         }
         last;
