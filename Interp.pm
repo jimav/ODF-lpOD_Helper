@@ -9,7 +9,7 @@ use utf8;
 # (Perl assumes Latin-1 by default).
 
 package Vis;
-use version 0.77; our $VERSION = version->declare(sprintf "v%s", q$Revision: 1.135 $ =~ /(\d[.\d]+)/);
+use version 0.77; our $VERSION = version->declare(sprintf "v%s", q$Revision: 1.136 $ =~ /(\d[.\d]+)/);
 
 # Copyright © Jim Avera 2012-2020.  Released into the Public Domain
 # by the copyright owner.  (jim.avera AT gmail dot com)
@@ -125,6 +125,8 @@ use Encode ();
 use Scalar::Util qw(looks_like_number blessed reftype refaddr);
 use List::Util qw(any);
 use overload ();
+
+use Terminalsize qw(get_terminal_columns);
 
 our $Utf8patch //= 1;
 
@@ -326,36 +328,11 @@ sub _unix_compatible_os() {
   state $result //=
     # There must be a better way...
     (($^O !~ /win|dos/i && $^O =~ /ix$|ux$|bsd|svr|uni|osf|sv$/)
-     || $^O eq 'drawin'
+     || $^O eq 'darwin'
      || $^O eq 'cygwin'
     )
     && -w "/dev/null";
   $result;
-}
-sub _get_default_width() {
-  local ($_, $!, $^E);
-  my ($self) = @_;
-  my $r;
-  if ($ENV{COLUMNS}) {
-    $r = $ENV{COLUMNS};
-  }
-  elsif (_unix_compatible_os) {
-    #if (-t STDERR) {
-    {
-      no warnings;
-      ($r = qx'tput cols 2>/dev/null') # on Linux, seems to print 80 even if no tty
-      ||
-      (($r) = ((qx'stty -a 2>/dev/null'//"") =~ /.*; columns (\d+);/s))
-      ;
-      { local $/ = "\n"; chomp $r if $r; }
-      print "## Vis detected terminal width is ",u($r),"\n" if $self->{VisDebug};
-    }
-  }
-  # elsif(...) { ... }
-  else {
-    print "(fixme) Unrecognized OS $^O or no /dev/null"
-  }
-  return $r || 80;
 }
 
 sub _config_defaults {
@@ -365,7 +342,8 @@ sub _config_defaults {
   ### $Data::Dumper::Useqq setting, e.g. 'utf8'
   $self->Useqq(1) unless $self->Useqq();
 
-  $Maxwidth = $self->_get_default_width() if ! defined $Maxwidth;
+  $Maxwidth = get_terminal_columns(debug => $self->{VisDebug})//80
+    if ! defined $Maxwidth;
 
   $self
     ->Quotekeys($Quotekeys)
