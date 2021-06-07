@@ -9,7 +9,7 @@ use utf8;
 # (Perl assumes Latin-1 by default).
 
 package Vis;
-use version 0.77; our $VERSION = version->declare(sprintf "v%s", q$Revision: 1.136 $ =~ /(\d[.\d]+)/);
+use version 0.77; our $VERSION = version->declare(sprintf "v%s", q$Revision: 1.137 $ =~ /(\d[.\d]+)/);
 
 # Copyright © Jim Avera 2012-2020.  Released into the Public Domain
 # by the copyright owner.  (jim.avera AT gmail dot com)
@@ -648,7 +648,8 @@ sub _reformat_dumper_output {
                 die "bug J=$J K=$K\n   lines=(\n   ",join("\n   ",map{debugvis($_)} @lines),"\n   )" if $K > $#lines;
                 $lines[$K] =~ /^( *)/;
                 last if length($1) <= $Iindent; # end of nested block
-                die "BUG: WOUld remove non-indent chars" if length($1) < (-$adj);
+                die "BUG: Would remove non-indent chars adj=$adj len=",length($1) 
+                  if length($1) < (-$adj);
                 #if ($adj > 0) {
                 #  $lines[$K] = $extra_prefix . $lines[$K];
                 #} else { 
@@ -669,7 +670,7 @@ sub _reformat_dumper_output {
       }
     }
   }; # eval
-  unshift @lines, "VIS ERROR:$@" if $@; # show the error, but keep the Data::Dumper output
+  unshift @lines, __PACKAGE__." BUG: $@" if $@; # show the error, but keep the Data::Dumper output
 
   $_ = join "", @lines;
 }
