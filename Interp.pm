@@ -9,7 +9,7 @@ use utf8;
 # (Perl assumes Latin-1 by default).
 
 package Vis;
-use version 0.77; our $VERSION = version->declare(sprintf "v%s", q$Revision: 1.137 $ =~ /(\d[.\d]+)/);
+use version 0.77; our $VERSION = version->declare(sprintf "v%s", q$Revision: 1.138 $ =~ /(\d[.\d]+)/);
 
 # Copyright © Jim Avera 2012-2020.  Released into the Public Domain
 # by the copyright owner.  (jim.avera AT gmail dot com)
@@ -790,7 +790,7 @@ sub Dump1 {
     my $truncsuf = $self->{Truncsuffix};
     my $maxwid = $maxstringwidth + length($truncsuf);
     if (! _walk(sub{ 
-                 ! (ref($_[0]) eq "" && length($_[0]) > $maxwid)
+                 ! (ref($_[0]) eq "" && length($_[0]//"undef") > $maxwid)
                 }, [$self->Values])) 
     {
       $self->Modify_Values(
