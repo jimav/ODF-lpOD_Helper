@@ -9,7 +9,7 @@ use utf8;
 # (Perl assumes Latin-1 by default).
 
 package Vis;
-use version 0.77; our $VERSION = version->declare(sprintf "v%s", q$Revision: 1.138 $ =~ /(\d[.\d]+)/);
+use version 0.77; our $VERSION = version->declare(sprintf "v%s", q$Revision: 1.139 $ =~ /(\d[.\d]+)/);
 
 # Copyright © Jim Avera 2012-2020.  Released into the Public Domain
 # by the copyright owner.  (jim.avera AT gmail dot com)
@@ -342,8 +342,11 @@ sub _config_defaults {
   ### $Data::Dumper::Useqq setting, e.g. 'utf8'
   $self->Useqq(1) unless $self->Useqq();
 
-  $Maxwidth = get_terminal_columns(debug => $self->{VisDebug})//80
-    if ! defined $Maxwidth;
+  if (! defined $Maxwidth) {
+    # BUG HERE: The special _ filehandle saved by stat gets corrupted
+    local *_; # Does not work, see https://github.com/Perl/perl5/issues/19142
+    $Maxwidth = get_terminal_columns(debug => $self->{VisDebug})//80
+  }
 
   $self
     ->Quotekeys($Quotekeys)
