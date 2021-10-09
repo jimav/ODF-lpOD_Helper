@@ -9,7 +9,7 @@ use utf8;
 # (Perl assumes Latin-1 by default).
 
 package Vis;
-use version 0.77; our $VERSION = version->declare(sprintf "v%s", q$Revision: 1.139 $ =~ /(\d[.\d]+)/);
+use version 0.77; our $VERSION = version->declare(sprintf "v%s", q$Revision: 1.140 $ =~ /(\d[.\d]+)/);
 
 # Copyright © Jim Avera 2012-2020.  Released into the Public Domain
 # by the copyright owner.  (jim.avera AT gmail dot com)
@@ -34,7 +34,7 @@ sub Vis_Eval {   # Many ideas here were stolen from perl5db.pl
   #   1: User calling DB::DB_Vis_Interpolate (via trampoline gotos)
   #   2: The caller of the user's sub (this frame defines @_)
 
-  ($Vis::pkg) = caller 1;   # name of package containing user's call
+  ($Vis::pkg) = (caller(1))[0];  # pkg containig user's call
 
   # Get @_ values from the closest frame above the user's call which
   # has arguments.  This will be the very next frame (i.e. frame 2)
@@ -62,7 +62,10 @@ sub Vis_Eval {   # Many ideas here were stolen from perl5db.pl
   {
     no strict 'refs';
     ($!, $^E, $,, $/, $\, $^W) = @Vis::saved[1..6];
-    eval 'package '.$Vis::pkg.'; $@=$Vis::saved[0]; @Vis::result='.$Vis::evalarg.' ';
+    $Vis::evalstr = "package $Vis::pkg;"
+                   .' $@=$Vis::saved[0];'
+                   .' @Vis::result='.$Vis::evalarg.';';
+    eval $Vis::evalstr
   };
 
   package Vis;
@@ -261,7 +264,19 @@ $Sparseseen     = 1           unless defined $Sparseseen;
 #
 # N.B. u() used to take a list and return a list, but now only one scalar
 #sub u(@) { map{defined ? $_ : "undef"} (@_==0 ? ($_) : @_) }
-sub u(_) { $_[0] // "undef" }
+#
+sub u(_) { 
+  # Show caller's location if arg is tied and the handler dies
+  # TODO: Generalize this to other arg references?
+  local $@;
+  my $result = eval { $_[0] // "undef" };
+  if (my $at = $@) {
+    $at =~ s/ at (?:\(eval \d+\)|\S+) line \d+\.?\n?\z//s;
+    croak $at." (caught in Vis::u)\n";
+  }
+  $result
+}
+#sub u(_) { $_[0] // "undef" }
 
 sub vis(_)    { return __PACKAGE__->vnew(@_)->Dump1; }
 sub visq(_)   { return __PACKAGE__->vnew(@_)->Useqq(0)->Dump1; }
@@ -741,8 +756,8 @@ sub Dump1 {
 
   my $self = $_[0];
 
-  #print "##Dump1 caller(0)=",Vis::debugavis((caller(0))[0,1,2])," VT=",Vis::debugvis($self->{VisType}),"\n";
-  #print "##Dump1 caller(1)=",Vis::debugavis((caller(1))[0,1,2])," VT=",Vis::debugvis($self->{VisType}),"\n";
+# print "##Dump1 caller(0)=",Vis::debugavis((caller(0))[0,1,2])," VT=",Vis::debugvis($self->{VisType}),"\n";
+# print "##Dump1 caller(1)=",Vis::debugavis((caller(1))[0,1,2])," VT=",Vis::debugvis($self->{VisType}),"\n";
 
   if (($self->{VisType}//"") =~ /^[sd]/) {
     @_ = ($_[0]); 
@@ -868,8 +883,8 @@ sub Dump1 {
       s/[\]}]$/\)/ or confess "bug2($_)";
     }
     elsif ($self->{VisType} eq 'l') {
-      s/^( *)[\[{]/$1/ or confess "bug3($_)"; # convert to "bare,list,of,items"
-      s/[\]}]$// or confess "bug4($_)";
+      s/^( *)[\[{(]/$1/ or confess "bug3($_)"; # convert to "bare,list,of,items"
+      s/[\]})]$// or confess "bug4($_)";
     }
   }
 
@@ -889,7 +904,6 @@ sub forceqsh($) {
   # Unlike Perl, the bourne shell does not recognize backslash escapes
   # inside '...'.  Therefore the quoting has to be interrupted for any
   # embedded single-quotes so they can be contatenated as \' or "'"
-  #
 
   local $_ = shift;
   if (ref) {
@@ -1001,18 +1015,22 @@ sub DB_Vis_Interpolate {
     while (1) {
       #print "### pos()=",Vis::u(pos()),"\n" if $debug;
         
-      # Recognize $var or ${...} or @var etc. then collect immediately-following
-      # {key}[index]->[derefindex]->method(args) etc.
+      # Recognize $ or @ followed by various forms
       my ($sigl, $rhs);
-      if (/\G (?!\\)([\$\@])( $variable_re )/xsgc) {
-        ($sigl, $rhs) = ($1, $2);
-        while (
-          /\G ( ${scalar_index_re} )/xsgc  # ->{key} or ->[ix]
-          ||
-          /\G ( ${slice_re} )/xsgc         # {key} or [ix]
-          ||
-          /\G ( ${method_call_re} )/xsgc   # ->method(args)
-        ) {
+      if (/\G (?!\\)([\$\@\%])/xsgc) {
+        ($sigl, $rhs) = ($1, "");
+        for(;;) {
+          last unless
+            /\G (?<=[\$\@\%]) ( $variable_re ) /xsgc # includes {ref expr}
+            ||
+            /\G ( ${slice_re} )/xsgc         # {key} or [ix]
+            ||
+            /\G ( ${scalar_index_re} )/xsgc  # ->{key} or ->[ix]
+            ||
+            /\G ( ${method_call_re} )/xsgc   # ->method(args)
+            ||
+            /\G ( \$+ ) /xsgc          # chained de-refs
+            ;
           $rhs .= $1
         }
       }
@@ -1082,7 +1100,8 @@ sub DB_Vis_Interpolate {
       }
 
       my $autopad = $pad.(" " x $extra_padlen);
-      if ($sigl eq '$') {
+      # $sigl may be '$$' etc. if there are chained derefs
+      if ($sigl =~ /^\$/) {
         $self->Reset()->Pad($autopad)->Values([$items[0]])->{VisType}='v';
       }
       elsif ($sigl eq '@') {
@@ -1092,7 +1111,7 @@ sub DB_Vis_Interpolate {
         my %hash = @items;
         $self->Reset()->Pad($autopad)->Values([\%hash])->{VisType} = 'a';
       }
-      else { die "bug" }
+      else { die "bug($sigl)" }
 
       my $s = $self->Dump1;  # <<<<<<<<<<<<<<<<<<<<<<<<<<<<
 
@@ -1424,17 +1443,16 @@ argument(s) are replaced by the string "undef".  Refs are not stringified.
 
 =head2 qsh
 
-=head2 qsh $word, ...
+=head2 qsh $word
 
-=head2 qshpath $path_with_tilde_prefix, ...
+=head2 qshpath $path_with_tilde_prefix
 
-The "words" ($_ by default) are quoted if necessary for parsing
+The "word" ($_ by default) is quoted if necessary for parsing
 by /bin/sh, which has different quoting rules than Perl.
-In scalar context multiple items are concatenated separated by spaces.
 "Double quotes" are used when no escapes would be needed, 
 otherwise 'single quotes'.
 
-Items which contain only "safe" characters are returned unquoted.
+An item which contains only "safe" characters is returned unquoted.
 
 References are formatted as with C<vis()> and the resulting string quoted.
 Undefined values appear as C<undef> without quotes.
@@ -1446,7 +1464,7 @@ unquoted.  Useful with shells such as bash or csh.
 
 The argument is quoted for /bin/sh even if not necessary.
 
-Unlike C<qsh>, C<forceqsh> requires a single argument which must be defined.
+Unlike C<qsh>, C<forceqsh> requires an explicit argument which must be defined.
 
 =head1 PERFORMANCE
 
@@ -1480,6 +1498,7 @@ use Scalar::Util qw(blessed reftype);
 use Carp;
 use English qw( -no_match_vars );;
 use Data::Compare qw(Compare);
+#use Guard qw(scope_guard);
 
 # This script was written before the author knew anything about standard
 # Perl test-harness tools.  Perhaps someday it will be wholly rewritten.
