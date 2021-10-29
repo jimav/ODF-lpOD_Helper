@@ -9,7 +9,7 @@ use utf8;
 # (Perl assumes Latin-1 by default).
 
 package Vis;
-use version 0.77; our $VERSION = version->declare(sprintf "v%s", q$Revision: 1.140 $ =~ /(\d[.\d]+)/);
+use version 0.77; our $VERSION = version->declare(sprintf "v%s", q$Revision: 1.141 $ =~ /(\d[.\d]+)/);
 
 # Copyright © Jim Avera 2012-2020.  Released into the Public Domain
 # by the copyright owner.  (jim.avera AT gmail dot com)
@@ -1096,7 +1096,7 @@ sub DB_Vis_Interpolate {
           $result .= "\n$pad";
           redo;
         }
-        print "### extra_padlen=$extra_padlen\n" if $debug;
+        print "### extra_padlen=$extra_padlen varlabel='$varlabel' pad='$pad' \$1='$1' result='$result'\n" if $debug;
       }
 
       my $autopad = $pad.(" " x $extra_padlen);
