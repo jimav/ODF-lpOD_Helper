@@ -9,7 +9,7 @@ use utf8;
 # (Perl assumes Latin-1 by default).
 
 package Vis;
-use version 0.77; our $VERSION = version->declare(sprintf "v%s", q$Revision: 1.141 $ =~ /(\d[.\d]+)/);
+use version 0.77; our $VERSION = version->declare(sprintf "v%s", q$Revision: 1.142 $ =~ /(\d[.\d]+)/);
 
 # Copyright © Jim Avera 2012-2020.  Released into the Public Domain
 # by the copyright owner.  (jim.avera AT gmail dot com)
@@ -35,6 +35,7 @@ sub Vis_Eval {   # Many ideas here were stolen from perl5db.pl
   #   2: The caller of the user's sub (this frame defines @_)
 
   ($Vis::pkg) = (caller(1))[0];  # pkg containig user's call
+  #Carp::cluck "###Vis::pkg=$Vis::pkg evalarg=$Vis::evalarg\n";
 
   # Get @_ values from the closest frame above the user's call which
   # has arguments.  This will be the very next frame (i.e. frame 2)
