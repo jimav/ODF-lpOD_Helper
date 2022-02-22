@@ -16,7 +16,7 @@ use utf8;
 # (Perl assumes Latin-1 by default).
 
 package Vis;
-use version 0.77; our $VERSION = version->declare(sprintf "v%s", q$Revision: 1.143 $ =~ /(\d[.\d]+)/);
+use version 0.77; our $VERSION = version->declare(sprintf "v%s", q$Revision: 1.144 $ =~ /(\d[.\d]+)/);
 
 
 # Documentation is at the end
@@ -1528,14 +1528,14 @@ use strict; use warnings ; use feature qw(state switch);
 use utf8; 
 use open IO => 'utf8', ':std';
 select STDERR; $|=1; select STDOUT; $|=1;
-use Scalar::Util qw(blessed reftype);
+use Scalar::Util qw(blessed reftype looks_like_number);
 use Carp;
 use English qw( -no_match_vars );;
 use Data::Compare qw(Compare);
 #use Guard qw(scope_guard);
 
 # This script was written before the author knew anything about standard
-# Perl test-harness tools.  Perhaps someday it will be wholly rewritten.
+# Perl test-harness tools.  Perhaps someday it will be wholely rewritten.
 # Meanwhile, some baby steps...
 use Test::More;
 use Test::Deep qw(cmp_deeply);
@@ -1583,6 +1583,12 @@ eval '$[' // die;
 
 sub tf($) { $_[0] ? "true" : "false" }
 
+sub fmt_codestring($;$) { # returns list of lines
+  my ($str, $prefix) = @_;
+  $prefix //= "line ";
+  my $i=1; map{ sprintf "%s%2d: %s\n", $prefix,$i++,$_ } (split /\n/,$_[0]);
+}
+
 sub timed_run(&$@) {
   my ($code, $maxcpusecs, @codeargs) = @_;
   use Time::HiRes qw(clock);
@@ -1597,25 +1603,26 @@ sub timed_run(&$@) {
 
 sub check($$@) {
   my ($code, $expected_arg, @actual) = @_;
-  confess "BUG(EVAL ERR): $@" if $@;
   my @expected = ref($expected_arg) eq "ARRAY" ? @$expected_arg : ($expected_arg);
-  $actual[0] //= 'undef';
   confess "\nTEST FAILED: $code\n"
-         ."Expected ".(@expected)." results, but got ".(@actual).":\n"
-         ."(@actual)\n"
+         ."Expected ".scalar(@expected)." results, but got ".scalr(@actual).":\n"
+         ."expected=(@expected)\n"
+         ."actual=(@actual)\n"
     if @expected != @actual;
-  foreach my $actual (@actual) {
-    my $expected = shift @expected;
+  foreach my $i (0..$#actual) {
+    my $actual = $actual[$i];
+    my $expected = $expected[$i];
     if (ref($expected) eq "Regexp") {
       confess "\nTEST FAILED: $code\n"
              ."Expected:${expected}\n"
-             ."Got     :${actual}«end»\n" 
-        unless $actual =~ $expected;
+             ."Got     :".u($actual)."«end»\n" 
+        unless $actual =~ ($expected // "Never Matched");
     } else {
       confess "\nTEST FAILED: $code\n"
-             ."Expected:${expected}«end»\n"
-             ."Got     :${actual}«end»\n" 
-        unless $actual eq $expected;
+             ."Expected:".u($expected)."«end»\n"
+             ."Got     :".u($actual)."«end»\n" 
+        unless (!defined($actual) && !defined($expected))
+               || (defined($actual) && defined($expected) && $actual eq $expected);
     }
   }
 }
@@ -2010,8 +2017,9 @@ sub doquoting($$) {
 
 sub show_white($) {
   local $_ = shift;
-  s/\t/<tab>/msg;
-  s/( +)$/"<space>" x length($1)/mseg;
+  s/\t/<tab>/sg;
+  s/( +)$/"<space>" x length($1)/seg;
+  s/\n/<newline>/sg;
   $_
 }
 
@@ -2220,31 +2228,59 @@ EOF
         if $@ or ! defined $ev;
     }
 
+    my sub punctbug($$$) {
+      my ($varname, $act, $exp) = @_;
+      confess "ERROR (testing '$dvis_input'): $varname was not preserved (expected $exp, got $act)\n"
+    }
+    my sub checkspunct($$$) {
+      my ($varname, $actual, $expecting) = @_;
+      check "dvis('$dvis_input') : $varname NOT PRESERVED : ", 
+            $actual//"<undef>", $expecting//"<undef>" ;
+    }
+    my sub checknpunct($$$) {
+      my ($varname, $actual, $expecting) = @_;
+      # N.B. check() compaares as strings
+      check "dvis('$dvis_input') : $varname NOT PRESERVED : ", 
+            defined($actual) ? $actual+0 : "<undef>",
+            defined($expecting) ? $expecting+0 : "<undef>" ;
+    }
+
     for my $use_oo (0,1) {
       my $actual;
       { # Verify that special vars are preserved and don't affect Vis
         # (except if testing a punctuation var, then don't change it's value)
 
-        my @varnames = qw($@ $! $^E $, $/ $\ $^W);
-  
-        my @fake = (do {$dvis_input =~ /\$(?: [\@!,\/\\] | \^[EW] )/x})
-                      ? ($@, $!, $^E, $,, $/, $\, $^W)
-                      : ('FakeAt', 111, 111, 'Fake,', 'Fake/', 'FakeBS\\', 333);
-        my @nfake;
-        { local ($@, $!, $^E, $,, $/, $\, $^W) = @fake;
-          $actual = $use_oo
-                      ? Vis->dnew($dvis_input)->Dump   # <<<<<<<<<<<<<<< HERE
-                      : dvis($dvis_input);
-  
-          @nfake = ($@, $!, $^E, $,, $/, $\, $^W);
-        }
-        for my $i (0..5) {
-          no warnings;
-          my $varname = (qw($@ $! $^E $, $/ $\ $^W))[$i];
-          # was warn...
-          die "ERROR: $varname was not preserved (expected $fake[$i], got $nfake[$i])\n"
-            unless ($fake[$i] =~ /^\d/ ? ($fake[$i]==$nfake[$i]) : ($fake[$i] eq $nfake[$i]));
-        }
+        my ($origAt, $origFs, $origBs, $origComma, $origBang, $origCarE, $origCarW)
+          = ($@, $/, $\, $,, $!, $^E, $^W);
+
+        # Don't change a value if being tested in $dvis_input
+        my ($fakeAt, $fakeFs, $fakeBs, $fakeComma, $fakeBang, $fakeCarE, $fakeCarW)
+          = ($dvis_input =~ /(?<!\\)\$@/    ? $origAt : "FakeAt", 
+             $dvis_input =~ /(?<!\\)\$\//   ? $origFs : "FakeFs", 
+             $dvis_input =~ /(?<!\\)\$\\\\/ ? $origBs : "FakeBs", 
+             $dvis_input =~ /(?<!\\)\$,/    ? $origComma : "FakeComma", 
+             $dvis_input =~ /(?<!\\)\$!/    ? $origBang : 6,
+             $dvis_input =~ /(?<!\\)\$^E/   ? $origCarE : 6,  # $^E aliases $! on most OSs
+             $dvis_input =~ /(?<!\\)\$^W/   ? $origCarW : 0); # $^W can only be 0 or 1
+
+        ($@, $/, $\, $,, $!, $^E, $^W) = ($fakeAt, $fakeFs, $fakeBs, $fakeComma, $fakeBang,
+                                          $fakeCarE, $fakeCarW);
+
+        $actual = $use_oo
+          ? Vis->dnew($dvis_input)->Dump   # <<<<<<<<<<<<<<< HERE
+          : dvis($dvis_input);
+
+        checkspunct('$@',  $@,   $fakeAt);
+        checkspunct('$/',  $/,   $fakeFs);
+        checkspunct('$\\', $\,   $fakeBs);
+        checkspunct('$,',  $,,   $fakeComma);
+        checknpunct('$!',  $!+0, $fakeBang);
+        checknpunct('$^E', $^E+0,$fakeCarE);
+        checknpunct('$^W', $^W+0,$fakeCarW);
+
+        # Restore
+        ($@, $/, $\, $,, $!, $^E, $^W)
+          = ($origAt, $origFs, $origBs, $origComma, $origBang, $origCarE, $origCarW);
       }
       unless ($expected eq $actual) {
         confess "\ndvis (oo=$use_oo) test failed: input «",
