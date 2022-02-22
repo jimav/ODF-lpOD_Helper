@@ -16,7 +16,7 @@ use utf8;
 # (Perl assumes Latin-1 by default).
 
 package Vis;
-use version 0.77; our $VERSION = version->declare(sprintf "v%s", q$Revision: 1.144 $ =~ /(\d[.\d]+)/);
+use version 0.77; our $VERSION = version->declare(sprintf "v%s", q$Revision: 1.145 $ =~ /(\d[.\d]+)/);
 
 
 # Documentation is at the end
@@ -132,7 +132,7 @@ use Carp;
 use feature qw(switch state);
 use POSIX qw(INT_MAX);
 use Encode ();
-use Scalar::Util qw(blessed reftype refaddr);
+use Scalar::Util qw(blessed reftype refaddr looks_like_number);
 use List::Util qw(any);
 use overload ();
 
@@ -741,7 +741,7 @@ sub _walk($$;$) {  # (coderef, item [, seenhash])
 # Edit Values: _walk() is called with the specified subref on the
 # array of Values in the object.  The Values are cloned first to
 # avoid corrupting the user's data structure.
-sub Modify_Values { #internal method
+sub _Modify_Values { #internal method
   my ($self, $coderef) = @_;
   my @values = $self->Values;
   unless ($self->{VisCloned}++) {
@@ -751,6 +751,13 @@ sub Modify_Values { #internal method
   _walk($coderef, \@values);
   $self->Values(\@values);
 }
+
+## Overload Data::Dumper::Values() so we can clear VisCloned if Values change
+#sub Values {
+#  my $self = shift;
+#  delete $self->{VisCloned} if @_ > 0;
+#  $self->SUPER::Values(@_);
+#}
 
 sub show_as_number(_) { # Derived from JSON::PP version 4.02
   my $value = shift;
@@ -825,7 +832,7 @@ sub Dump1 {
       }, [$self->Values] 
     );
     if (%hits) {
-      $self->Modify_Values(sub {
+      $self->_Modify_Values(sub {
         if (my $class = $hits{ref $_[0]}) {
           $_[0] = "($class)".$_[0]
         }
@@ -841,7 +848,7 @@ sub Dump1 {
                  ! (ref($_[0]) eq "" && length($_[0]//"undef") > $maxwid)
                 }, [$self->Values])) 
     {
-      $self->Modify_Values(
+      $self->_Modify_Values(
         sub {
           if (ref($_[0]) eq "") { # a defined scalar
             if (length($_[0]) > $maxwid) {
@@ -867,13 +874,22 @@ sub Dump1 {
     #$self->Pad(" ");
   }
 
-  # Use a single number as-is without passing through Data::Dumper, which
-  # shows floating values as 'strings' (it does this to avoid cross-platform 
-  # re-parsing issues, see https://github.com/Perl/perl5/issues/9610)
   confess "bug:defined:$_" if defined($_);
   { my @values = $self->Values;
-    if (@values==1 && !ref($values[0]) && show_as_number($values[0])) {
-      $_ = $pad.$values[0]."\n"; # pad and newline to mimic Data::Dumper::Dump
+    # Data::Dumper sometimes does not show strings containing only digits
+    # with quotes (actually never with Useperl set).  Also, it always
+    # quotes float to avoid some platform dependencies.
+    # So handle those cases ourself, i.e. show identifiable strings
+    # quoted and format all numbers as such, unquoted.
+    #
+    # NOTE: This does *not* fix the problem in structures, e.g. ["0"]
+    if (@values == 1 && ref($values[0]) eq ""
+         && looks_like_number($values[0]//"x")) {
+      my $val = $values[0];
+      $_ = $pad   # pad, quotes and newline mimic Data::Dumper::Dump output
+          . (show_as_number($val) ? $val : 
+                                    ($useqq ? "\"$val\"" : "'$val'"))
+          . "\n";
     } else {
       # Hack -- save/restore punctuation variables corrupted by Data::Dumper
       my ($sAt, $sQ) = ($@, $?);
