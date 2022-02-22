@@ -1,3 +1,10 @@
+# Copyright © Jim Avera 2012-2021.  This document contains code extracted from
+# Data::Dumper and JSON:PP, as noted in adjacent comments, and those extracts 
+# remain subject to the licenses of their respective modules.  All other 
+# portions of this document have been released into the Public Domain by 
+# the copyright owner (jim.avera AT gmail dot com) where legally permitted,
+# and otherwise subject to the Creative Commons CC0 license
+# (https://creativecommons.org/publicdomain/zero/1.0/)
 use strict; use warnings FATAL => 'all'; use 5.010;
 
 use utf8;
@@ -9,11 +16,8 @@ use utf8;
 # (Perl assumes Latin-1 by default).
 
 package Vis;
-use version 0.77; our $VERSION = version->declare(sprintf "v%s", q$Revision: 1.142 $ =~ /(\d[.\d]+)/);
+use version 0.77; our $VERSION = version->declare(sprintf "v%s", q$Revision: 1.143 $ =~ /(\d[.\d]+)/);
 
-# Copyright © Jim Avera 2012-2020.  Released into the Public Domain
-# by the copyright owner.  (jim.avera AT gmail dot com)
-# Please retain the preceeding attribution in any copies or derivitives.
 
 # Documentation is at the end
 
@@ -108,9 +112,11 @@ sub Vis_Eval {   # Many ideas here were stolen from perl5db.pl
 #        }
 #      }
 #    }
-    Carp::croak(
+    #Carp::croak
+    Carp::confess(
       $Vis::error_prefix,
-      (index($at,$evalarg) >= 0 ? "" : "Error interpolating '$evalarg', "),
+      #(index($at,$evalarg) >= 0 ? "" : "Error interpolating '$evalarg', "),
+      "Error interpolating '$evalarg' ",
       "$at (package $Vis::pkg (then ",scalar(caller),"))\n");
   }
 
@@ -126,7 +132,7 @@ use Carp;
 use feature qw(switch state);
 use POSIX qw(INT_MAX);
 use Encode ();
-use Scalar::Util qw(looks_like_number blessed reftype refaddr);
+use Scalar::Util qw(blessed reftype refaddr);
 use List::Util qw(any);
 use overload ();
 
@@ -361,7 +367,7 @@ sub _config_defaults {
   if (! defined $Maxwidth) {
     # BUG HERE: The special _ filehandle saved by stat gets corrupted
     local *_; # Does not work, see https://github.com/Perl/perl5/issues/19142
-    $Maxwidth = get_terminal_columns(debug => $self->{VisDebug})//80
+    $Maxwidth = get_terminal_columns(reset=>1,debug => $self->{VisDebug})//80
   }
 
   $self
@@ -746,6 +752,29 @@ sub Modify_Values { #internal method
   $self->Values(\@values);
 }
 
+sub show_as_number(_) { # Derived from JSON::PP version 4.02
+  my $value = shift;
+  if ($Vis::Debug) {
+    local $Vis::Debug = 0;
+    my $r = &show_as_number($value);
+    my $r2 = &show_as_number($value);
+    print STDERR "###Vis show_as_number(",u($value),") r=",u($r)," r2=",u($r),"\n";
+    return $r
+  }
+  return unless defined $value;
+  no warnings 'numeric';
+  # if the utf8 flag is on, it almost certainly started as a string
+  return if utf8::is_utf8($value);
+  # detect numbers
+  # string & "" -> ""
+  # number & "" -> 0 (with warning)
+  # nan and inf can detect as numbers, so check with * 0
+  return unless length((my $dummy = "") & $value);
+  return unless 0 + $value eq $value;
+  return 1 if $value * 0 == 0;
+  return -1; # inf/nan
+}
+
 # Dump1 is like Dump except:
 #   1. The user's frame is up one level.
 #   2. The immediate caller is in package DB
@@ -841,15 +870,16 @@ sub Dump1 {
   # Use a single number as-is without passing through Data::Dumper, which
   # shows floating values as 'strings' (it does this to avoid cross-platform 
   # re-parsing issues, see https://github.com/Perl/perl5/issues/9610)
+  confess "bug:defined:$_" if defined($_);
   { my @values = $self->Values;
-    if (@values==1 && !ref($values[0]) && looks_like_number($values[0])) {
+    if (@values==1 && !ref($values[0]) && show_as_number($values[0])) {
       $_ = $pad.$values[0]."\n"; # pad and newline to mimic Data::Dumper::Dump
     } else {
       # Hack -- save/restore punctuation variables corrupted by Data::Dumper
       my ($sAt, $sQ) = ($@, $?);
     
       # HERE is where Data::Dumper formats the value(s)
-      $_ //= $self->SUPER::Dump;
+      $_ = $self->SUPER::Dump;
     
       ($@, $?) = ($sAt, $sQ);
     }
@@ -991,7 +1021,7 @@ sub DB_Vis_Interpolate {
       \#?\w+(?:::\w+)*   # @name $pkg::name $#name $1
     | \#?\$\w+(?:::\w+)* # $$ref $#$ref
     | \^\w               # $^N   (control-character 'punctuation' variable)
-    | \#?[^\w\s\{\$]     # $#- $^ $? (regular 'punctuation' variable)
+    | \#?[^\w\s\{\$]     # $#- $^ $? $\ (regular 'punctuation' variable)
     | (?<=\$)\$          # $$
     | \{ $interior_re \} # ${ref expression} or ${^SPECIALNAME}
   /x;
@@ -1020,10 +1050,9 @@ sub DB_Vis_Interpolate {
       my ($sigl, $rhs);
       if (/\G (?!\\)([\$\@\%])/xsgc) {
         ($sigl, $rhs) = ($1, "");
+        $rhs = $1 if /\G($variable_re)/sgc; # includes {ref expr}
         for(;;) {
           last unless
-            /\G (?<=[\$\@\%]) ( $variable_re ) /xsgc # includes {ref expr}
-            ||
             /\G ( ${slice_re} )/xsgc         # {key} or [ix]
             ||
             /\G ( ${scalar_index_re} )/xsgc  # ->{key} or ->[ix]
@@ -1040,7 +1069,7 @@ sub DB_Vis_Interpolate {
         ($sigl, $rhs) = ($1, $2);
       }
 
-      if (defined $sigl) {
+      if (defined $rhs) {
         push @actions, ['e',$sigl,$rhs];  # eval $sigl$rhs
         if ($debug) {
           print "### regex match ($_): sigl='${sigl}' rhs='${rhs}'\n";
@@ -1483,6 +1512,10 @@ C<< Data::Dumper->new() >> may be called directly.
 
 Data::Dumper
 
+=head1 CREDITS
+
+This module contains code snippets copied from Data::Dumper and JSON::PP.
+
 =head1 AUTHOR
 
 Jim Avera  (jim.avera AT gmail dot com)
@@ -1647,10 +1680,12 @@ die "Expected initial Vis::Maxwidth to be undef" if defined $Vis::Maxwidth;
 if (Vis::_unix_compatible_os()) {
   delete local $ENV{COLUMNS};
   my $expected = `tput cols`;  # may default to 80 if no tty
+  die "bug: Vis::Maxwidth not undef" if defined($Vis::Maxwidth);
   vis(123); 
-  die "Vis::Maxwidth no defaulted correctly" unless $Vis::Maxwidth == $expected;
+  die "Vis::Maxwidth ",u($Vis::Maxwidth)," not defaulted correctly, expecting $expected" unless $Vis::Maxwidth == $expected;
   undef $Vis::Maxwidth;  # re-enable auto-detect
 }
+die "bug: Vis::Maxwidth not undef" if defined($Vis::Maxwidth);
 if (Vis::_unix_compatible_os()) {
   delete local $ENV{COLUMNS};
   my $pid = fork();
@@ -2174,7 +2209,7 @@ EOF
   )
   {
     my ($dvis_input, $expected) = @$test;
-    # warn "## dvis_input='$dvis_input' expected='$expected'\n";
+    #warn "##^^^^^^^^^^^ dvis_input='$dvis_input' expected='$expected'\n";
     
     { local $@;  # check for bad syntax first, to avoid uncontrolled die later
       # For some reason we can't catch exceptions from inside package DB.
@@ -2189,13 +2224,14 @@ EOF
       my $actual;
       { # Verify that special vars are preserved and don't affect Vis
         # (except if testing a punctuation var, then don't change it's value)
+
+        my @varnames = qw($@ $! $^E $, $/ $\ $^W);
   
         my @fake = (do {$dvis_input =~ /\$(?: [\@!,\/\\] | \^[EW] )/x})
                       ? ($@, $!, $^E, $,, $/, $\, $^W)
                       : ('FakeAt', 111, 111, 'Fake,', 'Fake/', 'FakeBS\\', 333);
         my @nfake;
         { local ($@, $!, $^E, $,, $/, $\, $^W) = @fake;
-  
           $actual = $use_oo
                       ? Vis->dnew($dvis_input)->Dump   # <<<<<<<<<<<<<<< HERE
                       : dvis($dvis_input);
