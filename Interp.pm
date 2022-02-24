@@ -16,10 +16,9 @@ use utf8;
 # (Perl assumes Latin-1 by default).
 
 package Vis;
-use version 0.77; our $VERSION = version->declare(sprintf "v%s", q$Revision: 1.145 $ =~ /(\d[.\d]+)/);
+use version 0.77; our $VERSION = version->declare(sprintf "v%s", q$Revision: 1.146 $ =~ /(\d[.\d]+)/);
 
-
-# Documentation is at the end
+# *** Documentation is at the end ***
 
 # The following must appear before any global variables are declared,
 # so that nothing is visible when evaluating user-provided expressions.
@@ -138,8 +137,6 @@ use overload ();
 
 use Terminalsize qw(get_terminal_columns);
 
-our $Utf8patch //= 1;
-
 use Data::Dumper ();
 
 my %esc = (  
@@ -151,74 +148,6 @@ my %esc = (
     "\r" => "\\r",
     "\e" => "\\e",
 );
-# Following is a copy of qquote() from Data::Dumper version 2.130_02 with 
-# minimal changes to make Useqq('utf8') work.
-sub fixed_qquote {
-  local($_) = shift;
-  s/([\\\"\@\$])/\\$1/g;
-  # ...do not replace [:^ascii:] with hex escapes here...
-  return qq("$_") unless 
-    /[^ !"\#\$%&'()*+,\-.\/0-9:;<=>?\@A-Z[\\\]^_`a-z{|}~]/;  # fast exit
-
-  my $high = shift || "";
-  s/([\a\b\t\n\f\r\e])/$esc{$1}/g;
-
-  if (ord('^')==94)  { # ascii
-    # no need for 3 digits in escape for these
-    s/([\0-\037])(?!\d)/'\\'.sprintf('%o',ord($1))/eg;
-    s/([\0-\037\177])/'\\'.sprintf('%03o',ord($1))/eg;
-    # all but last branch below not supported --BEHAVIOR SUBJECT TO CHANGE--
-    if ($high eq "iso8859") {
-      s/([\200-\240])/'\\'.sprintf('%o',ord($1))/eg;
-    } elsif ($high eq "utf8") {
-      # Leave printable wide chars alone so humans can read them.
-      # The caller must guarantee that the input data consists of
-      # decoded characters (not octets), and that the result will later
-      # be encoded to an encoding which can represent them (e.g. UTF-8).
-      
-      state $printable_chars = '[:graph:] ';
-      #state $printable_chars = '\p{XID_Continue} ';
-
-      state $printable_re = qr/[${printable_chars}]/s;
-      state $nonprintable_re = qr/[^${printable_chars}]/s;
-
-      #s/([^[:graph:] ])/ sprintf("\\x{%x}",ord($1)) /uge;
-      #  The above s/// was very slow with large binary blobs due to reallocs,
-      #  so trying a copy-to-preallocated-array technique...
-      if (/${nonprintable_re}/s) {
-        my $new = ""; vec($new,length($_)*8,8)=0; $new = ""; # pre-allocate
-        my $limit = length($_);
-        my $prevpos = 0;
-        until ($prevpos == $limit) {
-          while (/\G${printable_re}+/gsc) {
-            $new .= substr($_,$prevpos,pos()-$prevpos); # use ${^MATCH} with /p?
-            $prevpos = pos;
-          }
-          while (/\G${nonprintable_re}+/gscp) {
-            my $fmt = "\\x{%x}" x length(${^MATCH});
-            $new .= sprintf $fmt, map{ord} 
-                      split(//, substr($_,$prevpos,pos()-$prevpos));
-            $prevpos = pos;
-          }
-        }
-        $_ = $new;
-      }
-    } elsif ($high eq "8bit") {
-        # leave it as it is
-    } else {
-      s/([\200-\377])/'\\'.sprintf('%03o',ord($1))/eg;
-      s/([^\040-\176])/sprintf "\\x{%04x}", ord($1)/ge;
-    }
-  }
-  else { # ebcdic
-      s{([^ !"\#\$%&'()*+,\-.\/0-9:;<=>?\@A-Z[\\\]^_`a-z{|}~])(?!\d)}
-       {my $v = ord($1); '\\'.sprintf(($v <= 037 ? '%o' : '%03o'), $v)}eg;
-      s{([^ !"\#\$%&'()*+,\-.\/0-9:;<=>?\@A-Z[\\\]^_`a-z{|}~])}
-       {'\\'.sprintf('%03o',ord($1))}eg;
-  }
-
-  return qq("$_");
-}
 
 sub debugvis($) {  # for our internal debug messages
   local $/ = "\n";
@@ -533,31 +462,9 @@ sub _debug_show($$$$$$) {
   print "=====================\n";
 }
 
-sub _qquote_wrapper {
-  goto &fixed_qquote if $_[1] eq 'utf8';
-  goto &{$Vis::original_qquote};
-}
-sub _first_time_init() {
-  $Vis::original_qquote = \&Data::Dumper::qquote;
-  # Over-ride Data::Dumper::qquote to fix bug with Useqq('utf8')
-  # N.B. This might not work if the sub ref has been cached by Perl,
-  # e.g. if the user called Data::Dumper directly before using Vis.
-  if ($Vis::Utf8patch 
-      && &{$Vis::original_qquote}("\N{U+263A}","utf8") =~ /26/i) 
-  {
-    # Data::Dumper still has the bug with Useqq("utf8")
-    { no warnings; *Data::Dumper::qquote = \&Vis::_qquote_wrapper; }
-    # Recent versions of Data::Dumper always call the xs implementation
-    # regardless of Useqq (and it doesn't handle Useqq='utf8' correctly).
-    # So force using the Perl implementation in that case.
-    $Vis::Useperl_for_utf8 =
-      Data::Dumper->new(["\N{U+263A}"])->Useqq('utf8')->Dump() =~ /26/i;
-  }
-}
-
-# Reformat Data::Dumper::Dump output in $_
-sub _reformat_dumper_output {
-  my ($self, $maxwidth, $debug, $useqq) = @_;
+# Reformat output in $_
+sub __reformat_dumper_output($$) {
+  my ($maxwidth, $debug) = @_;
 
   print "===== RAW =====\n${_}---------------\n" if $debug;
   #do{ $|=1; require Carp; print Carp::longmess("===== RAW =====\n${_}---------------") } if $debug;
@@ -608,7 +515,7 @@ sub _reformat_dumper_output {
   }
   undef $_;
 
-  print "===== ",scalar(@lines)," lines: =====",(map{ "\n  ".debugvis($_) } @lines),"\n" if $debug;
+  #print "===== ",scalar(@lines)," lines: =====",(map{ "\n  ".debugvis($_) } @lines),"\n" if $debug;
 
   # Combine appropriate lines to make it more "horizontal"
   local $@;  # preserve user's $@ value
@@ -698,6 +605,43 @@ sub _reformat_dumper_output {
   unshift @lines, __PACKAGE__." BUG: $@" if $@; # show the error, but keep the Data::Dumper output
 
   $_ = join "", @lines;
+  print "===== REFORMATTED =====\n${_}---------------\n" if $debug;
+  $_
+}
+sub __postprocess_qquote($) {
+  local $_ = shift;
+  # "double-quoted string" : Replace \x{ABCD} with actual char if printable
+  s/\G(?:[^\\]++ 
+       | \\(?: [^x]| x[^\{] | x\{([0-9A-Fa-f]+)\} 
+                              # hex escape we don't want to convert?
+                              (?(?{do{ local $_ = $^N; length>8 || chr(hex($_)) =~ m{\P{XPosixGraph}} }})|(*FAIL)) 
+                              # not XPosixPrint so we see non-ASCII whitespace
+                              # as escapes
+           ) )*+
+    \K
+    \\x\{([0-9A-Fa-f]+)\}
+   / chr(hex($^N)) /exsg;
+  $_
+}
+sub __postprocess_squote($) {
+  local $_ = shift;
+  die "bug" unless index($_,"'")==0;
+  # Convert to double-quoted
+  # Replace \' with just ', \\ with itself, and double all other backslashes
+  #say "##psA «",u($_),"»";
+  s/\G [^\\]*+ \K (\\.) / do{
+          #say "##SUBST ($1) pos=",pos()-1; 
+          $1 eq "\\'" ? "'" : $1 eq "\\\\" ? "\\\\" : "\\$1" 
+                                   } /xesg;
+  #say "##psB «",u($_),"»";
+  # Backslash $ and @ and "
+  pos=0; s/[^\$\@"]*\K([\$\@"])/\\$1/sg;
+  # Convert controls to \n etc or \x{} escapes
+  # Backslash $ and @
+  s/(\P{XPosixPrint})/ $esc{$1} or sprintf("\\x{%X}", ord($1)) /exsg;
+  substr($_,0,1) = '"';
+  substr($_,-1,1) = '"';
+  __postprocess_qquote($_);
 }
 
 # Walk an arbitrary structure calling &coderef on each item, stopping
@@ -752,22 +696,15 @@ sub _Modify_Values { #internal method
   $self->Values(\@values);
 }
 
-## Overload Data::Dumper::Values() so we can clear VisCloned if Values change
-#sub Values {
-#  my $self = shift;
-#  delete $self->{VisCloned} if @_ > 0;
-#  $self->SUPER::Values(@_);
-#}
+# Overload Data::Dumper::Values() so we can clear VisCloned if Values change
+sub Values {
+  my $self = shift;
+  delete $self->{VisCloned} if @_ > 0;
+  $self->SUPER::Values(@_);
+}
 
 sub show_as_number(_) { # Derived from JSON::PP version 4.02
   my $value = shift;
-  if ($Vis::Debug) {
-    local $Vis::Debug = 0;
-    my $r = &show_as_number($value);
-    my $r2 = &show_as_number($value);
-    print STDERR "###Vis show_as_number(",u($value),") r=",u($r)," r2=",u($r),"\n";
-    return $r
-  }
   return unless defined $value;
   no warnings 'numeric';
   # if the utf8 flag is on, it almost certainly started as a string
@@ -789,7 +726,6 @@ sub show_as_number(_) { # Derived from JSON::PP version 4.02
 # For user-called Dump(), this is called via a thunk in package DB
 sub Dump1 {
   local $_;
-  _first_time_init() unless defined $Vis::original_qquote;
 
   my $self = $_[0];
 
@@ -805,9 +741,6 @@ sub Dump1 {
     = @$self{qw/VisDebug Maxwidth MaxStringwidth/};
 
   my $cloned;
-
-  my $useqq = $self->Useqq();
-  $self->Useperl(1) if $useqq eq 'utf8' && $Vis::Useperl_for_utf8;
 
   if (my $stringify = $self->Stringify()) { # not undef or "0"
     $stringify = [ $stringify ] unless ref($stringify) eq 'ARRAY';
@@ -874,21 +807,33 @@ sub Dump1 {
     #$self->Pad(" ");
   }
 
-  confess "bug:defined:$_" if defined($_);
-  { my @values = $self->Values;
-    # Data::Dumper sometimes does not show strings containing only digits
-    # with quotes (actually never with Useperl set).  Also, it always
-    # quotes float to avoid some platform dependencies.
-    # So handle those cases ourself, i.e. show identifiable strings
-    # quoted and format all numbers as such, unquoted.
-    #
-    # NOTE: This does *not* fix the problem in structures, e.g. ["0"]
-    if (@values == 1 && ref($values[0]) eq ""
-         && looks_like_number($values[0]//"x")) {
-      my $val = $values[0];
-      $_ = $pad   # pad, quotes and newline mimic Data::Dumper::Dump output
-          . (show_as_number($val) ? $val : 
-                                    ($useqq ? "\"$val\"" : "'$val'"))
+  # 2/21/22: Previously we relied on Data::Dumper to produce double-quoted
+  # strings, using a "fixed" qquote sub which allowed unicode chars to appear
+  # unmolested with Useqq("utf8") (the "fix" was to some undocumented
+  # code in Data::Dumper which apparently was intended to make Unicode
+  # characters appear as themselves in double-quoted strings.)
+  #
+  # But now another deficiency has been discovered; Data::Dumper will
+  # format scalars set to strings like "6" as numbers rather than strings 
+  # *except* with Useqq(false) and Useperl(false).
+  #
+  # So now we always call Data::Dumper (as SUPER) in single-quote mode, 
+  # and hand-convert the result to double-quoted if Useqq was requested.
+  # The "fixed" qquote sub has been removed.
+  my $useqq = $self->Useqq();
+  $self->Useqq(0); 
+  { 
+    confess "bug:defined:$_" if defined($_);
+    my @values = $self->Values;
+    # Data::Dumper always quotes floats to avoid inter-platform dependencies.
+    # We don't want that; we can catch the simple case here of a single value;
+    # however floats in structures, e.g. [42, 3.14] will not be handled and 
+    # so will come out as quoted strings.  Sigh.
+    my $val0 = $values[0];
+    if (defined($val0) && ref($val0) eq "" && looks_like_number($val0)) {
+      # pad, quotes and newline mimic Data::Dumper::Dump output
+      $_ = $pad   
+          . (show_as_number($val0) ? $val0 : "'$val0'")
           . "\n";
     } else {
       # Hack -- save/restore punctuation variables corrupted by Data::Dumper
@@ -900,6 +845,7 @@ sub Dump1 {
       ($@, $?) = ($sAt, $sQ);
     }
   }
+  $self->Useqq($useqq);
 
   s/^ *// if $maxwidth==0;  # remove initial forced pad from Indent(0)
 
@@ -918,9 +864,32 @@ sub Dump1 {
   }
 
   if ($maxwidth > 0) {
-    $self->_reformat_dumper_output($maxwidth, $debug, $useqq);
+    __reformat_dumper_output($maxwidth, $debug);
   }
   # else: one long line, produced using Indent(0) above;
+
+  # As noted above, Data::Dumper is always called in single-quoted mode
+  # to avoid various bugs.  Hand-convert to double-quoted if Useqq was
+  # in effect and convert \x{ABCD} escapes to actual characters where possible
+  # N.B. Data::Dumper 2.174 forces double-quoted output regardless of Useqq
+  # if certain (Unicode?) chars are present.
+  { my $newstr = "";
+    while ((pos()//0) < length()) {
+      if (/\G((?:[^"'\\]++|\\.)+)/sgc) {
+        $newstr .= $1;
+      }
+      elsif (/\G("(?:[^"\\]++|\\.)*+")/psgc) {
+        $newstr .= __postprocess_qquote($1);
+      }
+      elsif (/\G('(?:[^'\\]++|\\.)*+')/psgc) {
+        $newstr .= $useqq ? __postprocess_squote($1) : $1;
+      }
+      else {
+        die "BUG: Did not parse '",substr($_,pos());
+      }
+    }
+    $_ = $newstr;
+  }
 
   if ($self->{VisType}) {
     s/\s+\z//s;  # omit final newline except when emulating Data::Dumper
@@ -1124,7 +1093,7 @@ sub DB_Vis_Interpolate {
       # (because braces can not be used that way in expressions, only strings)
 
       my @items = Vis_Eval("$sigl$rhs");
-      print "### items=",Vis::debugavis(@items),"\n" if $debug;
+      print "# after Vis_Eval: items=",Vis::debugavis(@items),"\n" if $debug;
 
       my $varlabel = "";
       if ($d_or_s eq 'd') {
@@ -1161,7 +1130,7 @@ sub DB_Vis_Interpolate {
 
       my $s = $self->Dump1;  # <<<<<<<<<<<<<<<<<<<<<<<<<<<<
 
-      print "### Vis::Indent=$Vis::Indent Indent()=", $self->Indent(), 
+      print "# # Vis::Indent=$Vis::Indent Indent()=", $self->Indent(), 
             " Dump1 result=", Vis::debugvis($s),"\n" if $debug;
       substr($s, 0, length($autopad)) = $varlabel;
       $result .= $s;
@@ -1567,12 +1536,10 @@ my $unicode_str;
 # the sub lookup immediately in Data::Dumper, making the override 
 # ineffective.
 #
-my $utf8fix_not_needed;
 BEGIN{ 
   # This test must be done before loading Vis, which over-rides an internal
   # function to fix the bug
-  $unicode_str = join "",map {eval sprintf "\" \\N{U+%04X}\"",$_} 
-                             (0x263A..0x2650); 
+  $unicode_str = join "", map { chr($_) } (0x263A .. 0x2650); 
   require Data::Dumper;
   print "Loaded ", $INC{"Data/Dumper.pm"}, " qquote=", \&Data::Dumper::qquote,"\n";
   { my $s = Data::Dumper->new([$unicode_str],['unicode_str'])->Terse(1)->Useqq('utf8')->Dump;
@@ -1583,7 +1550,6 @@ BEGIN{
       warn "WARNING: Useqq('utf8') is broken in your Data::Dumper.\n"
     } else {
       print "Useqq('utf8') seems to have been fixed in Data::Dumper,\n";
-      $utf8fix_not_needed = 1;
     }
   }
 }
@@ -1621,7 +1587,7 @@ sub check($$@) {
   my ($code, $expected_arg, @actual) = @_;
   my @expected = ref($expected_arg) eq "ARRAY" ? @$expected_arg : ($expected_arg);
   confess "\nTEST FAILED: $code\n"
-         ."Expected ".scalar(@expected)." results, but got ".scalr(@actual).":\n"
+         ."Expected ".scalar(@expected)." results, but got ".scalar(@actual).":\n"
          ."expected=(@expected)\n"
          ."actual=(@actual)\n"
     if @expected != @actual;
@@ -1729,17 +1695,13 @@ if (Vis::_unix_compatible_os()) {
 # Check Useqq('utf8') support
 ##################################################
 {
-  my $r = Vis->new([$unicode_str])->Terse(1)->Dump; chomp $r;
-  my $s = Vis->new([$unicode_str])->Terse(1)->Useqq('utf8')->Dump; chomp $s;
-  print "                   unicode_str=\"$unicode_str\"\n";
-  print "        Vis with Useqq('utf8'):$s\n";
-  print "        Vis default           :$r\n";
-  $s =~ s/^"(.*)"$/$1/s or die "bug";
-  if ($s ne $unicode_str) {
-    die "***Useqq('utf8') fix does not work!\n","s=<${s}>\n ";
-  } else {
-    print "Useqq('utf8') works with Vis.\n";
-  }
+  my $outstr = Vis->new([$unicode_str])->Terse(1)->Useqq(1)->Dump; 
+  chomp $outstr;
+  print "  unicode_str=\"$unicode_str\"\n";
+  print "   Vis output=$outstr\n";
+  if (substr($outstr,1,length($outstr)-2) ne $unicode_str) {
+    die "Unicode does not come through unmolested!";
+  } 
 }
 
 my $undef_as_false = undef;
@@ -1943,7 +1905,7 @@ my $ratstr  = '1/9';
   foreach my $Sval (0, undef, "", [], [0], [""]) {
     local $Vis::Stringify = $Sval;
     my $s = vis($bigf); 
-    die "bug($Sval)($s)" unless $s =~ /^\(?bless.*BigFloat/s; 
+    die "bug(",u($Sval),")($s)" unless $s =~ /^\(?bless.*BigFloat/s; 
   }
 }
 {
@@ -2102,8 +2064,14 @@ sub get_closure(;$) {
 
   for my $test (
     [ q(aaa\\\\bbb), q(aaa\bbb) ],
-    [ q($unicode_str\n), qq(unicode_str=\" \\x{263a} \\x{263b} \\x{263c} \\x{263d} \\x{263e} \\x{263f} \\x{2640} \\x{2641} \\x{2642} \\x{2643} \\x{2644} \\x{2645} \\x{2646} \\x{2647} \\x{2648} \\x{2649} \\x{264a} \\x{264b} \\x{264c} \\x{264d} \\x{264e} \\x{264f} \\x{2650}\"\n) ],
-    [ q($byte_str\n), qq(byte_str=\"\\n\\13\\f\\r\\16\\17\\20\\21\\22\\23\\24\\25\\26\\27\\30\\31\\32\\e\\34\\35\\36\"\n) ],
+
+    #[ q($unicode_str\n), qq(unicode_str=\" \\x{263a} \\x{263b} \\x{263c} \\x{263d} \\x{263e} \\x{263f} \\x{2640} \\x{2641} \\x{2642} \\x{2643} \\x{2644} \\x{2645} \\x{2646} \\x{2647} \\x{2648} \\x{2649} \\x{264a} \\x{264b} \\x{264c} \\x{264d} \\x{264e} \\x{264f} \\x{2650}\"\n) ],
+    [ q($unicode_str\n), qq(unicode_str="${unicode_str}"\n) ],
+
+    # Now Data::Dumper outputs \x{...} escapes instead of octal
+    #[ q($byte_str\n), qq(byte_str=\"\\n\\13\\f\\r\\16\\17\\20\\21\\22\\23\\24\\25\\26\\27\\30\\31\\32\\e\\34\\35\\36\"\n) ],
+    [ q($byte_str\n), qq(byte_str=\"\\n\\x{B}\\f\\r\\x{E}\\x{F}\\x{10}\\x{11}\\x{12}\\x{13}\\x{14}\\x{15}\\x{16}\\x{17}\\x{18}\\x{19}\\x{1A}\\e\\x{1C}\\x{1D}\\x{1E}\"\n) ],
+
     [ q($flex\n), qq(flex=\"Lexical in sub f\"\n) ],
     [ q($$flex_ref\n), qq(\$\$flex_ref=\"Lexical in sub f\"\n) ],
     [ q($_ $ARG\n), qq(\$_=\"GroupA.GroupB\" ARG=\"GroupA.GroupB\"\n) ],
@@ -2130,7 +2098,8 @@ sub get_closure(;$) {
     [ q($+\n), qq(\$+=\"GroupB\"\n) ],
     [ q(@+ $#+\n), qq(\@+=(13,6,13) \$#+=2\n) ],
     [ q(@- $#-\n), qq(\@-=(0,0,7) \$#-=2\n) ],
-    [ q($;\n), qq(\$;=\"\\34\"\n) ],
+    #[ q($;\n), qq(\$;=\"\\34\"\n) ],
+    [ q($;\n), qq(\$;=\"\\x{1C}\"\n) ],
     [ q(@ARGV\n), qq(\@ARGV=(\"fake\",\"argv\")\n) ],
     [ q($ENV{EnvVar}\n), qq(ENV{EnvVar}=\"Test EnvVar Value\"\n) ],
     [ q($ENV{$EnvVarName}\n), qq(ENV{\$EnvVarName}=\"Test EnvVar Value\"\n) ],
@@ -2309,12 +2278,17 @@ EOF
     # Check Useqq 
     for my $useqq (0, 1) {
       my $input = $expected.$dvis_input.'qqq@_(\(\))){\{\}\""'."'"; # gnarly
+      # Now Data::Dumper (version 2.174) forces "double quoted" output
+      # if there are any Unicode characters present.
+      # So we can not test single-quoted mode in those cases
+      next 
+        if $input =~ tr/0-\377//c; #
       my $exp = doquoting($input, $useqq);
-      my $act =  Vis->vnew($input)->Useqq($useqq)->Dump;
+      my $act = Vis->vnew($input)->Useqq($useqq)->Dump;
       die "\n\nUseqq ",u($useqq)," bug:\n"
          ."   Input   «${input}»\n"
          ."  Expected «${exp}»\n"
-         ."       Got «${act}»\n"
+         ."       Got «${act}»\n "
         unless $exp eq $act;
     }
   }
@@ -2334,4 +2308,5 @@ sub g($) {
 &g(42,$toplex_ar);
 print "Tests passed.\n";
 exit 0;
+
 # End Tester
