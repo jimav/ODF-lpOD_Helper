@@ -16,7 +16,7 @@ use utf8;
 # (Perl assumes Latin-1 by default).
 
 package Vis;
-use version 0.77; our $VERSION = version->declare(sprintf "v%s", q$Revision: 1.148 $ =~ /(\d[.\d]+)/);
+use version 0.77; our $VERSION = version->declare(sprintf "v%s", q$Revision: 1.149 $ =~ /(\d[.\d]+)/);
 
 # *** Documentation is at the end ***
 
@@ -878,11 +878,13 @@ sub Dump1 {
       if (/\G([^"'\\]++)/sgc) {
         $newstr .= $1;
       }
-      elsif (/\G(\\+ (?: # ref to a [ref to a ...] scalar
-                        [^"'\\]++             # some kind of number, or undef
-                      | "(?:[^"\\]++|\\.)*+"  # "dq string"
-                      | '(?:[^'\\]++|\\.)*+'  # 'sq string'
-                     ))/xsgc) {
+      elsif (/\G(\\+[\w.]++)\b/sgc) {
+        $newstr .= $1; # ref to [a ref to...] undef or a number
+      }
+      elsif (/\G(\\+)(?="(?:[^"\\]++|\\.)*+")/sgc) {  # ref to "dqstring"
+        $newstr .= $1; # push only backslashes; string will be parsed next
+      }
+      elsif (/\G(\\+)(?='(?:[^'\\]++|\\.)*+')/sgc) {
         $newstr .= $1;
       }
       elsif (/\G("(?:[^"\\]++|\\.)*+")/sgc) {
@@ -1596,24 +1598,26 @@ sub timed_run(&$@) {
 
 sub check($$@) {
   my ($code, $expected_arg, @actual) = @_;
+  local $_;  # preserve $1 etc. for caller
   my @expected = ref($expected_arg) eq "ARRAY" ? @$expected_arg : ($expected_arg);
-  confess "\nTEST FAILED: $code\n"
+  confess "\nTESTa FAILED: $code\n"
          ."Expected ".scalar(@expected)." results, but got ".scalar(@actual).":\n"
          ."expected=(@expected)\n"
          ."actual=(@actual)\n"
+         ."\$@=$@\n"
     if @expected != @actual;
   foreach my $i (0..$#actual) {
     my $actual = $actual[$i];
     my $expected = $expected[$i];
     if (ref($expected) eq "Regexp") {
-      confess "\nTEST FAILED: $code\n"
-             ."Expected:${expected}\n"
-             ."Got     :".u($actual)."«end»\n"
+      confess "\nTESTb FAILED: $code\n"
+             ."Expected\n:${expected}\n"
+             ."Got\n:".u($actual)."«end»\n"
         unless $actual =~ ($expected // "Never Matched");
     } else {
-      confess "\nTEST FAILED: $code\n"
-             ."Expected:".u($expected)."«end»\n"
-             ."Got     :".u($actual)."«end»\n"
+      confess "\nTESTc FAILED: $code\n"
+             ."Expected:\n".u($expected)."«end»\n"
+             ."Got:\n".u($actual)."«end»\n"
         unless (!defined($actual) && !defined($expected))
                || (defined($actual) && defined($expected) && $actual eq $expected);
     }
@@ -1780,7 +1784,9 @@ $Vis::Maxwidth = 72;
 $. = 1234;
 $ENV{EnvVar} = "Test EnvVar Value";
 
-my %toplex_h = ("" => "Emp", A=>111,"B B"=>222,C=>{d=>888,e=>999},D=>{});
+
+my %toplex_h = ("" => "Emp", A=>111,"B B"=>222,C=>{d=>888,e=>999},D=>{},EEEEEEEEEEEEEEEEEEEEEEEEEE=>\42,F=>\\\43);
+   # EEE... identifer is long to force linewrap
 my @toplex_a = (0,1,"C",\%toplex_h,[],[0..9]);
 my $toplex_ar = \@toplex_a;
 my $toplex_hr = \%toplex_h;
@@ -1847,34 +1853,37 @@ $_ = "GroupA.GroupB";
 { my $code = 'avis(@_)'; check $code, '()', eval $code; }
 { my $code = 'hvis(@_)'; check $code, '()', eval $code; }
 { my $code = 'hlvis(@_)'; check $code, '', eval $code; }
-# dvis & svis no longer accept multiple args
-#{ my $code = 'svis(q($_ con),q(caten),q(ated\n))';
-#  check $code, "\"${_}\" concatenated\n", eval $code;
-#}
-#{ my $code = 'dvis(q($_ con),q(caten),q(ated\n))';
-#  check $code, "\$_=\"${_}\" concatenated\n", eval $code;
-#}
 { my $code = 'avis(undef)'; check $code, "(undef)", eval $code; }
 { my $code = 'hvis("foo",undef)'; check $code, "(foo => undef)", eval $code; }
 { my $code = 'vis(undef)'; check $code, "undef", eval $code; }
+{ my $code = 'vis(\undef)'; check $code, "\\undef", eval $code; }
 { my $code = 'svis(undef)'; check $code, "<undef arg>", eval $code; }
 { my $code = 'dvis(undef)'; check $code, "<undef arg>", eval $code; }
 { my $code = 'dvisq(undef)'; check $code, "<undef arg>", eval $code; }
-#{ my $code = 'svis("foo",undef)'; check $code, "foo<undef arg>", eval $code; }
-#{ my $code = 'dvis("foo",undef)'; check $code, "foo<undef arg>", eval $code; }
-#{ my $code = 'dvisq("foo",undef)'; check $code, "foo<undef arg>", eval $code; }
 
 { my $code = q/my $s; my @a=sort{ $s=dvis('$a $b'); $a<=>$b }(3,2); "@a $s"/ ;
   check $code, '2 3 a=3 b=2', eval $code;
 }
 
-# Check that $1 etc. can be passed (this was once a bug...)
-{ my $code = '" a~b" =~ / (.*)/ && qsh($1)'; check $code, '"a~b"', eval $code; }
-{ my $code = '" a~b" =~ / (.*)/ && qshpath($1)'; check $code, '"a~b"', eval $code; }
-{ my $code = '" a~b" =~ / (.*)/ && forceqsh($1)'; check $code, '"a~b"', eval $code; }
-{ my $code = '" a~b" =~ / (.*)/ && vis($1)'; check $code, '"a~b"', eval $code; }
+# Vis v1.147ish+ : Check corner cases of re-parsing code 
+{ my $code = q(my $v = undef; dvis('$v')); check $code, "v=undef", eval $code; }
+{ my $code = q(my $v = \undef; dvis('$v')); check $code, "v=\\undef", eval $code; }
+{ my $code = q(my $v = \"abc"; dvis('$v')); check $code, 'v=\\"abc"', eval $code; }
+{ my $code = q(my $v = \"abc"; dvisq('$v')); check $code, "v=\\'abc'", eval $code; }
 
-{ my $code = 'my $vv=123; \' a $vv b\' =~ / (.*)/ && dvis($1)'; check $code, 'a vv=123 b', eval $code; }
+
+# Check that $1 etc. can be passed (this was once a bug...)
+# The duplicated calls are to check that $1 is preserved
+{ my $code = '" a~b" =~ / (.*)()/ && qsh($1); die unless $1 eq "a~b";qsh($1)'; 
+  check $code, '"a~b"', eval $code; }
+{ my $code = '" a~b" =~ / (.*)()/ && qshpath($1); die unless $1 eq "a~b";qshpath($1)'; 
+  check $code, '"a~b"', eval $code; }
+{ my $code = '" a~b" =~ / (.*)()/ && forceqsh($1); die unless $1 eq "a~b";forceqsh($1)'; 
+  check $code, '"a~b"', eval $code; }
+{ my $code = '" a~b" =~ / (.*)()/ && vis($1); die unless $1 eq "a~b";vis($1)'; 
+  check $code, '"a~b"', eval $code; }
+{ my $code = 'my $vv=123; \' a $vv b\' =~ / (.*)/ && dvis($1); die unless $1 eq "a \$vv b"; dvis($1)'; 
+  check $code, 'a vv=123 b', eval $code; }
 
 # Check Deparse support
 { my $data = eval 'BEGIN{ ${^WARNING_BITS} = 0 } no strict; no feature;
@@ -1969,8 +1978,9 @@ my $ratstr  = '1/9';
 # There was a bug for s/dvis called direct from outer scope, so don't use eval:
 check 'global divs %toplex_h',
       '%toplex_h=("" => "Emp", A => 111, "B B" => 222,'."\n"
-     .'           C => {d => 888, e => 999}, D => {}'."\n"
-     ."          )\n",
+     .'           C => {d => 888, e => 999}, D => {},'."\n"
+     .'           EEEEEEEEEEEEEEEEEEEEEEEEEE => \\42, F => \\\\\\43'."\n"
+     .'          )'."\n",
       dvis('%toplex_h\n');
 check 'global divs @ARGV', q(@ARGV=("fake","argv")), dvis('@ARGV');
 check 'global divs $.', q($.=1234), dvis('$.');
@@ -2075,7 +2085,7 @@ sub get_closure(;$) {
   local $localized_hr = \%localized_h;
   local $localized_obj = $toplex_obj;
 
-  for my $test (
+  my @tests = (
     [ q(aaa\\\\bbb), q(aaa\bbb) ],
 
     #[ q($unicode_str\n), qq(unicode_str=\" \\x{263a} \\x{263b} \\x{263c} \\x{263d} \\x{263e} \\x{263f} \\x{2640} \\x{2641} \\x{2642} \\x{2643} \\x{2644} \\x{2645} \\x{2646} \\x{2647} \\x{2648} \\x{2649} \\x{264a} \\x{264b} \\x{264c} \\x{264d} \\x{264e} \\x{264f} \\x{2650}\"\n) ],
@@ -2120,7 +2130,8 @@ sub get_closure(;$) {
 @_=(42,
     [0,1,"C",
      {"" => "Emp", A => 111, "B B" => 222,
-      C => {d => 888, e => 999}, D => {}
+      C => {d => 888, e => 999}, D => {},
+      EEEEEEEEEEEEEEEEEEEEEEEEEE => \42, F => \\\43
      },
      [],[0,1,2,3,4,5,6,7,8,9]
     ]
@@ -2129,7 +2140,7 @@ EOF
     [ q($#_\n), qq(\$#_=1\n) ],
     [ q($@\n), qq(\$\@=\"FAKE DEATH\\n\"\n) ],
     map({
-      my ($LQ,$RQ) = (/^(.*)(.)$/) or die "bug";
+      my ($LQ,$RQ) = (/^(.)(.)$/) or die "bug";
       map({
         my $name = $_;
         map({
@@ -2138,13 +2149,15 @@ EOF
           my $p = " " x length("?${dollar}${name}_?${r}");
           [ qq(%${dollar}${name}_h${r}\\n), <<EOF ],
 \%${dollar}${name}_h${r}=("" => "Emp", A => 111, "B B" => 222,
-${p}  C => {d => 888, e => 999}, D => {}
+${p}  C => {d => 888, e => 999}, D => {},
+${p}  EEEEEEEEEEEEEEEEEEEEEEEEEE => \\42, F => \\\\\\43
 ${p} )
 EOF
           [ qq(\@${dollar}${name}_a${r}\\n), <<EOF ],
 \@${dollar}${name}_a${r}=(0,1,"C",
 ${p}  {"" => "Emp", A => 111, "B B" => 222,
-${p}   C => {d => 888, e => 999}, D => {}
+${p}   C => {d => 888, e => 999}, D => {},
+${p}   EEEEEEEEEEEEEEEEEEEEEEEEEE => \\42, F => \\\\\\43
 ${p}  },
 ${p}  [],[0,1,2,3,4,5,6,7,8,9]
 ${p} )
@@ -2212,8 +2225,9 @@ EOF
       ), #map $name
       } ('""', "''")
     ), #map ($LQ,$RQ)
-  )
-  {
+  );
+  for my $tx (0..$#tests) {
+    my $test = $tests[$tx];
     my ($dvis_input, $expected) = @$test;
     #warn "##^^^^^^^^^^^ dvis_input='$dvis_input' expected='$expected'\n";
 
@@ -2281,7 +2295,7 @@ EOF
           = ($origAt, $origFs, $origBs, $origComma, $origBang, $origCarE, $origCarW);
       }
       unless ($expected eq $actual) {
-        confess "\ndvis (oo=$use_oo) test failed: input «",
+        confess "\ndvis (oo=$use_oo) test tx $tx failed: input «",
                 show_white($dvis_input),"»\n",
                 "Expected:\n",show_white($expected),"«end»\n",
                 "Got:\n",show_white($actual),"«end»\n"
