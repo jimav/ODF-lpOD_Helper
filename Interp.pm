@@ -16,7 +16,7 @@ use utf8;
 # (Perl assumes Latin-1 by default).
 
 package Vis;
-use version 0.77; our $VERSION = version->declare(sprintf "v%s", q$Revision: 1.147 $ =~ /(\d[.\d]+)/);
+use version 0.77; our $VERSION = version->declare(sprintf "v%s", q$Revision: 1.148 $ =~ /(\d[.\d]+)/);
 
 # *** Documentation is at the end ***
 
@@ -875,17 +875,24 @@ sub Dump1 {
   # if certain (Unicode?) chars are present.
   { my $newstr = "";
     while ((pos()//0) < length()) {
-      if (/\G((?:[^"'\\]++|\\.)+)/sgc) {
+      if (/\G([^"'\\]++)/sgc) {
         $newstr .= $1;
       }
-      elsif (/\G("(?:[^"\\]++|\\.)*+")/psgc) {
+      elsif (/\G(\\+ (?: # ref to a [ref to a ...] scalar
+                        [^"'\\]++             # some kind of number, or undef
+                      | "(?:[^"\\]++|\\.)*+"  # "dq string"
+                      | '(?:[^'\\]++|\\.)*+'  # 'sq string'
+                     ))/xsgc) {
+        $newstr .= $1;
+      }
+      elsif (/\G("(?:[^"\\]++|\\.)*+")/sgc) {
         $newstr .= __postprocess_qquote($1);
       }
-      elsif (/\G('(?:[^'\\]++|\\.)*+')/psgc) {
+      elsif (/\G('(?:[^'\\]++|\\.)*+')/sgc) {
         $newstr .= $useqq ? __postprocess_squote($1) : $1;
       }
       else {
-        confess "VisBUG: Did not parse ",Vis::debugvis(substr($_,pos))," pos=",Vis::debugvis(pos), " \$_=",Vis::debugvis($_),"\n";
+        confess "VisBUG: Did not parse ",Vis::debugvis(substr($_,pos()//0))," pos=",Vis::debugvis(pos), " \$_=",Vis::debugvis($_),"\n";
 die;
       }
     }
