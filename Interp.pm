@@ -1,7 +1,7 @@
 # Copyright © Jim Avera 2012-2021.  This document contains code extracted from
-# Data::Dumper and JSON:PP, as noted in adjacent comments, and those extracts 
-# remain subject to the licenses of their respective modules.  All other 
-# portions of this document have been released into the Public Domain by 
+# Data::Dumper and JSON:PP, as noted in adjacent comments, and those extracts
+# remain subject to the licenses of their respective modules.  All other
+# portions of this document have been released into the Public Domain by
 # the copyright owner (jim.avera AT gmail dot com) where legally permitted,
 # and otherwise subject to the Creative Commons CC0 license
 # (https://creativecommons.org/publicdomain/zero/1.0/)
@@ -9,14 +9,14 @@ use strict; use warnings FATAL => 'all'; use 5.010;
 
 use utf8;
 # This file contains UTF-8 characters in debug-output strings (e.g. « and »).
-# But to see them correctly on a non-Latin1 terminal (e.g. utf-8), your 
-# program has to say 
+# But to see them correctly on a non-Latin1 terminal (e.g. utf-8), your
+# program has to say
 #   use open ':std' => ':locale';
 # or otherwise set the STDERR encoding to match what your terminal expects
 # (Perl assumes Latin-1 by default).
 
 package Vis;
-use version 0.77; our $VERSION = version->declare(sprintf "v%s", q$Revision: 1.146 $ =~ /(\d[.\d]+)/);
+use version 0.77; our $VERSION = version->declare(sprintf "v%s", q$Revision: 1.147 $ =~ /(\d[.\d]+)/);
 
 # *** Documentation is at the end ***
 
@@ -54,14 +54,14 @@ sub Vis_Eval {   # Many ideas here were stolen from perl5db.pl
   }
 
   # make user's @_ accessible, if the user is in a sub (otherwise we can't)
-  local *_ = defined($Vis::DistToArgs) 
+  local *_ = defined($Vis::DistToArgs)
                ? \@DB::args
                : ['<@_ is not defined in the outer scope>'] ;
 
   # At this point, nothing is in scope except the name of this sub
   # and the simulated @_
 
-  # The LHS of this assignment has to be inside the eval to catch die 
+  # The LHS of this assignment has to be inside the eval to catch die
   # from tied variable handlers.
   {
     no strict 'refs';
@@ -79,21 +79,21 @@ sub Vis_Eval {   # Many ideas here were stolen from perl5db.pl
   my $at = $@;
 
   # Because of tied variables, we may have just executed user code!
-  # So save the possibly-modified punctuation variables again and 
+  # So save the possibly-modified punctuation variables again and
   # reset them to sane values.
   #
   # However we don't want to re-save $@, which we just cleared by
-  # executing our own 'eval' above; we want to later restore the 
+  # executing our own 'eval' above; we want to later restore the
   # user's original $@, which was saved earlier.
   # By localizing $saved[0] here, the effect of the following call to
-  # &SaveAndResetPunct will be un-done when we return for that value only, 
+  # &SaveAndResetPunct will be un-done when we return for that value only,
   # restoring the originally-saved value for $@ to $saved[0].
   local $saved[0];
   &Vis::SaveAndResetPunct;
 
   if ($at) {
     $at =~ s/ at (?:\(eval \d+\)|\S+) line \d+\.?\n?\z//s;
-    push @DB::CARP_NOT, 'Vis';  # Is this necessary? 
+    push @DB::CARP_NOT, 'Vis';  # Is this necessary?
 #    { ###TEMP
 #      require PadWalker;
 #      for (my $level=1; defined(caller($level-1)); $level++) {
@@ -139,7 +139,7 @@ use Terminalsize qw(get_terminal_columns);
 
 use Data::Dumper ();
 
-my %esc = (  
+my %esc = (
     "\a" => "\\a",
     "\b" => "\\b",
     "\t" => "\\t",
@@ -171,8 +171,8 @@ our @EXPORT    = qw(vis  avis  lvis  svis  dvis  hvis  hlvis
                     visq avisq lvisq svisq dvisq hvisq hlvisq
                     u qsh forceqsh qshpath);
                     #Dumper
-our @EXPORT_OK = qw($Maxwidth $MaxStringwidth $Truncsuffix $Debug 
-                    $Useqq $Quotekeys $Sortkeys 
+our @EXPORT_OK = qw($Maxwidth $MaxStringwidth $Truncsuffix $Debug
+                    $Useqq $Quotekeys $Sortkeys
                     $Terse $Indent $Sparseseen);
 
 our @ISA       = ('Data::Dumper');
@@ -201,7 +201,7 @@ $Sparseseen     = 1           unless defined $Sparseseen;
 # N.B. u() used to take a list and return a list, but now only one scalar
 #sub u(@) { map{defined ? $_ : "undef"} (@_==0 ? ($_) : @_) }
 #
-sub u(_) { 
+sub u(_) {
   # Show caller's location if arg is tied and the handler dies
   # TODO: Generalize this to other arg references?
   local $@;
@@ -233,7 +233,7 @@ sub dvis($)  { @_ = (Vis->dnew(@_)); goto &DB::DB_Vis_Interpolate; }
 sub svisq($) { @_ = (Vis->snew(@_)->Useqq(0)); goto &DB::DB_Vis_Interpolate; }
 sub dvisq($) { @_ = (Vis->dnew(@_)->Useqq(0)); goto &DB::DB_Vis_Interpolate; }
 
-sub Dump { 
+sub Dump {
   my $self = $_[0];
   if (! ref $self) { # ala Data::Dumper
     $self = $self->new(@_[1..$#_]);
@@ -357,7 +357,7 @@ sub snew {
   # will parse the string and then re-use the dumper object to format
   # each interpolated $varname etc. separately, thereby using any
   # configurations (such as Useqq or Indent) set by the user.
-  
+
   my $obj = (bless($class->SUPER::new([@_]), $class))->_config_defaults();
   $obj->{VisType} = 's';
   return $obj;
@@ -412,9 +412,9 @@ sub Stringify {
 # the matched sequence can never occur.  But anyway perl has this limit.
 # To work around, use multiple nested groupings:
 #my $qstr_re = qr{ " (?: [^"\\]++ | (?:\\.)++ )*+ " | ' (?: [^'\\]++ | (?:\\.)++ )*+ ' }x;
-my $qstr_re= qr{ " (?> (?> (?> [^"\\]++ | (?>\\.)* ){0,32760} ){0,32760} )* " 
+my $qstr_re= qr{ " (?> (?> (?> [^"\\]++ | (?>\\.)* ){0,32760} ){0,32760} )* "
                  |
-                 ' (?> (?> (?> [^'\\]++ | (?>\\.)* ){0,32760} ){0,32760} )* ' 
+                 ' (?> (?> (?> [^'\\]++ | (?>\\.)* ){0,32760} ){0,32760} )* '
                }x;
 
 # Match one balanced block (NOTE: Uses one capture group)
@@ -441,7 +441,7 @@ my $balanced_or_safe_re = qr{
      #(?{ print "### END balanced_or_safe_re at $+[0] $^N\n"; })
    }x;
 
-# Similar but only matches *squished* balanced blocks. 
+# Similar but only matches *squished* balanced blocks.
 my $balancedsquished_or_safe_re = qr{
      ( [^"'{}()\[\]]++ | $qstr_re | $balanced_squished_re )*+
    }x;
@@ -468,10 +468,10 @@ sub __reformat_dumper_output($$) {
 
   print "===== RAW =====\n${_}---------------\n" if $debug;
   #do{ $|=1; require Carp; print Carp::longmess("===== RAW =====\n${_}---------------") } if $debug;
-  
+
   #WRONG! Maxwidth==0 means no wrap, but we should still condense!
   #return $_ if $maxwidth == 0; # no condensation
-  
+
   # Split into logical lines.  Basically, split after newlines except
   # for newlines inside quoted strings, or inside sub{...} definitions
   # (these are kept together regardless of maxwidth because the parse code
@@ -481,7 +481,7 @@ sub __reformat_dumper_output($$) {
   while (/\G(?=.)/cgs) {
     my $startpos = pos;
     while (
-      /\G"(?:[^"\\]++|\\.)*+"/cg 
+      /\G"(?:[^"\\]++|\\.)*+"/cg
       ||
       /\G'(?:[^'\\]++|\\.)*+'/cgs
       ||
@@ -501,12 +501,12 @@ sub __reformat_dumper_output($$) {
             \[ (?-1) \]
           )*
           \}/cgsx
-      || 
+      ||
       /\G[^s"'\n]+/gsc  # eat until just before possible sub or string
-      || 
+      ||
       /\Gs/gsc          # eat an 's' which was not "sub..."
     )
-    { 
+    {
       #print "### consumed ", debugvis(substr($_,0,pos)), "\n";
     }
     /\G\n/gsc or confess "oops:".debugvis(substr($_,pos));
@@ -533,23 +533,23 @@ sub __reformat_dumper_output($$) {
         # Find the next pair of lines which haven't been "deleted" yet
         while ($lines[$J] eq "") { next LOOP if ++$J > $#lines; }
         while ($lines[$I] eq "") { next LOOP if ++$I >= $J; }
-  
+
         my ($Iprefix,$Icode) = ($lines[$I] =~ /^( *)(.*)\n\z/s);
         my $Iindent = length($Iprefix);
-  
+
         my ($Jprefix,$Jcode) = ($lines[$J] =~ /^( *)(.*)\n\z/s);
         my $Jindent = length($Jprefix);
-  
+
         # The wierd (1||/^[\{]/) is so vim will see a matching bracket
         my $J_is_closing = (1||/^[\{]/) && ($Jcode =~ /[\]\}]$/);
-  
+
         print "##Icode=",debugvis($Icode)," Jcode=",debugvis($Jcode)," maxwidth=$maxwidth\n" if $debug;
         _debug_show(\@lines, $I, $Iindent, $J, $Jindent, $restart) if $debug;
-  
+
         if (($Iindent <= $Jindent)
             # I is not closing an aggregate
-            && (1||/^[\{]/) && $Icode !~ /^[\]\}]/ 
-  
+            && (1||/^[\{]/) && $Icode !~ /^[\]\}]/
+
             # J does not end with an un-closed block (we only join atoms or
             # [whole blocks]).  This prevents hard-to-see keys such as KEY2:
             #    { "KEY" => [ 1, 2, 3, 4,
@@ -557,7 +557,7 @@ sub __reformat_dumper_output($$) {
             && $Jcode !~ /^ (?> ${balanced_or_safe_re}) [\{\[] /x
             && (1||/^[\}]/)
            )
-         { 
+         {
           # The lines are elegible to be joined, if there is enough space
           # (or in any case if the joining would not increase line length)
           my $Ilen = $Iindent + length($Icode);
@@ -566,9 +566,9 @@ sub __reformat_dumper_output($$) {
                       ? " " : "";
           my $adj = $Ilen + length($sep) - $Jindent; # posn change, + or -
           print "[Iind=$Iindent Ilen=$Ilen Jind=$Jindent Jlen=$Jlen sep='${sep}' adj=$adj mw=$maxwidth]\n" if $debug;
-  
+
           if ($Ilen + $Jlen + length($sep) <= $maxwidth || $adj <= 0) {
-            substr($lines[$I],$Ilen) = $sep.substr($lines[$J], $Jindent); 
+            substr($lines[$I],$Ilen) = $sep.substr($lines[$J], $Jindent);
             $lines[$J] = "";
             print "## joined:",debugvis($lines[$I])," (len=",length($lines[$I]),")\n" if $debug;
             if ($J < $#lines && $adj < 0) {
@@ -580,13 +580,13 @@ sub __reformat_dumper_output($$) {
                 die "bug J=$J K=$K\n   lines=(\n   ",join("\n   ",map{debugvis($_)} @lines),"\n   )" if $K > $#lines;
                 $lines[$K] =~ /^( *)/;
                 last if length($1) <= $Iindent; # end of nested block
-                die "BUG: Would remove non-indent chars adj=$adj len=",length($1) 
+                die "VisBUG: Would remove non-indent chars adj=$adj len=",length($1)
                   if length($1) < (-$adj);
                 #if ($adj > 0) {
                 #  $lines[$K] = $extra_prefix . $lines[$K];
-                #} else { 
+                #} else {
                   substr($lines[$K],0,-$adj) = "";  # N.B. -$adj is positive
-                #}              
+                #}
               }
             }
             #$restart = $I if $I < $restart;
@@ -602,19 +602,19 @@ sub __reformat_dumper_output($$) {
       }
     }
   }; # eval
-  unshift @lines, __PACKAGE__." BUG: $@" if $@; # show the error, but keep the Data::Dumper output
+  unshift @lines, __PACKAGE__." VisBUG: $@" if $@; # show the error, but keep the Data::Dumper output
 
   $_ = join "", @lines;
   print "===== REFORMATTED =====\n${_}---------------\n" if $debug;
   $_
-}
+} # __reformat_dumper_output
 sub __postprocess_qquote($) {
   local $_ = shift;
   # "double-quoted string" : Replace \x{ABCD} with actual char if printable
-  s/\G(?:[^\\]++ 
-       | \\(?: [^x]| x[^\{] | x\{([0-9A-Fa-f]+)\} 
+  s/\G(?:[^\\]++
+       | \\(?: [^x]| x[^\{] | x\{([0-9A-Fa-f]+)\}
                               # hex escape we don't want to convert?
-                              (?(?{do{ local $_ = $^N; length>8 || chr(hex($_)) =~ m{\P{XPosixGraph}} }})|(*FAIL)) 
+                              (?(?{do{ local $_ = $^N; length>8 || chr(hex($_)) =~ m{\P{XPosixGraph}} }})|(*FAIL))
                               # not XPosixPrint so we see non-ASCII whitespace
                               # as escapes
            ) )*+
@@ -630,8 +630,8 @@ sub __postprocess_squote($) {
   # Replace \' with just ', \\ with itself, and double all other backslashes
   #say "##psA «",u($_),"»";
   s/\G [^\\]*+ \K (\\.) / do{
-          #say "##SUBST ($1) pos=",pos()-1; 
-          $1 eq "\\'" ? "'" : $1 eq "\\\\" ? "\\\\" : "\\$1" 
+          #say "##SUBST ($1) pos=",pos()-1;
+          $1 eq "\\'" ? "'" : $1 eq "\\\\" ? "\\\\" : "\\$1"
                                    } /xesg;
   #say "##psB «",u($_),"»";
   # Backslash $ and @ and "
@@ -646,8 +646,8 @@ sub __postprocess_squote($) {
 
 # Walk an arbitrary structure calling &coderef on each item, stopping
 # prematurely if &$coderef returns false, and skipping any reference
-# which was visited previously.  Members of containers are visited after 
-# processing the container item itself, and containerness is checked 
+# which was visited previously.  Members of containers are visited after
+# processing the container item itself, and containerness is checked
 # after &$coderef returns so that &$coderef may transform the
 # item (by reference through $_[0]) e.g. to replace a container with a scalar.
 # RETURNS: The final $&coderef return val (i.e. TRUE unless terminated early)
@@ -662,7 +662,7 @@ sub _walk($$;$) {  # (coderef, item [, seenhash])
   if (reftype($_[1])) {
     my $refaddr0 = refaddr($_[1]);
     return 1 if $seen->{$refaddr0}; # increment only below
-  } 
+  }
   # Now call the coderef and re-check the item
   my $r = &{ $_[0] }($_[1]);
   return $r unless (my $reftype = reftype($_[1]));
@@ -733,11 +733,11 @@ sub Dump1 {
 # print "##Dump1 caller(1)=",Vis::debugavis((caller(1))[0,1,2])," VT=",Vis::debugvis($self->{VisType}),"\n";
 
   if (($self->{VisType}//"") =~ /^[sd]/) {
-    @_ = ($_[0]); 
+    @_ = ($_[0]);
     goto &DB::DB_Vis_Interpolate;
   }
 
-  my ($debug, $maxwidth, $maxstringwidth) 
+  my ($debug, $maxwidth, $maxstringwidth)
     = @$self{qw/VisDebug Maxwidth MaxStringwidth/};
 
   my $cloned;
@@ -753,8 +753,8 @@ sub Dump1 {
             foreach my $mod (@$stringify) {
               # Stringify may be class name, a Regexp matching class name,
               # or a non-zero number (i.e. "true")
-              $shouldwe=1, last if 
-                ref($mod) eq "Regexp" 
+              $shouldwe=1, last if
+                ref($mod) eq "Regexp"
                   ? $class =~ /$mod/
                   : ($class eq $mod || ($mod && $mod =~ /^\d+$/))
             }
@@ -762,7 +762,7 @@ sub Dump1 {
           }
         }
         1
-      }, [$self->Values] 
+      }, [$self->Values]
     );
     if (%hits) {
       $self->_Modify_Values(sub {
@@ -777,9 +777,9 @@ sub Dump1 {
   if (($maxstringwidth//0) > 0) {
     my $truncsuf = $self->{Truncsuffix};
     my $maxwid = $maxstringwidth + length($truncsuf);
-    if (! _walk(sub{ 
+    if (! _walk(sub{
                  ! (ref($_[0]) eq "" && length($_[0]//"undef") > $maxwid)
-                }, [$self->Values])) 
+                }, [$self->Values]))
     {
       $self->_Modify_Values(
         sub {
@@ -792,13 +792,13 @@ sub Dump1 {
         }
       );
     }
-  } 
+  }
 
   my $pad = $self->Pad();
 
   # Maxwidth==0 means do not fold at all, so we use Indent(0) when
   # calling Data::Dumper.  However in that case Data::Dumper inserts Pad()
-  # between every token; so we have to force Pad() to "" and prepend 
+  # between every token; so we have to force Pad() to "" and prepend
   # the user's Pad() string ourself to the overall result.
   my $user_Indent;
   if ($maxwidth == 0) {
@@ -808,40 +808,40 @@ sub Dump1 {
   }
 
   # 2/21/22: Previously we relied on Data::Dumper to produce double-quoted
-  # strings, using a "fixed" qquote sub which allowed unicode chars to appear
-  # unmolested with Useqq("utf8") (the "fix" was to some undocumented
-  # code in Data::Dumper which apparently was intended to make Unicode
-  # characters appear as themselves in double-quoted strings.)
+  # strings, using a repaired qquote sub which allowed unicode chars to appear
+  # unmolested with Useqq("utf8") (the "repair" was to make some undocumented
+  # code in Data::Dumper which seems to have been intended to make Unicode
+  # characters appear as themselves in double-quoted strings actually work.)
   #
   # But now another deficiency has been discovered; Data::Dumper will
-  # format scalars set to strings like "6" as numbers rather than strings 
+  # format scalars set to strings like "6" as numbers rather than strings
   # *except* with Useqq(false) and Useperl(false).
   #
-  # So now we always call Data::Dumper (as SUPER) in single-quote mode, 
+  # So now we always call Data::Dumper (as SUPER) in single-quote mode,
   # and hand-convert the result to double-quoted if Useqq was requested.
-  # The "fixed" qquote sub has been removed.
+  # The "repaired" qquote sub has been removed.
   my $useqq = $self->Useqq();
-  $self->Useqq(0); 
-  { 
+  $self->Useqq(0);
+  {
     confess "bug:defined:$_" if defined($_);
     my @values = $self->Values;
     # Data::Dumper always quotes floats to avoid inter-platform dependencies.
     # We don't want that; we can catch the simple case here of a single value;
-    # however floats in structures, e.g. [42, 3.14] will not be handled and 
+    # however floats in structures, e.g. [42, 3.14] will not be handled and
     # so will come out as quoted strings.  Sigh.
     my $val0 = $values[0];
     if (defined($val0) && ref($val0) eq "" && looks_like_number($val0)) {
       # pad, quotes and newline mimic Data::Dumper::Dump output
-      $_ = $pad   
+      $_ = $pad
           . (show_as_number($val0) ? $val0 : "'$val0'")
           . "\n";
     } else {
       # Hack -- save/restore punctuation variables corrupted by Data::Dumper
       my ($sAt, $sQ) = ($@, $?);
-    
+
       # HERE is where Data::Dumper formats the value(s)
       $_ = $self->SUPER::Dump;
-    
+
       ($@, $?) = ($sAt, $sQ);
     }
   }
@@ -885,7 +885,8 @@ sub Dump1 {
         $newstr .= $useqq ? __postprocess_squote($1) : $1;
       }
       else {
-        die "BUG: Did not parse '",substr($_,pos());
+        confess "VisBUG: Did not parse ",Vis::debugvis(substr($_,pos))," pos=",Vis::debugvis(pos), " \$_=",Vis::debugvis($_),"\n";
+die;
       }
     }
     $_ = $newstr;
@@ -926,18 +927,18 @@ sub forceqsh($) {
     # If a ref to an aggregate, convert to a string
     $_ = __PACKAGE__->vnew($_)->Useqq(0)->Dump;
   }
-  
-  # Now we have a simple scalar.  
+
+  # Now we have a simple scalar.
   # Don't use Data::Dumper because it will change
   # wide characters to \x{...} escapes.  For qsh() we assume the user
   # will encode the resulting string as needed, so leave wide chars as-is.
-  
+
   if (/["\$`!\\\x{00}-\x{1F}\x{7F}]/) {
     s/'/'\\''/g; # foo'bar => foo'\''bar
     return "'${_}'";
   } else {
     # Prefer "..." if no shell escapes are needed (assume all > 7F are safe)
-    return "\"${_}\""; 
+    return "\"${_}\"";
   }
 }
 
@@ -999,7 +1000,7 @@ sub DB_Vis_Interpolate {
   # NOTE: These REs may or may not use capture groups internally, so capture
   # groups must NOT be opened after the first point of use in a regexp!
   # TODO: Rewrite using named capture groups
-  
+
   state $interior_re = qr/${balanced_or_safe_re}/;
 
   state $variable_re = qr/   # sigl could be $ or @
@@ -1030,7 +1031,7 @@ sub DB_Vis_Interpolate {
     local $_ = join "", map {defined($_) ? $_ : '<undef arg>'} $self->Values();
     while (1) {
       #print "### pos()=",Vis::u(pos()),"\n" if $debug;
-        
+
       # Recognize $ or @ followed by various forms
       my ($sigl, $rhs);
       if (/\G (?!\\)([\$\@\%])/xsgc) {
@@ -1130,7 +1131,7 @@ sub DB_Vis_Interpolate {
 
       my $s = $self->Dump1;  # <<<<<<<<<<<<<<<<<<<<<<<<<<<<
 
-      print "# # Vis::Indent=$Vis::Indent Indent()=", $self->Indent(), 
+      print "# # Vis::Indent=$Vis::Indent Indent()=", $self->Indent(),
             " Dump1 result=", Vis::debugvis($s),"\n" if $debug;
       substr($s, 0, length($autopad)) = $varlabel;
       $result .= $s;
@@ -1202,7 +1203,7 @@ Vis - Enhance Data::Dumper for use in messages
     my $big = 1_000_000_000 * 1_234_567_890;
     print vis($big), "\n";  # "1234567890000000000"
     # disable stringifying "big" numbers
-    $Vis::Stringify = ""; 
+    $Vis::Stringify = "";
     print vis($big), "\n"; # bless({...}, 'Math::BigInt')
   }
 
@@ -1251,7 +1252,7 @@ A final newline is not automatically included when using the new interfaces.
 
 =item *
 
-Multiple array and hash members are shown on the same line, 
+Multiple array and hash members are shown on the same line,
 subject to a maximum width (see "Maxwidth" below).
 
 For example  B<print "ref=", vis($ref), "\n";>  produces
@@ -1283,9 +1284,9 @@ Data::Dumper may still be called directly (see "PERFORMANCE").
 
 Returns the argument with variable references and escapes interpolated
 as in in Perl double-quotish strings except that variable values are
-formatted using C<vis()> or C<avis()> for $ or @ expressions, respectively.  
+formatted using C<vis()> or C<avis()> for $ or @ expressions, respectively.
 In addition, C<%name> is interpolated as S<<< C<< (key => value ...) >> >>>, and
-C<< $name->method(...) >> is interpolated as a method call (if args are given, 
+C<< $name->method(...) >> is interpolated as a method call (if args are given,
 no space is allowed before the open parenthesis).
 
 Multi-line structures are indented to line up with their starting position,
@@ -1310,7 +1311,7 @@ produces
 
   foo="Nazdrave\n" @bar[3..5]=(3, 4, 5) %hash=(A => 100, B => 200)
 
-Note: "@_" shows your original sub arguments as they were before any C<shift> 
+Note: "@_" shows your original sub arguments as they were before any C<shift>
 statements were executed.   This is because svis/dvis use Perl's debug mechanism,
 which has this quirk.
 
@@ -1327,7 +1328,7 @@ This allows @arrays to be shown without taking a reference.
 
 =head2 svisq, dvisq, visq, and avisq
 
-These alternatives use 'single quotes' when formatting strings, with no \=escapes 
+These alternatives use 'single quotes' when formatting strings, with no \=escapes
 except for \\.
 
 =head2 OO interfaces
@@ -1360,34 +1361,34 @@ and an ellipsis (...) appended.  Zero or undef for no limit.
 
 =item $Vis::Stringify   or   $OBJ->Stringify(B<[...]>)
 
-Objects of the indicated class(es) are allowed to convert themselves to 
+Objects of the indicated class(es) are allowed to convert themselves to
 strings before being dumped.  A "(classname)" prefix will be prepended
 to the string provided by the class.
 
 Strinification is done by concatenating "" to the object, and it is
-done only if the class implements the "" operator.  
+done only if the class implements the "" operator.
 
 The Stringify property value may be:
 
-1) 1 (the default) to enable stringification of all objects which 
+1) 1 (the default) to enable stringification of all objects which
 implement the "" operator.
 
 2) 0, undef, or [] to completely disable the feature.
 
 3) A string giving the name of a class, a qr/regex/ matching class names,
-or a ref to an array of those things; objects blessed into 
+or a ref to an array of those things; objects blessed into
 any matching class will be stringified if possible.
 
-When stringification is performed, a _deep copy_ is first made of the 
+When stringification is performed, a _deep copy_ is first made of the
 entire data, which will impact performance for large structures.
 
 
 Note: 'Stringify' is conceptually related to the 'Freezer' property
 provided by Data::Dumper.  However 'Freezer' can only be used to modify
 existing objects in-place, not entirely replace them with something else
-such as a string.  Also, 'Stringify' is irreversible; there is no provision 
+such as a string.  Also, 'Stringify' is irreversible; there is no provision
 for reconstituting the original objects if the output is eval'd.
-  
+
 =back
 
 The following Methods have the same meaning as in Data::Dumper except that
@@ -1410,9 +1411,9 @@ default values come from global variables in package B<Vis> :
 Note that the B<Useqq(0)> is called implicitly
 by B<svisq>, B<dvisq>, B<visq>, and B<avisq>.
 
-B<Useqq('utf8')> is like B<Useqq(1)> but also leaves printable wide 
+B<Useqq('utf8')> is like B<Useqq(1)> but also leaves printable wide
 characters as-is so you can read them (anything in the POSIX [:graph:] set).
-Input strings must contain characters (not bytes), and the output must 
+Input strings must contain characters (not bytes), and the output must
 later be encoded to UTF-8 or another encoding which can represent the data
 (see perlunitut).
 [Data::Dumper has long contained code to implement this but a bug prevented it from working; B<Vis> overrides a Data::Dumper internal function to repair it.]
@@ -1453,7 +1454,7 @@ This inherited method should not be used with Vis :
 
 =head2 u $data, ...
 
-The arguments ($_ by default) are returned unchanged, except that undefined 
+The arguments ($_ by default) are returned unchanged, except that undefined
 argument(s) are replaced by the string "undef".  Refs are not stringified.
 
 =head2 qsh
@@ -1464,7 +1465,7 @@ argument(s) are replaced by the string "undef".  Refs are not stringified.
 
 The "word" ($_ by default) is quoted if necessary for parsing
 by /bin/sh, which has different quoting rules than Perl.
-"Double quotes" are used when no escapes would be needed, 
+"Double quotes" are used when no escapes would be needed,
 otherwise 'single quotes'.
 
 An item which contains only "safe" characters is returned unquoted.
@@ -1509,8 +1510,8 @@ Jim Avera  (jim.avera AT gmail dot com)
 
 #!/usr/bin/perl
 # Tester for module Vis.  TODO: Convert to CPAN module-test setup
-use strict; use warnings ; use feature qw(state switch);
-use utf8; 
+use strict; use warnings ; use feature qw(state);
+use utf8;
 use open IO => 'utf8', ':std';
 select STDERR; $|=1; select STDOUT; $|=1;
 use Scalar::Util qw(blessed reftype looks_like_number);
@@ -1529,17 +1530,20 @@ use Test::Deep qw(cmp_deeply);
 
 my $unicode_str;
 
-# We want to test the original version of the internal function 
-# Data::Dumper::qquote to see if the useqq="utf8" but has been fixed.
-# We used to just load Data::Dumper here in a BEGIN block before Vis
-# is loaded and use Data::Dumper to test it, but Perl now seems to cache
-# the sub lookup immediately in Data::Dumper, making the override 
-# ineffective.
+# We want to test the original version of the internal function
+# Data::Dumper::qquote to see if the useqq="utf8" feature has been fixed, and
+# if not allow Vis to over-ride it.  But perl nowadays seems to cache the sub
+# lookup immediately in Data::Dumper, making the override ineffective.
 #
-BEGIN{ 
-  # This test must be done before loading Vis, which over-rides an internal
-  # function to fix the bug
-  $unicode_str = join "", map { chr($_) } (0x263A .. 0x2650); 
+# As of Vis v1.146 Vis no longer overrides that internal function,
+# but instead parses hex escape sequences in output strings.
+# So this test is just to detect if Useqq('utf8') is made to work in the future.
+#
+BEGIN{
+  # [Obsolete comment:]
+  #   This test must be done before loading Vis, which over-rides an internal
+  #   function to fix the bug
+  $unicode_str = join "", map { chr($_) } (0x263A .. 0x2650);
   require Data::Dumper;
   print "Loaded ", $INC{"Data/Dumper.pm"}, " qquote=", \&Data::Dumper::qquote,"\n";
   { my $s = Data::Dumper->new([$unicode_str],['unicode_str'])->Terse(1)->Useqq('utf8')->Dump;
@@ -1547,17 +1551,17 @@ BEGIN{
     $s =~ s/^"(.*)"$/$1/s or die "bug";
     if ($s ne $unicode_str) {
       #warn "Data::Dumper with Useqq('utf8'):$s\n";
-      warn "WARNING: Useqq('utf8') is broken in your Data::Dumper.\n"
+      warn "Note: Useqq('utf8') is broken in your Data::Dumper.\n"
     } else {
-      print "Useqq('utf8') seems to have been fixed in Data::Dumper,\n";
+      print "Useqq('utf8') seems to have been fixed in Data::Dumper !!! \n";
+      die "Consider changing Vis to not bother parsing hex escapes?";
     }
   }
 }
 
 use Vis;
-#use Vis 'u';  now exported by default...
 
-print "Loaded ", $INC{"Vis.pm"}, " _qquote_wrapper=", \&Vis::_qquote_wrapper, "\n";
+print "Loaded ", $INC{"Vis.pm"}, "\n";
 
 # Do an initial read of $[ so arybase will be autoloaded
 # (prevents corrupting $!/ERRNO in subsequent tests)
@@ -1578,7 +1582,7 @@ sub timed_run(&$@) {
   my (@result, $result);
   if (wantarray) {@result = &$code(@codeargs)} else {$result = &$code(@codeargs)};
   my $cpusecs = clock() - $startclock;
-  confess "TOOK TOO LONG ($cpusecs CPU seconds vs. limit of $maxcpusecs)\n" 
+  confess "TOOK TOO LONG ($cpusecs CPU seconds vs. limit of $maxcpusecs)\n"
     if $cpusecs > $maxcpusecs;
   if (wantarray) {return @result} else {return $result};
 }
@@ -1597,19 +1601,19 @@ sub check($$@) {
     if (ref($expected) eq "Regexp") {
       confess "\nTEST FAILED: $code\n"
              ."Expected:${expected}\n"
-             ."Got     :".u($actual)."«end»\n" 
+             ."Got     :".u($actual)."«end»\n"
         unless $actual =~ ($expected // "Never Matched");
     } else {
       confess "\nTEST FAILED: $code\n"
              ."Expected:".u($expected)."«end»\n"
-             ."Got     :".u($actual)."«end»\n" 
+             ."Got     :".u($actual)."«end»\n"
         unless (!defined($actual) && !defined($expected))
                || (defined($actual) && defined($expected) && $actual eq $expected);
     }
   }
 }
 
-# Run a variety of tests on an item which is a string or 
+# Run a variety of tests on an item which is a string or
 # a stringified object, with code evaluated in the caller's context
 # so that "use bignum" or similar may be in effect.
 sub checkstringy(&$$) {
@@ -1658,11 +1662,11 @@ for my $varname (qw(PREMATCH MATCH POSTMATCH)) {
 my $byte_str = join "",map { chr $_ } 10..30;
 
 ##################################################
-# Check default $Vis::Maxwidth 
+# Check default $Vis::Maxwidth
 ##################################################
 die "Expected initial Vis::Maxwidth to be undef" if defined $Vis::Maxwidth;
 { local $ENV{COLUMNS} = 66;
-  vis(123); 
+  vis(123);
   die "Vis::Maxwidth does not honor ENV{COLUMNS}" unless $Vis::Maxwidth == 66;
   undef $Vis::Maxwidth;  # re-enable auto-detect
 }
@@ -1670,7 +1674,7 @@ if (Vis::_unix_compatible_os()) {
   delete local $ENV{COLUMNS};
   my $expected = `tput cols`;  # may default to 80 if no tty
   die "bug: Vis::Maxwidth not undef" if defined($Vis::Maxwidth);
-  vis(123); 
+  vis(123);
   die "Vis::Maxwidth ",u($Vis::Maxwidth)," not defaulted correctly, expecting $expected" unless $Vis::Maxwidth == $expected;
   undef $Vis::Maxwidth;  # re-enable auto-detect
 }
@@ -1682,7 +1686,7 @@ if (Vis::_unix_compatible_os()) {
     require POSIX;
     die "bug" unless POSIX::setsid()==$$;
     POSIX::close $_ for (0,1,2);
-    vis(123); 
+    vis(123);
     exit($Vis::Maxwidth // 253);
   }
   waitpid($pid,0);
@@ -1695,13 +1699,15 @@ if (Vis::_unix_compatible_os()) {
 # Check Useqq('utf8') support
 ##################################################
 {
-  my $outstr = Vis->new([$unicode_str])->Terse(1)->Useqq(1)->Dump; 
-  chomp $outstr;
-  print "  unicode_str=\"$unicode_str\"\n";
-  print "   Vis output=$outstr\n";
-  if (substr($outstr,1,length($outstr)-2) ne $unicode_str) {
+  my $vis_outstr = Vis->new([$unicode_str])->Terse(1)->Useqq(1)->Dump;
+  chomp $vis_outstr;
+  my $dd_outstr = Data::Dumper->new([$unicode_str],['unicode_str'])->Terse(1)->Useqq('utf8')->Dump;
+  print "   unicode_str=\"$unicode_str\"\n";
+  print "    Vis output=$vis_outstr\n";
+  if (substr($vis_outstr,1,length($vis_outstr)-2) ne $unicode_str) {
     die "Unicode does not come through unmolested!";
-  } 
+  }
+  print "   D::D output=$dd_outstr\n";
 }
 
 my $undef_as_false = undef;
@@ -1717,7 +1723,7 @@ if (! ref Vis->new([1])->Useqq(undef)) {
 { my $code="Vis->dnew('foo')->Dump;"; check $code, 'foo',     eval $code }
 { my $code="Vis->snew('foo')->Dump;"; check $code, 'foo',     eval $code }
 
-foreach ( 
+foreach (
           ['Maxwidth',0,1,80,9999],
           ['MaxStringwidth',undef,0,1,80,9999],
           ['Truncsuffix',"","...","(trunc)"],
@@ -1809,7 +1815,7 @@ $_ = "GroupA.GroupB";
 { my $code = 'qsh("a b")';           check $code, '"a b"',  eval $code; }
 { my $code = 'qsh(undef)';           check $code, "undef",  eval $code; }
 #qsh no longer accepts multiple args
-#{ my $code = 'qsh("a b","c d","e",undef,"g",q{\'ab\'"cd"})';       
+#{ my $code = 'qsh("a b","c d","e",undef,"g",q{\'ab\'"cd"})';
 #   check $code, ['"a b"','"c d"',"e","undef","g","''\\''ab'\\''\"cd\"'"], eval $code; }
 #{ my $code = 'qshpath("a b")';       check $code, '"a b"',  eval $code; }
 { my $code = 'qshpath("~user")';     check $code, "~user",  eval $code; }
@@ -1820,8 +1826,8 @@ $_ = "GroupA.GroupB";
 { my $code = 'qsh()';                check $code, "${_}",   eval $code; }
 { my $code = 'qsh';                  check $code, "${_}",   eval $code; }
 { my $code = 'qshpath($_)';          check $code, "${_}",   eval $code; }
-{ my $code = 'qshpath()';            check $code, "${_}",   eval $code; } 
-{ my $code = 'qshpath';              check $code, "${_}",   eval $code; } 
+{ my $code = 'qshpath()';            check $code, "${_}",   eval $code; }
+{ my $code = 'qshpath';              check $code, "${_}",   eval $code; }
 { my $code = 'forceqsh($_)';         check $code, "\"${_}\"", eval $code; }
 
 # Basic checks
@@ -1852,7 +1858,7 @@ $_ = "GroupA.GroupB";
 #{ my $code = 'dvisq("foo",undef)'; check $code, "foo<undef arg>", eval $code; }
 
 { my $code = q/my $s; my @a=sort{ $s=dvis('$a $b'); $a<=>$b }(3,2); "@a $s"/ ;
-  check $code, '2 3 a=3 b=2', eval $code; 
+  check $code, '2 3 a=3 b=2', eval $code;
 }
 
 # Check that $1 etc. can be passed (this was once a bug...)
@@ -1904,8 +1910,8 @@ my $ratstr  = '1/9';
   # Confirm that various Stringify values disable
   foreach my $Sval (0, undef, "", [], [0], [""]) {
     local $Vis::Stringify = $Sval;
-    my $s = vis($bigf); 
-    die "bug(",u($Sval),")($s)" unless $s =~ /^\(?bless.*BigFloat/s; 
+    my $s = vis($bigf);
+    die "bug(",u($Sval),")($s)" unless $s =~ /^\(?bless.*BigFloat/s;
   }
 }
 {
@@ -1926,13 +1932,13 @@ my $ratstr  = '1/9';
 
   # Without stringification
   { local $Vis::Stringify = 0;
-    my $s = vis($bigf); die "bug($s)" unless $s =~ /^bless.*BigFloat/s; 
+    my $s = vis($bigf); die "bug($s)" unless $s =~ /^bless.*BigFloat/s;
   }
   # With explicit stringification of BigFloat only
   { local $Vis::Stringify = [qr/^Math::BigFloat/];
     checkstringy(sub{eval $_[0]}, $bigf, qr/(?:\(Math::BigFloat[^\)]*\))?${bigfstr}/);
     # But not other classes
-    my $s = vis($rat); die "bug($s)" unless $s =~ /^bless.*BigRat/s; 
+    my $s = vis($rat); die "bug($s)" unless $s =~ /^bless.*BigRat/s;
   }
 }
 
@@ -1954,20 +1960,20 @@ my $ratstr  = '1/9';
 }
 
 # There was a bug for s/dvis called direct from outer scope, so don't use eval:
-check 'global divs %toplex_h', 
+check 'global divs %toplex_h',
       '%toplex_h=("" => "Emp", A => 111, "B B" => 222,'."\n"
      .'           C => {d => 888, e => 999}, D => {}'."\n"
      ."          )\n",
-      dvis('%toplex_h\n'); 
-check 'global divs @ARGV', q(@ARGV=("fake","argv")), dvis('@ARGV'); 
-check 'global divs $.', q($.=1234), dvis('$.'); 
-check 'global divs $ENV{EnvVar}', q("Test EnvVar Value"), svis('$ENV{EnvVar}'); 
+      dvis('%toplex_h\n');
+check 'global divs @ARGV', q(@ARGV=("fake","argv")), dvis('@ARGV');
+check 'global divs $.', q($.=1234), dvis('$.');
+check 'global divs $ENV{EnvVar}', q("Test EnvVar Value"), svis('$ENV{EnvVar}');
 sub func {
-  check 'func args', q(@_=(1,2,3)), dvis('@_'); 
+  check 'func args', q(@_=(1,2,3)), dvis('@_');
 }
 func(1,2,3);
 
-# There was once a "took almost forever" backtracking problem 
+# There was once a "took almost forever" backtracking problem
 my @backtrack_bugtest_data = (
   42,
   {A => 0, BBBBBBBBBBBBB => "foo"},
@@ -2015,15 +2021,15 @@ sub get_closure(;$) {
 
  return sub {
 
-  # Perl is inconsistent about whether an eval in package DB can see 
+  # Perl is inconsistent about whether an eval in package DB can see
   # lexicals in enclosing scopes.  Sometimes it can, sometimes not.
   # However explicitly referencing those "global lexicals" in the closure
   # seems to make it work.
   #   5/16/16: Perl v5.22.1 *segfaults* if these are included
   #   (at least *_obj).  But removing them all causes some to appear
   #   to be non-existent.
-  my $forget_me_not = [ 
-     \$unicode_str, \$byte_str, 
+  my $forget_me_not = [
+     \$unicode_str, \$byte_str,
      \@toplex_a, \%toplex_h, \$toplex_hr, \$toplex_ar, \$toplex_obj,
      \@global_a, \%global_h, \$global_hr, \$global_ar, \$global_obj,
   ];
@@ -2031,7 +2037,7 @@ sub get_closure(;$) {
   # Referencing these intermediate variables also prevents them from
   # being destroyed before this closure is executed:
   my $saverefs = [ \%closure_h, \@closure_a, \$closure_ar, \$closure_hr, \$closure_obj ];
-  
+
 
   my $zero = 0;
   my $one = 1;
@@ -2117,9 +2123,9 @@ EOF
     [ q($@\n), qq(\$\@=\"FAKE DEATH\\n\"\n) ],
     map({
       my ($LQ,$RQ) = (/^(.*)(.)$/) or die "bug";
-      map({ 
+      map({
         my $name = $_;
-        map({ 
+        map({
           my ($dollar, $r) = @$_;
           my $dolname_scalar = ($dollar ? "\$$dollar" : "").$name;
           my $p = " " x length("?${dollar}${name}_?${r}");
@@ -2166,9 +2172,9 @@ EOF
         ), #map [$dollar,$r]
 
         ( $] >= 5.022001 && $] <= 5.022001
-            ?  (do{ state $warned = 0; 
-                    warn "\n\n** obj->method() tests disabled ** due to Perl v5.22.1 segfault!\n\n" 
-                     unless $warned++; () 
+            ?  (do{ state $warned = 0;
+                    warn "\n\n** obj->method() tests disabled ** due to Perl v5.22.1 segfault!\n\n"
+                     unless $warned++; ()
                   },())
             : (
                [ qq(\$${name}_obj->meth ()), qq(${name}_obj->meth="meth_with_noargs" ()) ],
@@ -2176,7 +2182,7 @@ EOF
               )
         ),
 
-        map({ 
+        map({
           my ($dollar, $r, $arrow) = @$_;
           my $dolname_scalar = ($dollar ? "\$$dollar" : "").$name;
           [ qq(\$${dollar}${name}_h${r}${arrow}{\$${name}_a[\$two]}{e}\\n),
@@ -2203,7 +2209,7 @@ EOF
   {
     my ($dvis_input, $expected) = @$test;
     #warn "##^^^^^^^^^^^ dvis_input='$dvis_input' expected='$expected'\n";
-    
+
     { local $@;  # check for bad syntax first, to avoid uncontrolled die later
       # For some reason we can't catch exceptions from inside package DB.
       # undef is returned but $@ is not set
@@ -2219,13 +2225,13 @@ EOF
     }
     my sub checkspunct($$$) {
       my ($varname, $actual, $expecting) = @_;
-      check "dvis('$dvis_input') : $varname NOT PRESERVED : ", 
+      check "dvis('$dvis_input') : $varname NOT PRESERVED : ",
             $actual//"<undef>", $expecting//"<undef>" ;
     }
     my sub checknpunct($$$) {
       my ($varname, $actual, $expecting) = @_;
       # N.B. check() compaares as strings
-      check "dvis('$dvis_input') : $varname NOT PRESERVED : ", 
+      check "dvis('$dvis_input') : $varname NOT PRESERVED : ",
             defined($actual) ? $actual+0 : "<undef>",
             defined($expecting) ? $expecting+0 : "<undef>" ;
     }
@@ -2240,10 +2246,10 @@ EOF
 
         # Don't change a value if being tested in $dvis_input
         my ($fakeAt, $fakeFs, $fakeBs, $fakeComma, $fakeBang, $fakeCarE, $fakeCarW)
-          = ($dvis_input =~ /(?<!\\)\$@/    ? $origAt : "FakeAt", 
-             $dvis_input =~ /(?<!\\)\$\//   ? $origFs : "FakeFs", 
-             $dvis_input =~ /(?<!\\)\$\\\\/ ? $origBs : "FakeBs", 
-             $dvis_input =~ /(?<!\\)\$,/    ? $origComma : "FakeComma", 
+          = ($dvis_input =~ /(?<!\\)\$@/    ? $origAt : "FakeAt",
+             $dvis_input =~ /(?<!\\)\$\//   ? $origFs : "FakeFs",
+             $dvis_input =~ /(?<!\\)\$\\\\/ ? $origBs : "FakeBs",
+             $dvis_input =~ /(?<!\\)\$,/    ? $origComma : "FakeComma",
              $dvis_input =~ /(?<!\\)\$!/    ? $origBang : 6,
              $dvis_input =~ /(?<!\\)\$^E/   ? $origCarE : 6,  # $^E aliases $! on most OSs
              $dvis_input =~ /(?<!\\)\$^W/   ? $origCarW : 0); # $^W can only be 0 or 1
@@ -2275,13 +2281,13 @@ EOF
       }
     }
 
-    # Check Useqq 
+    # Check Useqq
     for my $useqq (0, 1) {
       my $input = $expected.$dvis_input.'qqq@_(\(\))){\{\}\""'."'"; # gnarly
       # Now Data::Dumper (version 2.174) forces "double quoted" output
       # if there are any Unicode characters present.
       # So we can not test single-quoted mode in those cases
-      next 
+      next
         if $input =~ tr/0-\377//c; #
       my $exp = doquoting($input, $useqq);
       my $act = Vis->vnew($input)->Useqq($useqq)->Dump;
