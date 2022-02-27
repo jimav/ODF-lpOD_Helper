@@ -16,7 +16,7 @@ use utf8;
 # (Perl assumes Latin-1 by default).
 
 package Vis;
-use version 0.77; our $VERSION = version->declare(sprintf "v%s", q$Revision: 1.149 $ =~ /(\d[.\d]+)/);
+use version 0.77; our $VERSION = version->declare(sprintf "v%s", q$Revision: 1.150 $ =~ /(\d[.\d]+)/);
 
 # *** Documentation is at the end ***
 
@@ -515,7 +515,7 @@ sub __reformat_dumper_output($$) {
   }
   undef $_;
 
-  #print "===== ",scalar(@lines)," lines: =====",(map{ "\n  ".debugvis($_) } @lines),"\n" if $debug;
+  print ">>>>> ",scalar(@lines)," lines: =====",(map{ "\n  ".debugvis($_) } @lines),"\n" if $debug;
 
   # Combine appropriate lines to make it more "horizontal"
   local $@;  # preserve user's $@ value
@@ -820,7 +820,7 @@ sub Dump1 {
   # So now we always call Data::Dumper (as SUPER) in single-quote mode,
   # and hand-convert the result to double-quoted if Useqq was requested.
   # The "repaired" qquote sub has been removed.
-  my $useqq = $self->Useqq();
+  our $user_useqq = $self->Useqq(); # "our" so can be ref'd from qr/(?{ ...})/
   $self->Useqq(0);
   {
     confess "bug:defined:$_" if defined($_);
@@ -845,7 +845,7 @@ sub Dump1 {
       ($@, $?) = ($sAt, $sQ);
     }
   }
-  $self->Useqq($useqq);
+  $self->Useqq($user_useqq);
 
   s/^ *// if $maxwidth==0;  # remove initial forced pad from Indent(0)
 
@@ -873,25 +873,40 @@ sub Dump1 {
   # in effect and convert \x{ABCD} escapes to actual characters where possible
   # N.B. Data::Dumper 2.174 forces double-quoted output regardless of Useqq
   # if certain (Unicode?) chars are present.
+
+  state $parsedq_re = qr/("(?:[^"\\]++|\\.)*+")
+                    (?{
+                        #say "###Parsed dq «$^N» useqq=$user_useqq";
+                        $^R . __postprocess_qquote($^N) # goes back into $^R
+                    })/xs;
+  state $parsesq_re = qr/
+                    ('(?:[^'\\]++|\\.)*+')
+                    (?{
+                        #Carp::cluck "###Parsed Sq «$^N» useqq=$user_useqq";
+                        $^R . ($user_useqq ? __postprocess_squote($^N) : $^N)
+                    })/xs;
+  state $parsequoted_re = qr/$parsedq_re|$parsesq_re/;
+  
   { my $newstr = "";
+    $^R = "";
     while ((pos()//0) < length()) {
       if (/\G([^"'\\]++)/sgc) {
         $newstr .= $1;
       }
-      elsif (/\G(\\+[\w.]++)\b/sgc) {
-        $newstr .= $1; # ref to [a ref to...] undef or a number
+      elsif (/\G(\\*)(?{ $^R.$^N }) ${parsequoted_re} /xsgc) {
+        $newstr .= $^R;  # "str" or \\\\"str" single or double-quoted
+        $^R = "";
       }
-      elsif (/\G(\\+)(?="(?:[^"\\]++|\\.)*+")/sgc) {  # ref to "dqstring"
-        $newstr .= $1; # push only backslashes; string will be parsed next
+      elsif (/\G(\\+\*\{)(?{ $^R.$^N }) ${parsequoted_re} \} (?{ $^R.'}'}) 
+             /xsgc) {
+        $newstr .= $^R;  # \*{"str"} etc. includes anon file handles
+        $^R = "";
       }
-      elsif (/\G(\\+)(?='(?:[^'\\]++|\\.)*+')/sgc) {
-        $newstr .= $1;
+      elsif (/\G(\\+[-\w.]+)/xsgc) {
+        $newstr .= $1;   # \3.14 \1.23E-47 \undef
       }
-      elsif (/\G("(?:[^"\\]++|\\.)*+")/sgc) {
-        $newstr .= __postprocess_qquote($1);
-      }
-      elsif (/\G('(?:[^'\\]++|\\.)*+')/sgc) {
-        $newstr .= $useqq ? __postprocess_squote($1) : $1;
+      elsif (/\G(\\+\*[:\w]+)/xsgc) {
+        $newstr .= $1;   # \*STDOUT
       }
       else {
         confess "VisBUG: Did not parse ",Vis::debugvis(substr($_,pos()//0))," pos=",Vis::debugvis(pos), " \$_=",Vis::debugvis($_),"\n";
@@ -1610,9 +1625,9 @@ sub check($$@) {
     my $actual = $actual[$i];
     my $expected = $expected[$i];
     if (ref($expected) eq "Regexp") {
-      confess "\nTESTb FAILED: $code\n"
-             ."Expected\n:${expected}\n"
-             ."Got\n:".u($actual)."«end»\n"
+      confess "\nTESTb FAILED: ",$code,"\n"
+             ."Expected:\n",${expected},"\n"
+             ."Got:\n".u($actual)."«end»\n"
         unless $actual =~ ($expected // "Never Matched");
     } else {
       confess "\nTESTc FAILED: $code\n"
@@ -1870,7 +1885,11 @@ $_ = "GroupA.GroupB";
 { my $code = q(my $v = \undef; dvis('$v')); check $code, "v=\\undef", eval $code; }
 { my $code = q(my $v = \"abc"; dvis('$v')); check $code, 'v=\\"abc"', eval $code; }
 { my $code = q(my $v = \"abc"; dvisq('$v')); check $code, "v=\\'abc'", eval $code; }
-
+{ my $code = q(my $v = \*STDOUT; dvisq('$v')); check $code, "v=\\*::STDOUT", eval $code; }
+{ my $code = q(open my $fh, "</dev/null" or die; dvis('$fh')); 
+  check $code, "fh=\\*{\"::\\\$fh\"}", eval $code; }
+{ my $code = q(open my $fh, "</dev/null" or die; dvisq('$fh')); 
+  check $code, "fh=\\*{'::\$fh'}", eval $code; }
 
 # Check that $1 etc. can be passed (this was once a bug...)
 # The duplicated calls are to check that $1 is preserved
