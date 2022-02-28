@@ -6,6 +6,7 @@
 # and otherwise subject to the Creative Commons CC0 license
 # (https://creativecommons.org/publicdomain/zero/1.0/)
 use strict; use warnings FATAL => 'all'; use 5.010;
+use feature 'unicode_strings', 'unicode_eval';
 
 use utf8;
 # This file contains UTF-8 characters in debug-output strings (e.g. « and »).
@@ -16,7 +17,7 @@ use utf8;
 # (Perl assumes Latin-1 by default).
 
 package Vis;
-use version 0.77; our $VERSION = version->declare(sprintf "v%s", q$Revision: 1.150 $ =~ /(\d[.\d]+)/);
+use version 0.77; our $VERSION = version->declare(sprintf "v%s", q$Revision: 1.151 $ =~ /(\d[.\d]+)/);
 
 # *** Documentation is at the end ***
 
@@ -172,21 +173,21 @@ our @EXPORT    = qw(vis  avis  lvis  svis  dvis  hvis  hlvis
                     u qsh forceqsh qshpath);
                     #Dumper
 our @EXPORT_OK = qw($Maxwidth $MaxStringwidth $Truncsuffix $Debug
-                    $Useqq $Quotekeys $Sortkeys
-                    $Terse $Indent $Sparseseen);
+                    $Stringify $Usehex
+                    $Useqq $Quotekeys $Sortkeys $Terse $Indent $Sparseseen);
 
 our @ISA       = ('Data::Dumper');
 
 # Used by non-oo functions, and initial settings for oo constructors.
-our ($Maxwidth, $MaxStringwidth, $Truncsuffix, $Debug, $Stringify,
-     $Useqq, $Quotekeys, $Sortkeys,
-     $Terse, $Indent, $Sparseseen);
+our ($Maxwidth, $MaxStringwidth, $Truncsuffix, $Debug, $Stringify, $Usehex,
+     $Useqq, $Quotekeys, $Sortkeys, $Terse, $Indent, $Sparseseen);
 
 $Maxwidth       = undef       unless defined $Maxwidth; # undef to auto-detect
 $MaxStringwidth = 0           unless defined $MaxStringwidth;
 $Truncsuffix    = "..."       unless defined $Truncsuffix;
 $Debug          = 0           unless defined $Debug;
 $Stringify      = 1           unless defined $Stringify;
+$Usehex         = 1           unless defined $Usehex; # for binary octets
 
 # The following Vis defaults override Data::Dumper defaults
 $Useqq          = 1           unless defined $Useqq;
@@ -306,6 +307,7 @@ sub _config_defaults {
     ->Indent($Indent)
     ->Debug($Debug)
     ->Stringify($Stringify)
+    ->Usehex($Usehex)
     ->Useqq($Useqq)
     ->Maxwidth($Maxwidth)
     ->MaxStringwidth($MaxStringwidth)
@@ -403,6 +405,10 @@ sub Truncsuffix {
 sub Stringify {
   my($s, $v) = @_;
   @_ >= 2 ? (($s->{Stringify} = $v), return $s) : $s->{Stringify};
+}
+sub Usehex {
+  my($s, $v) = @_;
+  @_ >= 2 ? (($s->{Usehex} = $v), return $s) : $s->{Usehex};
 }
 
 # perl v5.24.1 gives "regular subexpression recursion limit (32766) exceeded"
@@ -509,7 +515,7 @@ sub __reformat_dumper_output($$) {
     {
       #print "### consumed ", debugvis(substr($_,0,pos)), "\n";
     }
-    /\G\n/gsc or confess "oops:".debugvis(substr($_,pos));
+    /\G(?:\n|\z)/gsc or confess "oops (pos=",pos(),"):".debugvis(substr($_,pos));
     push @lines, substr($_, $startpos, pos()-$startpos);
     $startpos = pos();
   }
@@ -608,40 +614,105 @@ sub __reformat_dumper_output($$) {
   print "===== REFORMATTED =====\n${_}---------------\n" if $debug;
   $_
 } # __reformat_dumper_output
-sub __postprocess_qquote($) {
-  local $_ = shift;
+
+use Encode ();
+sub _postprocess_qquote {
+  (my $self, local $_) = @_;
   # "double-quoted string" : Replace \x{ABCD} with actual char if printable
+  die if defined(pos);
   s/\G(?:[^\\]++
-       | \\(?: [^x]| x[^\{] | x\{([0-9A-Fa-f]+)\}
-                              # hex escape we don't want to convert?
-                              (?(?{do{ local $_ = $^N; length>8 || chr(hex($_)) =~ m{\P{XPosixGraph}} }})|(*FAIL))
-                              # not XPosixPrint so we see non-ASCII whitespace
-                              # as escapes
+       | \\(?: [^x] | x[^\{] 
+               | x\{([0-9A-Fa-f]+)\}
+                 # match hex escapes we do NOT want to convert
+                 (?(?{ local $_ = $^N; 
+                       print "#Vis qq testing hex '$_'\n";
+                       length>6 || chr(hex($_)) =~ m{\P{XPosixGraph}|[\0-\377]} 
+                       # not using XPosixPrint so non-ASCII whitespace
+                       # are left as hex escapes
+                     })|(*FAIL))
            ) )*+
     \K
     \\x\{([0-9A-Fa-f]+)\}
-   / chr(hex($^N)) /exsg;
+   / print "Vis qq interpolating hex '$^N'\n";
+     chr(hex($^N)) /exsg;
+  # Data::Dumper inconsistently passes \n etc. as themselves when forcing
+  # "double-quoted" when called with Useqq(0) but Unicode chars are present.
+  s/(\P{XPosixPrint})/ $esc{$1} or sprintf("\\x{%X}", ord($1)) /exsg;
   $_
 }
-sub __postprocess_squote($) {
-  local $_ = shift;
+sub _postprocess_squote {
+  (my $self, local $_) = @_;
   die "bug" unless index($_,"'")==0;
-  # Convert to double-quoted
+print "##Vis ppsq ",Vis::debugvis($_),"\n";
+  #
+  # If the user set Useqq(true), convert to double-quoted form (we always
+  # call Data::Dumper in single-quote mode to avoid bugs as noted elsewhere).
+  #
+  # We also force conversion to double-quoted, regardless of Useqq, if there 
+  # are "dangerious" characters which might cause errors if encoded to utf8,
+  # or terminal misbehavior if sent directly to a utf8 terminal, or simply
+  # be confusing to human readers (e.g. backspaces, tabs).
+  #
+  # Note: Data::Dumper itself forces double-quoted mode if the data contained
+  # wide characters (codes > 0xFF).  In that case we never get here, but
+  # the code here "should work" if Data::Dumper ever allows Unicode
+  # characters to appear as themselves in single-quoted strings.
+  #
+  # In summary, the single-quoted form is retained only if the user set 
+  # Useqq(false) and the result is safe and non-confusing to display as-is.
+  
+  my $useqq = $self->Useqq();
+  if (! $useqq && ! /[^[:print:]\n]/as) { # only ascii printables or newline
+print "##Vis ppsq EARLY RETURN\n";
+    return $_
+  }
+
+  if (!utf8::is_utf8($_)) {
+    # The string is binary octets or pure ascii+latin1.  For Vis we
+    # can ignore latin1, as characters are assumed to be Unicode.
+    my $chars;
+    eval { $chars = Encode::decode 'UTF-8', $_, Encode::FB_CROAK|Encode::LEAVE_SRC };
+print "##Vis ppsq eval: \$@=",Vis::debugvis($@)," chars=",Vis::debugvis($chars),"\n";
+    if ($@) {
+      $useqq = 1;     # force conv to "double quoted"
+    } else {
+      $_ = $chars;
+      die "oops" unless utf8::is_utf8($_); 
+    }
+  }
+  if (! $useqq && ! /[^\p{XPosixGraph}\ \n]/) {
+print "##Vis ppsq SAFE return\n";
+    return($_)  # only "safe" printables, ascii space or newline
+  }
+  # Convert to "double quoted" 
+  
   # Replace \' with just ', \\ with itself, and double all other backslashes
-  #say "##psA «",u($_),"»";
-  s/\G [^\\]*+ \K (\\.) / do{
-          #say "##SUBST ($1) pos=",pos()-1;
-          $1 eq "\\'" ? "'" : $1 eq "\\\\" ? "\\\\" : "\\$1"
+  #say "##START pos=",Vis::debugvis(pos);
+  pos=0; s/\G [^\\]*+ \K (\\[^\\]?+) / do{
+            $1 eq "\\'" ? "'" : $1 eq "\\\\" ? $1 : "\\$1"
                                    } /xesg;
-  #say "##psB «",u($_),"»";
-  # Backslash $ and @ and "
-  pos=0; s/[^\$\@"]*\K([\$\@"])/\\$1/sg;
-  # Convert controls to \n etc or \x{} escapes
-  # Backslash $ and @
+  
+  pos=0; s/([\$\@"])/\\$1/sg; # Backslash $ and @ and "
+
+print "##Vis ppsq CCC ",Vis::debugvis($_),"\n";
+  if (!utf8::is_utf8($_)) {
+    # We did not successfully decode above.  Try again, this time 
+    # substituting escape seqences for octets which are not strict UTF-8
+    my $usehex = $self->Usehex();
+    my $chars = Encode::decode 'UTF-8', $_, sub{
+      # sub is called with list of ordinals
+      join "", map{ sprintf(($usehex ? "\\x{%X}" : "\\%03o"), $_) } @_;
+    };
+    $_ = $chars;
+print "##Vis ppsq DECODED: ",Vis::debugvis($_),"\n";
+  }
+
   s/(\P{XPosixPrint})/ $esc{$1} or sprintf("\\x{%X}", ord($1)) /exsg;
-  substr($_,0,1) = '"';
-  substr($_,-1,1) = '"';
-  __postprocess_qquote($_);
+
+  substr($_,0,1) = '"'; substr($_,-1,1) = '"'; # Change ' to "
+
+print "##Vis ppsq ending... ",Vis::debugvis($_),"\n";
+  $self->_postprocess_qquote($_); # escapes undesirable Unicode characters 
 }
 
 # Walk an arbitrary structure calling &coderef on each item, stopping
@@ -737,8 +808,8 @@ sub Dump1 {
     goto &DB::DB_Vis_Interpolate;
   }
 
-  my ($debug, $maxwidth, $maxstringwidth)
-    = @$self{qw/VisDebug Maxwidth MaxStringwidth/};
+  my ($debug, $maxwidth, $maxstringwidth, $usehex)
+    = @$self{qw/VisDebug Maxwidth MaxStringwidth Usehex/};
 
   my $cloned;
 
@@ -807,27 +878,27 @@ sub Dump1 {
     #$self->Pad(" ");
   }
 
-  # 2/21/22: Previously we relied on Data::Dumper to produce double-quoted
-  # strings, using a repaired qquote sub which allowed unicode chars to appear
-  # unmolested with Useqq("utf8") (the "repair" was to make some undocumented
-  # code in Data::Dumper which seems to have been intended to make Unicode
-  # characters appear as themselves in double-quoted strings actually work.)
+  # 2/21/22: Previously we always relied on Data::Dumper to produce 
+  # double-quoted strings, using a repaired qquote sub which allowed unicode 
+  # chars to appear unmolested with Useqq("utf8") (the "repair" was to make 
+  # existing but undocumented code in Data::Dumper work, usually).
   #
-  # But now another deficiency has been discovered; Data::Dumper will
-  # format scalars set to strings like "6" as numbers rather than strings
-  # *except* with Useqq(false) and Useperl(false).
+  # But now another deficienty has been discovered: Data::Dumper formats
+  # scalars set to strings like "6" as numbers rather than strings
+  # *except* when using the XS implementation (Useperl(false)) and Useqq(false).
   #
-  # So now we always call Data::Dumper (as SUPER) in single-quote mode,
-  # and hand-convert the result to double-quoted if Useqq was requested.
-  # The "repaired" qquote sub has been removed.
-  our $user_useqq = $self->Useqq(); # "our" so can be ref'd from qr/(?{ ...})/
-  $self->Useqq(0);
+  # So now we call Data::Dumper (via SUPER) in single-quote mode 
+  # regardless of Useqq, and hand-convert the result to double-quoted form 
+  # if Useqq(true) was requested.
+  # The "repaired" qquote code has been removed.
+  our $user_useqq = $self->Useqq(0); # "our" so can be used in qr/(?{ ...})/
+  print "Vis b4 DD: Indent=",$self->Indent()," Terse=",$self->Terse(),"\n";
   {
     confess "bug:defined:$_" if defined($_);
     my @values = $self->Values;
     # Data::Dumper always quotes floats to avoid inter-platform dependencies.
-    # We don't want that; we can catch the simple case here of a single value;
-    # however floats in structures, e.g. [42, 3.14] will not be handled and
+    # We don't want that; we can catch the simple case here of a single value
+    # but floats in structures, e.g. [42, 3.14] will not be handled and
     # so will come out as quoted strings.  Sigh.
     my $val0 = $values[0];
     if (defined($val0) && ref($val0) eq "" && looks_like_number($val0)) {
@@ -868,22 +939,16 @@ sub Dump1 {
   }
   # else: one long line, produced using Indent(0) above;
 
-  # As noted above, Data::Dumper is always called in single-quoted mode
-  # to avoid various bugs.  Hand-convert to double-quoted if Useqq was
-  # in effect and convert \x{ABCD} escapes to actual characters where possible
-  # N.B. Data::Dumper 2.174 forces double-quoted output regardless of Useqq
-  # if certain (Unicode?) chars are present.
-
+  # Parse "dq" and 'sq' strings 
   state $parsedq_re = qr/("(?:[^"\\]++|\\.)*+")
                     (?{
-                        #say "###Parsed dq «$^N» useqq=$user_useqq";
-                        $^R . __postprocess_qquote($^N) # goes back into $^R
+                        $^R . $self->_postprocess_qquote($^N) 
+                        # resulting value goes back into $^R
                     })/xs;
   state $parsesq_re = qr/
                     ('(?:[^'\\]++|\\.)*+')
                     (?{
-                        #Carp::cluck "###Parsed Sq «$^N» useqq=$user_useqq";
-                        $^R . ($user_useqq ? __postprocess_squote($^N) : $^N)
+                        $^R . $self->_postprocess_squote($^N)
                     })/xs;
   state $parsequoted_re = qr/$parsedq_re|$parsesq_re/;
   
@@ -894,7 +959,7 @@ sub Dump1 {
         $newstr .= $1;
       }
       elsif (/\G(\\*)(?{ $^R.$^N }) ${parsequoted_re} /xsgc) {
-        $newstr .= $^R;  # "str" or \\\\"str" single or double-quoted
+        $newstr .= $^R;  # "str" or ref to... same
         $^R = "";
       }
       elsif (/\G(\\+\*\{)(?{ $^R.$^N }) ${parsequoted_re} \} (?{ $^R.'}'}) 
