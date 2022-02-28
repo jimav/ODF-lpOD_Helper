@@ -17,7 +17,7 @@ use utf8;
 # (Perl assumes Latin-1 by default).
 
 package Vis;
-use version 0.77; our $VERSION = version->declare(sprintf "v%s", q$Revision: 1.151 $ =~ /(\d[.\d]+)/);
+use version 0.77; our $VERSION = version->declare(sprintf "v%s", q$Revision: 1.152 $ =~ /(\d[.\d]+)/);
 
 # *** Documentation is at the end ***
 
@@ -39,7 +39,6 @@ sub Vis_Eval {   # Many ideas here were stolen from perl5db.pl
   #   2: The caller of the user's sub (this frame defines @_)
 
   ($Vis::pkg) = (caller(1))[0];  # pkg containig user's call
-  #Carp::cluck "###Vis::pkg=$Vis::pkg evalarg=$Vis::evalarg\n";
 
   # Get @_ values from the closest frame above the user's call which
   # has arguments.  This will be the very next frame (i.e. frame 2)
@@ -625,7 +624,6 @@ sub _postprocess_qquote {
                | x\{([0-9A-Fa-f]+)\}
                  # match hex escapes we do NOT want to convert
                  (?(?{ local $_ = $^N; 
-                       print "#Vis qq testing hex '$_'\n";
                        length>6 || chr(hex($_)) =~ m{\P{XPosixGraph}|[\0-\377]} 
                        # not using XPosixPrint so non-ASCII whitespace
                        # are left as hex escapes
@@ -643,7 +641,6 @@ sub _postprocess_qquote {
 sub _postprocess_squote {
   (my $self, local $_) = @_;
   die "bug" unless index($_,"'")==0;
-print "##Vis ppsq ",Vis::debugvis($_),"\n";
   #
   # If the user set Useqq(true), convert to double-quoted form (we always
   # call Data::Dumper in single-quote mode to avoid bugs as noted elsewhere).
@@ -663,7 +660,6 @@ print "##Vis ppsq ",Vis::debugvis($_),"\n";
   
   my $useqq = $self->Useqq();
   if (! $useqq && ! /[^[:print:]\n]/as) { # only ascii printables or newline
-print "##Vis ppsq EARLY RETURN\n";
     return $_
   }
 
@@ -672,7 +668,6 @@ print "##Vis ppsq EARLY RETURN\n";
     # can ignore latin1, as characters are assumed to be Unicode.
     my $chars;
     eval { $chars = Encode::decode 'UTF-8', $_, Encode::FB_CROAK|Encode::LEAVE_SRC };
-print "##Vis ppsq eval: \$@=",Vis::debugvis($@)," chars=",Vis::debugvis($chars),"\n";
     if ($@) {
       $useqq = 1;     # force conv to "double quoted"
     } else {
@@ -681,7 +676,6 @@ print "##Vis ppsq eval: \$@=",Vis::debugvis($@)," chars=",Vis::debugvis($chars),
     }
   }
   if (! $useqq && ! /[^\p{XPosixGraph}\ \n]/) {
-print "##Vis ppsq SAFE return\n";
     return($_)  # only "safe" printables, ascii space or newline
   }
   # Convert to "double quoted" 
@@ -694,7 +688,6 @@ print "##Vis ppsq SAFE return\n";
   
   pos=0; s/([\$\@"])/\\$1/sg; # Backslash $ and @ and "
 
-print "##Vis ppsq CCC ",Vis::debugvis($_),"\n";
   if (!utf8::is_utf8($_)) {
     # We did not successfully decode above.  Try again, this time 
     # substituting escape seqences for octets which are not strict UTF-8
@@ -704,16 +697,14 @@ print "##Vis ppsq CCC ",Vis::debugvis($_),"\n";
       join "", map{ sprintf(($usehex ? "\\x{%X}" : "\\%03o"), $_) } @_;
     };
     $_ = $chars;
-print "##Vis ppsq DECODED: ",Vis::debugvis($_),"\n";
   }
 
   s/(\P{XPosixPrint})/ $esc{$1} or sprintf("\\x{%X}", ord($1)) /exsg;
 
   substr($_,0,1) = '"'; substr($_,-1,1) = '"'; # Change ' to "
 
-print "##Vis ppsq ending... ",Vis::debugvis($_),"\n";
   $self->_postprocess_qquote($_); # escapes undesirable Unicode characters 
-}
+}#_postprocess_squote
 
 # Walk an arbitrary structure calling &coderef on each item, stopping
 # prematurely if &$coderef returns false, and skipping any reference
@@ -873,7 +864,8 @@ sub Dump1 {
   # the user's Pad() string ourself to the overall result.
   my $user_Indent;
   if ($maxwidth == 0) {
-    $user_Indent = $self->Indent(0);
+    $user_Indent = $self->Indent();
+    $self->Indent(0);
     $self->Pad("");
     #$self->Pad(" ");
   }
@@ -891,8 +883,8 @@ sub Dump1 {
   # regardless of Useqq, and hand-convert the result to double-quoted form 
   # if Useqq(true) was requested.
   # The "repaired" qquote code has been removed.
-  our $user_useqq = $self->Useqq(0); # "our" so can be used in qr/(?{ ...})/
-  print "Vis b4 DD: Indent=",$self->Indent()," Terse=",$self->Terse(),"\n";
+  my $user_useqq = $self->Useqq();
+  $self->Useqq(0);
   {
     confess "bug:defined:$_" if defined($_);
     my @values = $self->Values;
@@ -940,17 +932,19 @@ sub Dump1 {
   # else: one long line, produced using Indent(0) above;
 
   # Parse "dq" and 'sq' strings 
-  state $parsedq_re = qr/("(?:[^"\\]++|\\.)*+")
+  # N.B. These must be "my" not "state" because $self will be closed over
+  # so must be re-compiled each time (UGH...)
+  my $parsedq_re = qr/("(?:[^"\\]++|\\.)*+")
                     (?{
                         $^R . $self->_postprocess_qquote($^N) 
                         # resulting value goes back into $^R
                     })/xs;
-  state $parsesq_re = qr/
+  my $parsesq_re = qr/
                     ('(?:[^'\\]++|\\.)*+')
                     (?{
                         $^R . $self->_postprocess_squote($^N)
                     })/xs;
-  state $parsequoted_re = qr/$parsedq_re|$parsesq_re/;
+  my $parsequoted_re = qr/$parsedq_re|$parsesq_re/;
   
   { my $newstr = "";
     $^R = "";
@@ -958,7 +952,8 @@ sub Dump1 {
       if (/\G([^"'\\]++)/sgc) {
         $newstr .= $1;
       }
-      elsif (/\G(\\*)(?{ $^R.$^N }) ${parsequoted_re} /xsgc) {
+      elsif (/\G(\\*)(?{ 
+                        $^R.$^N }) ${parsequoted_re} /xsgc) {
         $newstr .= $^R;  # "str" or ref to... same
         $^R = "";
       }
@@ -1000,8 +995,6 @@ die;
     $self->Pad($pad);
     $self->Indent($user_Indent);
   }
-
-  #print "### Dump1 pad=",Vis::debugvis($pad)," returning ",Vis::debugvis($_),"\n";
 
   return $_;
 }
@@ -1119,8 +1112,6 @@ sub DB_Vis_Interpolate {
     # Multiple values are not possible except via internal constructors.
     local $_ = join "", map {defined($_) ? $_ : '<undef arg>'} $self->Values();
     while (1) {
-      #print "### pos()=",Vis::u(pos()),"\n" if $debug;
-
       # Recognize $ or @ followed by various forms
       my ($sigl, $rhs);
       if (/\G (?!\\)([\$\@\%])/xsgc) {
