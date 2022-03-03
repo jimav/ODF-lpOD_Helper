@@ -96,7 +96,7 @@ sub DB_Vis_Eval {   # Many ideas here taken from perl5db.pl
 
 package Vis;
 
-use version 0.77; our $VERSION = version->declare(sprintf "v%s", q$Revision: 1.154 $ =~ /(\d[.\d]+)/);
+use version 0.77; our $VERSION = version->declare(sprintf "v%s", q$Revision: 1.155 $ =~ /(\d[.\d]+)/);
 
 use Exporter;
 use Carp;
@@ -494,10 +494,12 @@ sub __insert_spaces() { # edits $_ in place
 my $curlies_re = RE_balanced(-parens=>'{}');
 my $parens_re = RE_balanced(-parens=>'()');
 my $curliesorsquares_re = RE_balanced(-parens=>'{}[]');
-
-my $nonbracket_atom_re = qr/
-       "(?:[^"\\]++|\\.)*+"   # "dq string"
-     | '(?:[^'\\]++|\\.)*+'   # 'sq string'
+my $qquote_re = qr/"(?:[^"\\]++|\\.)*+"/;
+my $squote_re = qr/'(?:[^'\\]++|\\.)*+'/;
+my $quote_re = qr/${qquote_re}|${squote_re}/;
+my $nonbracket_nonquote_atom_re = qr/
+       0x\{[a0fA-F0-9]+\}     # hex escape
+     | \\[0-7]{2,3}           # octal escape
      | -?\.?\d[-\d\.eE]*+ | (?i:NaN|[-+]?Inf)  # number
      | \([A-Z][\w:]++\)  # our stringification prefix
      | bless\( | \)
@@ -505,6 +507,10 @@ my $nonbracket_atom_re = qr/
      | =>
      | ,
 /x;
+my $nonquote_atom_re = qr/ 
+       ${nonbracket_nonquote_atom_re} | [\[\]\{\}] /x;
+my $nonbracket_atom_re = qr/
+       ${nonbracket_nonquote_atom_re} | ${quote_re} /x;
 my $atom_re = qr/ ${nonbracket_atom_re} | [\[\]\{\}] /x;
 
 #my $brackpair_re = qr/ \[ (?!\[) ${atom_re}*? \] /x; # only one level
@@ -513,7 +519,7 @@ my $brackpair_re = qr/ \[ ${nonbracket_atom_re}*? \] /x; #TEMP
 sub __fold($$) { # edits $_ in place
   my ($maxwid, $pad) = @_;
 
-  #say "## fold input:", debugvis($_);
+  say "## fold input:", debugvis($_);
   #say "## pad:", debugvis($pad);
 
   $maxwid -= length($pad);
@@ -522,20 +528,22 @@ sub __fold($$) { # edits $_ in place
 
   pos = 0;
   my $prev_indent = 0;
-  my $next_indent;
+  my $next_indent = 0;
   our $ind; local $ind = 0;
-  s(   
+  s(   \G  
        (?{ local $ind = $next_indent }) # initialize localized var 
        (
          (\s*${atom_re},?+)  # at least one even if too wide
          (?{ local $ind = $ind;
              { local $_=$^N; /^[\[\{\(]/ && $ind++; /^[\]\}\)]/ && $ind--; }
+             #say "First atom=<<$^N>> ind=$ind";
            })
          (?:
              \s*
              (${atom_re},?+)
              (?{ local $ind = $ind;
                  { local $_=$^N; /^[\[\{\(]/ && $ind++; /^[\]\}\)]/ && $ind--; }
+                 #say "Continuation atom=<<$^N>> ind=$ind";
                })
              (?(?{ die "urp undef pos!" unless defined(pos);
                    die "oop" unless defined($-[0]);
@@ -551,17 +559,40 @@ sub __fold($$) { # edits $_ in place
    )(do{
        my $len = length($1);
        if ($len > $maxwid) {
-         #say "##VisFFOL over-long pos=${\pos()} (indent=$indent len=$len mw=$maxwid)\n«$1»";
+         #say "##VisFFOL over-long pos=${\pos()} (prev_indent=$prev_indent next_indent=$next_indent len=$len mw=$maxwid)\n«$1»";
        } else {
-         #say "##VisFF   ok len    pos=${\pos()} (indent=$indent len=$len mw=$maxwid)\n«$1»";
+         #say "##VisFFOL ok len    pos=${\pos()} (prev_indent=$prev_indent next_indent=$next_indent len=$len mw=$maxwid)\n«$1»";
        }
        my $indent = $prev_indent;
        $prev_indent = $next_indent;
-       $pad . (" "x$indent) . $1 ."\n" 
+       $pad . (" " x $indent) . $1 ."\n" 
      })exsg 
     or oops "\nnot matched (pad='$pad' maxwid=$maxwid):\n", debugvis($_),"\n";
   s/\n\z//
     or die "unmatched tail (pad='${pad}') in:\n",debugvis($_);
+  #say "## fold RESULT:", debugvis($_);
+}#__fold
+
+sub __unescape_printables($) {
+  my ($usehex) = @_;
+  # Data::Dumper outputs wide characters as escapes with Useqq(1).
+  #say "__un INPUT:$_";
+
+  s( \G ( (?: \s* ${nonquote_atom_re} )*+ \s* ) ( ${quote_re} ) )
+   ( my ($left, $quote) = ($1,$2);
+     #say "__un <<<<<<<<<<<<<<<<<<<<< left=<<$left>> quote=<<$quote>>";
+     { local $_ = $quote;
+       s{ ( (?: [^\\]++ | \\(?!x)  )*+ ) \K ( \\ x \{ (?<hex>[a-fA-F0-9]+) \} ) 
+        }{
+           #say "Maybe converting $+{hex} from '$2'";
+           my $c = chr(hex($+{hex}));
+           length($+{hex}) <= 6 && $c !~ m{ \P{XPosixGraph}|[\0-\377] } ? $c : $2
+        }xesg;
+        $quote = $_;
+     }
+     #say "__un >>>>>>>>>>>>>>>>>>>>> left=<<$left>> quote=<<$quote>>";
+     $left . $quote
+   )xesg;
 }
 
 sub _postprocess_DD_result {
@@ -578,6 +609,7 @@ sub _postprocess_DD_result {
   s/(['"])\Q$magic_num_prefix\E(.*?)(\1)/$2/sg;
   s/\Q$magic_numstr_prefix\E//sg;
 
+  __unescape_printables($self->Usehex);
   __insert_spaces;
   __fold($maxwidth, $self->Pad());
 
