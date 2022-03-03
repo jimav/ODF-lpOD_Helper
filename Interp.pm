@@ -96,7 +96,7 @@ sub DB_Vis_Eval {   # Many ideas here taken from perl5db.pl
 
 package Vis;
 
-use version 0.77; our $VERSION = version->declare(sprintf "v%s", q$Revision: 1.153 $ =~ /(\d[.\d]+)/);
+use version 0.77; our $VERSION = version->declare(sprintf "v%s", q$Revision: 1.154 $ =~ /(\d[.\d]+)/);
 
 use Exporter;
 use Carp;
@@ -257,7 +257,7 @@ sub _config_defaults {
     local *_; 
     # perl bug: Localizing *_ does not deal with the special filehandle "_" 
     #  see https://github.com/Perl/perl5/issues/19142
-    $Maxwidth = get_terminal_columns(debug => $self->{VisDebug})//80
+    $Maxwidth = get_terminal_columns(debug => $Debug)//80;
   }
 
   $self
