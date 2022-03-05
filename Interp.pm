@@ -6,59 +6,37 @@
 use strict; use warnings FATAL => 'all'; use 5.012;
 use feature qw(switch state);
 
+# POD documentation follows __END__
+
 use utf8;
-# This file contains UTF-8 characters in debug-output strings (e.g. « and »).
-# But to see them correctly on a non-Latin1 terminal (e.g. utf-8), your
-# program has to say
+# This file contains Unicode characters in debug-output strings (e.g. « and »).
+# To see them correctly when printed, your program must say
 #   use open ':std' => ':locale';
-# or otherwise set the STDERR encoding to match what your terminal expects
-# (Perl assumes Latin-1 by default).
+# or equivalent to encode wide characters for your terminal.
 
 package Vis;
-# See below for $VERSION and POD documentation
-
-# *** The following must appear before anything is declared which might
-# *** alias a user-provided thing referenced in svis/dvis strings we eval
+# See below for $VERSION
 
 package DB;
 
-# Many ideas here taken from perl5db.pl
+# This must appear before any declarations which might alias user variables 
+# referenced in strings interpolated by svis or dvis.
+#
+sub DB_Vis_Evalwrapper {   
+  # A separate sub so no lexicals are visible
+  eval $Vis::string_to_eval;
+}
 
 # eval a string in the user's context and return the result.  The nearest
 # non-DB frame must be the original user's call; this is accomplished by
-# using "goto &_Interpolate" in the entry-point sub to substitute a call
-# directly into package DB.   
-
-sub DB_Vis_DoEval {   
-  # This separate sub is used so that no lexicals will be in scope
-  
-  # Temp for debugging
-  say "###--- DB_Vis_DoEval entry \@_=(@_) string_to_eval='$Vis::string_to_eval'";
-  my sub u(_) { $_[0] // "undef" }
-  for (my $level = 0; ;$level++) {
-    @DB::args=(42,42,42);
-    my ($pkg, $fn, $lno, $subr, $hasargs) = (caller($level));
-    say "caller($level)->",
-        " pkg=",u($pkg),
-        " fn=",u($fn)," lno=",u($lno),
-        " subr=",u($subr),
-        " hasargs=", $hasargs ? "true" : "false",
-        " DB::args=(", join(",",map{u} @DB::args),")"
-        ;
-    last if !$pkg;
-  }
-
-  eval $Vis::string_to_eval;
-
-  say "###--- DB_Vis_DoEval exit: Vis::result=(", join(",",map{u} @Vis::result),")";
-}
-
+# using "goto &DB::DB_Vis_Interpolate" in the entry-point sub.
 sub DB_Vis_Eval($$) {
   my ($label_for_errmsg, $evalarg) = @_;
+  # Many ideas here taken from perl5db.pl
 
   # Find the closest non-DB caller.  The eval will be done in that package.
   # Find the next caller further up which has arguments (i.e. wasn't doing
-  # "&subname;"), and use those arguments to simulate @_. 
+  # "&subname;"), and set our local @_ to be those arguments
   my ($distance, $pkg, $fname, $lno);
   for ($distance = 0 ; ; $distance++) {
     ($pkg, $fname, $lno) = caller($distance); 
@@ -74,23 +52,21 @@ sub DB_Vis_Eval($$) {
     last if $hasargs;
   }
   local *_ = [ @DB::args ];  # copy in case of recursion
-  say "### Getting \@_ from caller($distance): (@_)";
 
+  # &SaveAndResetPunct was called in DB_Vis_Interpolate
   &Vis::RestorePunct;
   $Vis::user_dollarat = $@; # 'eval' will reset $@
-
-  my @result;
-  { local $Vis::string_to_eval = 
+  my @result = do {
+    local @Vis::result;
+    local $Vis::string_to_eval = 
       "package $pkg; "
-.'use strict; use warnings;'
      .' $@ = $Vis::user_dollarat; '
      .' @Vis::result = '.$evalarg.';'
      .' $Vis::user_dollarat = $@; '  # possibly changed by a tie handler
      ;
-     &DB_Vis_DoEval;
-     @result = @Vis::result;
-     undef @Vis::result; # remove possibly unwanted references
-  }
+     &DB_Vis_Evalwrapper;
+     @Vis::result
+  };
   my $errmsg = $@;
   &Vis::SaveAndResetPunct;
   $Vis::save_stack[-1]->[0] = $Vis::user_dollarat;
@@ -206,7 +182,7 @@ sub DB::DB_Vis_Interpolate {
 
 package Vis;
 
-use version 0.77; our $VERSION = version->declare(sprintf "v%s", q$Revision: 1.160 $ =~ /(\d[.\d]+)/);
+use version 0.77; our $VERSION = version->declare(sprintf "v%s", q$Revision: 2.0 $ =~ /(\d[.\d]+)/);
 
 use Exporter;
 use Carp;
@@ -227,21 +203,21 @@ our @EXPORT    = qw(vis  avis  lvis  svis  dvis  hvis  hlvis
                     u qsh forceqsh qshpath);
 
 our @EXPORT_OK = qw($Maxwidth $MaxStringwidth $Truncsuffix $Debug
-                    $Stringify $Usehex
+                    $Stringify
                     $Useqq $Quotekeys $Sortkeys $Terse $Indent $Sparseseen);
 
 our @ISA       = ('Data::Dumper'); # see comments at new()
 
 # Used by non-oo functions, and initial settings by new()
-our ($Maxwidth, $MaxStringwidth, $Truncsuffix, $Debug, $Stringify, $Usehex,
+our ($Maxwidth, $MaxStringwidth, $Truncsuffix, $Debug, $Stringify,
      $Useqq, $Quotekeys, $Sortkeys, $Terse, $Indent, $Sparseseen);
 
 $Debug          = 0            unless defined $Debug;
 $MaxStringwidth = 0            unless defined $MaxStringwidth;
-$Maxwidth       = undef        unless defined $Maxwidth; # undef to auto-detect
 $Truncsuffix    = "..."        unless defined $Truncsuffix;
 $Stringify      = 1            unless defined $Stringify;
-$Usehex         = 1            unless defined $Usehex; # for binary octets
+$Maxwidth       = undef        unless defined $Maxwidth;  # undef to auto-detect
+$Maxwidth1      = undef        unless defined $Maxwidth1; # override for 1st
 
 # The following Vis defaults override Data::Dumper defaults
 $Useqq          = 1            unless defined $Useqq;
@@ -253,27 +229,31 @@ $Sparseseen     = 1            unless defined $Sparseseen;
 
 sub Debug {
   my($s, $v) = @_;
-  @_ >= 2 ? (($s->{VisDebug} = $v), return $s) : $s->{VisDebug};
+  @_ == 2 ? (($s->{VisDebug} = $v), return $s) : $s->{VisDebug};
 }
 sub MaxStringwidth {
   my($s, $v) = @_;
-  @_ >= 2 ? (($s->{MaxStringwidth} = $v), return $s) : $s->{MaxStringwidth};
+  @_ == 2 ? (($s->{MaxStringwidth} = $v), return $s) : $s->{MaxStringwidth};
 }
 sub Maxwidth {
+  my($s, $v, $v1) = @_;
+  return(wantarray ? ($s->{Maxwidth}, $s->{Maxwidth1}) : $s->{Maxwidth})
+    if @_ == 1;
+  $s->{Maxwidth} = $v; 
+  $s->{Maxwidth1} = $v1 if @_==3
+  $s
+}
+sub Maxwidth1 {
   my($s, $v) = @_;
-  @_ >= 2 ? (($s->{Maxwidth} = $v), return $s) : $s->{Maxwidth};
+  @_ == 2 ? (($s->{Maxwidth1} = $v), return $s) : $s->{Maxwidth1};
 }
 sub Truncsuffix {
   my($s, $v) = @_;
-  @_ >= 2 ? (($s->{Truncsuffix} = $v), return $s) : $s->{Truncsuffix};
+  @_ == 2 ? (($s->{Truncsuffix} = $v), return $s) : $s->{Truncsuffix};
 }
 sub Stringify {
   my($s, $v) = @_;
-  @_ >= 2 ? (($s->{Stringify} = $v), return $s) : $s->{Stringify};
-}
-sub Usehex {
-  my($s, $v) = @_;
-  @_ >= 2 ? (($s->{Usehex} = $v), return $s) : $s->{Usehex};
+  @_ == 2 ? (($s->{Stringify} = $v), return $s) : $s->{Stringify};
 }
 sub VisType {
   my($s, $v) = @_;
@@ -387,6 +367,7 @@ sub _config_defaults {
     # perl bug: Localizing *_ does not deal with the special filehandle "_"
     #  see https://github.com/Perl/perl5/issues/19142
     $Maxwidth = get_terminal_columns(debug => $Debug)//80;
+    $Maxwidth1 = undef;
   }
 
   $self
@@ -396,10 +377,9 @@ sub _config_defaults {
     ->Indent($Indent)
     ->Debug($Debug)
     ->Stringify($Stringify)
-    ->Usehex($Usehex)
     ->Useqq($Useqq)
     ->Sparseseen($Sparseseen)
-    ->Maxwidth($Maxwidth)
+    ->Maxwidth($Maxwidth, $Maxwidth1)
     ->MaxStringwidth($MaxStringwidth)
     ->Truncsuffix($Truncsuffix)
 }
@@ -463,8 +443,8 @@ sub __walk_worker($$$$$) {
 
 sub Dump {
   my $self = $_[0];
-  &SaveAndResetPunct;
   local $_;
+  &SaveAndResetPunct;
   if (! ref $self) { # ala Data::Dumper
     $self = $self->new(@_[1..$#_]);
   } else {
@@ -474,9 +454,7 @@ sub Dump {
   my ($debug, $maxstringwidth, $stringify)
     = @$self{qw/VisDebug MaxStringwidth Stringify/};
 
-  #------------------------------------------------------
   # Do desired substitutions in the data (cloning first)
-  #------------------------------------------------------
   if ($stringify || $maxstringwidth) {
     $stringify = [ $stringify ] unless ref($stringify) eq 'ARRAY';
     $maxstringwidth //= 0;
@@ -490,14 +468,8 @@ sub Dump {
   }
 
   my @values = $self->Values;
-  if ($debug) {
-    say "##Vis Values(count ",scalar(@values),"): @values\n";
-    say "##Vis Useqq = ", debugvis($self->Useqq);
-  }
   if (@values != 1) {
-    croak "Only a single scalar value (possibly a ref) is allowed by Vis"
-      if @values >= 1;
-    croak "No Values set"
+    croak(@values==0 ? "No Values set" : "Only a single scalar value allowed")
   }
 
   # We always call Data::Dumper with Indent(0) and Pad("") to get a single
@@ -602,8 +574,8 @@ sub show_as_number(_) { # Derived from JSON::PP version 4.02
   return -1; # inf/nan
 }
 
-# Split keys into "components" (e.g. 2_16.A has 3 components) and sort each
-# component numerically if the corresponding items are both numbers.
+# Split keys into "components" (e.g. 2_16.A has 3 components) and sort 
+# components containing only digits numerically.
 sub __sortkeys {
   my $hash = shift;
   return [
@@ -636,73 +608,16 @@ my $nonquote_atom_re
       = qr/ (?: [^,;\{\}\[\]"'\s]++ | \\["'] )++ | [,;\{\}\[\]] /xs; 
 my $atom_re = qr/ $quote_re | $nonquote_atom_re /x;
 
-
-#my $nonbracket_nonquote_atom_re = qr/
-#       sub\ ${curlies_re}     # sub stub or arbitrary code with Deparse(1)
-#    # | 0x\{[a0fA-F0-9]+\}     # hex escape
-#     | \\[0-7]{1,3}+          # octal escape
-#     | -?\.?\d[-\d\.eE]*+ | (?i:NaN|[-+]?Inf)  # number
-#     | \([A-Z][\w:]++\)       # (stringification prefix)
-#     | bless\( | \)
-#     | \b[A-Za-z_]\w*+\b      # bareword e.g. hash key
-#     | =>
-#     | \\  # just a take-reference operator.  PROBLEM?
-#     | [\*:]    # e.g. in glob refs fully::qualified::names
-#   #  | [\$=;]   # so we can parse Indent(>0) with "$VAR1 = ... ;"
-#     | ,
-#     # DOES NOT INCLUDE top-level white space
-#/x;
-#my $nonquote_atom_re = qr/
-#       ${nonbracket_nonquote_atom_re} | [\[\]\{\}] /x;
-#my $nonbracket_atom_re = qr/
-#       ${nonbracket_nonquote_atom_re} | ${quote_re} /x;
-#my $atom_re = qr/ ${nonbracket_atom_re} | [\[\]\{\}] /x;
-
-################ TEMP TEST
-#'{k => "v"}' =~ /\A${nonquote_atom_re}/ or die;
-#'{k => "v"}' =~ /\A(?: ${nonquote_atom_re} | ${quote_re} )++(?<t>.*)/xs or die;
-#say "##TEST t=($+{t})";
-#'{k => "v"}' =~ /\A(?: ${nonquote_atom_re} | ${quote_re} )++\z/xs or die;
-
 sub __adjust_spacing() { # edits $_ in place
-  #BUG HERE will corrupt interior of quoted strings
-  #s/\s\s+/ /sg;              # condense e.g. sub{...} with Deparse(1) 
-  #s/([\]\}],)(\S)/$1\ $2/sg;  # add space after ],
+  #FIXME BUG HERE might corrupt interior of quoted strings
   
-#  { oops if defined(pos);
-#    while (!/\G\z/sgc) {
-#      if (/\G${nonquote_atom_re}/sgc) {}
-#      elsif (/\G${quote_re}/sgc)      {}
-#      elsif (/\G\s/sgc)               {}
-#      else {
-#        oops "regex problem: Parse failed at '",substr($_,pos,1),"', pos ${\pos} of «$_»";
-#      }
-#    }
-#    /\G./sg && oops;
-#    oops "pos=${\pos} str=",debugvis($_) if defined(pos);
-#  }
-#
-#  ### TEMP? Just verify that we can parse everything
-#  ### (probably redundant with 'unmatched tail' check in __fold)
-#  /\A(?: ${nonquote_atom_re} | ${quote_re} | \s+ )+\z/xs or oops "regex problem($_)";
-  { oops if defined(pos);
-    while (!/\G\z/sgc) {
-      if (/\G${atom_re}\s*/sgc) {}
-      else {
-        oops "regex problem: Parse failed at '",substr($_,pos,1),"', pos ${\pos} of «$_»";
-      }
-    }
-    /\G./sg && oops;
-    oops "pos=${\pos} str=",debugvis($_) if defined(pos);
-  }
-
-  ### TEMP? Just verify that we can parse everything
+  ### TEMP? Verify that we can parse everything
   ### (probably redundant with 'unmatched tail' check in __fold)
   /\A(?: ${atom_re} | \s+ )+\z/xs or oops "regex problem($_)";
 
   s( $quote_re ?+ \K 
-     ( (?: \bsub\s*${curlies_re} | $nonquote_atom_re | \s+)*+
-     ) )
+     ( (?: \bsub\s*${curlies_re} | $nonquote_atom_re | \s+)*+ )
+   )
    ( do {
        local $_ = $1;
        s/\s+/ /sg;   # remove all unnecessary spaces
@@ -717,25 +632,24 @@ sub __adjust_spacing() { # edits $_ in place
 
 sub __fold($$) { # edits $_ in place
   my ($maxwid, $pad) = @_;
-
-  say "## fold input (maxwid=$maxwid):", debugvis($_);
-  say "## pad:", debugvis($pad);
  
-  $maxwid = INT_MAX if $maxwid==0;  # no folding, but maybe space adjustments
-  $maxwid -= length($pad);
-  my $smidgen = min(5, int($maxwid / 6));
+  return 
+    if $maxwid == 0;  # no folding
+  #$maxwid = INT_MAX if $maxwid==0;  # no folding, but maybe space adjustments
+  $maxwid = min(0, $maxwid - length($pad));
+  my $smidgen = max(5, int($maxwid / 6));
 
   pos = 0;
   my $prev_indent = 0;
   my $next_indent = 0;
   our $ind; local $ind = 0;
   my sub __ind_adjustment(;$) {
-    say "@{_}atom=<<$^N>> pos=${\pos} p_indent=$prev_indent n_indent=$next_indent ind=$ind mw=$maxwid,$smidgen";
+    #say "@{_}atom=<<$^N>> pos=${\pos} p_indent=$prev_indent n_indent=$next_indent ind=$ind mw=$maxwid,$smidgen";
     local $_ = $^N;;
     /^["']/ ? 0 : ( (()=/[\[\{\(]/) - (()=/[\]\}\)]/) );
   }
   s(\G
-    (?{ say "##Visfold at top: pos=",u(pos)," ->«",substr($_,pos//0),"»" })
+    #(?{ say "##Visfold at top: pos=",u(pos)," ->«",substr($_,pos//0),"»" })
     (?{ local $ind = $next_indent }) # initialize localized var
     (
       (\s*${atom_re},?+)  # at least one even if too wide
@@ -751,7 +665,7 @@ sub __fold($$) { # edits $_ in place
     )
     (?{ $next_indent = $ind }) # copy to non-localized storage
     (?<extra>\s*)
-    (?{ say "##Visfold SUCCEEDED: pos=",u(pos) })
+    #(?{ say "##Visfold SUCCEEDED: pos=",u(pos) })
    )(do{
        my $len = length($1);
        if ($len > $maxwid) {
@@ -780,7 +694,6 @@ sub __unescape_printables() {
         if (/^"/) {  # "double quoted string
           s{ (?: [^\\]++ | \\(?!x) )*+ \K ( \\x\{ (?<hex>[a-fA-F0-9]+) \} )
            }{
-              #say "Maybe converting $+{hex} from '$1'";
               my $c;
               length($+{hex}) <= 6 
                 && ($c = chr(hex($+{hex}))) !~ m<\P{XPosixGraph}|[\0-\377]> 
@@ -810,47 +723,38 @@ sub _postprocess_DD_result {
   __adjust_spacing;
   __fold($maxwidth, $self->Pad());
 
-  if (($vistype//"s") eq "s") {
-  }
+  if (($vistype//"s") eq "s") { }
   elsif ($vistype eq "a") {
-    oops debugvis($_) unless s/\A\[/(/ && s/\]\z/)/s;
+    s/\A\[/(/ && s/\]\z/)/s or oops;
   }
   elsif ($vistype eq "l") {
-    oops unless s/\A\[// && s/\]\z//s;
+    s/\A\[// && s/\]\z//s or oops;
   }
   elsif ($vistype eq "h") {
-    oops($_) unless s/\A\{/(/ && s/\}\z/)/s;
+    s/\A\{/(/ && s/\}\z/)/s or oops;
   }
   elsif ($vistype eq "hl") {
-    oops($_) unless s/\A\{// && s/\}\z//s;
+    s/\A\{// && s/\}\z//s or oops;
   }
-  else {
-    oops "invalid VisType '$vistype'\n";
-  }
+  else { oops }
 
   $_
 } #_postprocess_DD_result {
 
 my $sane_cW = $^W;
+my $sane_cH = $^H;
 our @save_stack;
-sub ResavePunct() {
-  @{ $save_stack[-1] } = ( $@, $!+0, $^E+0, $,, $/, $\, $^W );
-}
 sub SaveAndResetPunct() {
   # Save things which will later be restored, and reset to sane values.
-  push @save_stack, [];
-  ResavePunct;
+  push @save_stack, [ $@, $!+0, $^E+0, $,, $/, $\, $^W, $^H ];
   $,  = "";       # output field separator is null string
   $/  = "\n";     # input record separator is newline
   $\  = "";       # output record separator is null string
   $^W = $sane_cW; # our load-time warnings
+  $^H = $sane_cH; # our load-time strictures etc.
 }
 sub RestorePunct() {
-  ( $@, $!, $^E, $,, $/, $\, $^W ) = @{ pop @save_stack };
-  # Erase other package variables which might refer to user objects
-  # which would otherwise not be destroyed when expected
-  # FIXME are these obsolete?
-  undef @Vis::result; undef $Vis::evalarg; #????
+  ( $@, $!, $^E, $,, $/, $\, $^W, $^H ) = @{ pop @save_stack };
 }
 
 1;
