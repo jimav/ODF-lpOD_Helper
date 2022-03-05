@@ -22,89 +22,86 @@ package Vis;
 
 package DB;
 
+# Many ideas here taken from perl5db.pl
+
 # eval a string in the user's context and return the result.  The nearest
 # non-DB frame must be the original user's call; this is accomplished by
 # using "goto &_Interpolate" in the entry-point sub to substitute a call
-# directly into package DB.  
-# The following globals must be pre-set:
-#   @Vis::saved = ($@, $!, $^E, $,, $/, $\, $^W)
-#   $Vis:evalarg 
-sub DB_Vis_EvalInner {   # Many ideas here taken from perl5db.pl
-  warn "### DB_Vis_EvalInner Entry evalarg='$Vis::evalarg' ----------------------------------\n";
+# directly into package DB.   
 
-  # We can not use lexicals because they could mask user vars
+sub DB_Vis_DoEval {   
+  # This separate sub is used so that no lexicals will be in scope
   
-  ($Vis::pkg) = (caller(0))[0];  # package containig user's call
+  # Temp for debugging
+  say "###--- DB_Vis_DoEval entry \@_=(@_) string_to_eval='$Vis::string_to_eval'";
+  my sub u(_) { $_[0] // "undef" }
+  for (my $level = 0; ;$level++) {
+    @DB::args=(42,42,42);
+    my ($pkg, $fn, $lno, $subr, $hasargs) = (caller($level));
+    say "caller($level)->",
+        " pkg=",u($pkg),
+        " fn=",u($fn)," lno=",u($lno),
+        " subr=",u($subr),
+        " hasargs=", $hasargs ? "true" : "false",
+        " DB::args=(", join(",",map{u} @DB::args),")"
+        ;
+    last if !$pkg;
+  }
 
-  # Get @_ values from the closest non-DB caller which has arguments.
-  # This will be the closest caller unless that sub as called 
-  # using "&subname;".  N.B. caller() leaves the args in @DB::args
-  # FIXME: change main:: to Vis:: ...
-  for ($main::dist = 0; (caller($main::dist)//"") eq "DB"; $main::dist++) {}
+  eval $Vis::string_to_eval;
+
+  say "###--- DB_Vis_DoEval exit: Vis::result=(", join(",",map{u} @Vis::result),")";
+}
+
+sub DB_Vis_Eval($$) {
+  my ($label_for_errmsg, $evalarg) = @_;
+
+  # Find the closest non-DB caller.  The eval will be done in that package.
+  # Find the next caller further up which has arguments (i.e. wasn't doing
+  # "&subname;"), and use those arguments to simulate @_. 
+  my ($distance, $pkg, $fname, $lno);
+  for ($distance = 0 ; ; $distance++) {
+    ($pkg, $fname, $lno) = caller($distance); 
+    last if $pkg ne "DB";
+  }
   while() {
-    $main::dist++;
-    my ($pkg, $hasargs) = (caller($main::dist))[0,4];
-    if (! defined $pkg){
+    $distance++;
+    my ($p, $hasargs) = (caller($distance))[0,4];
+    if (! defined $p){
       @DB::args = ('<@_ is not defined in the outer block>');
       last
     }
     last if $hasargs;
   }
-  local *_ = \@DB::args;
+  local *_ = [ @DB::args ];  # copy in case of recursion
+  say "### Getting \@_ from caller($distance): (@_)";
 
-  # At this point, nothing is in scope except the name of this sub
-  # and the simulated @_.
-  {
-    #FIXME: If 'no strict refs' is not needed, simplify be rming {...}
-    #no strict 'refs';
-Carp::confess("BUG") unless @Vis::saved;
-    ($!, $^E, $,, $/, $\, $^W) = @Vis::saved[1..6];
-    # LHS of assignment must be inside eval to catch die from tie handlers
-    $Vis::evalstr = "package $Vis::pkg;"
-                         .' $@ = $Vis::saved[0];'
-                         .' { local @Vis::saved;'
-                         .'   @Vis::result = '.$Vis::evalarg.';'
-                         .' } '
-                         .' $Vis::saved[0] = $@;'  # might be set via tie
-                         ;
-    eval $Vis::evalstr;
-  };
-  $Vis::busy--;
+  &Vis::RestorePunct;
+  $Vis::user_dollarat = $@; # 'eval' will reset $@
 
-  # Because of tied variables, we may have just executed user code!
-  # Re-save the possibly-modified punctuation variables and reset them to
-  # sane values to ensure that our code can function.
-  #
-  # However $@ here is from our eval, not the result of any tie handlers.
-  # $@ was saved to $saved[0] inside the eval, and we want to keep that value.
-  # The following "local" statement causes that value to be preserved over
-  # the call to &SaveAndResetPunct
-  { local $Vis::save_stack[0]->[0]; &Vis::Resavepunct; }
+  my @result;
+  { local $Vis::string_to_eval = 
+      "package $pkg; "
+.'use strict; use warnings;'
+     .' $@ = $Vis::user_dollarat; '
+     .' @Vis::result = '.$evalarg.';'
+     .' $Vis::user_dollarat = $@; '  # possibly changed by a tie handler
+     ;
+     &DB_Vis_DoEval;
+     @result = @Vis::result;
+     undef @Vis::result; # remove possibly unwanted references
+  }
+  my $errmsg = $@;
+  &Vis::SaveAndResetPunct;
+  $Vis::save_stack[-1]->[0] = $Vis::user_dollarat;
 
-  if (my $exmsg = $@) {
-    my ($pkg, $fname, $lno) = (caller($main::dist - 1));
-    $exmsg =~ s/ at \(eval \d+\) line \d+[^\n]*//sg;
-    Carp::confess("${Vis::funcname}: Error interpolating '$Vis::evalarg' at $fname line $lno:\n$exmsg\n");
+  if ($errmsg) {
+    $errmsg =~ s/ at \(eval \d+\) line \d+[^\n]*\n?\z//s;
+    Carp::confess("${label_for_errmsg}: Error interpolating '$evalarg' at $fname line $lno:\n$errmsg\n");
   }
 
-  my @res = @Vis::result;
-
-  Vis::oops() if @res != 1; # we never generate array results
-  $res[0]
-}# DB_Vis_EvalInner
-
-sub DB_Vis_Eval($$) {
-  my ($label_for_errmsg, $evalarg) = @_;
-  # The inner-most function can not have any lexicals, so pass in globals
-  $Vis::funcname = $label_for_errmsg;
-  $Vis::evalarg = $evalarg;
-  state $busy;
-  Carp::confess("Recursive svis/dvis not supported")
-    if $busy++;
-  my $r = &DB::DB_Vis_EvalInner;
-  $busy--;
-  $r
-}
+  @result;
+}# DB_Vis_Eval
 
 sub DB::DB_Vis_Interpolate {
   (my $self, local $_, my $s_or_d) = @_;
@@ -173,7 +170,7 @@ sub DB::DB_Vis_Interpolate {
       if ($s_or_d eq 'd') {
         local $_ = $2;
         # Show "foo=<value>" for "$foo" but otherwise use entire expr as label
-        $result .= (/^\$(${userident_re})\z/ ? $1 : "\\".$2)."=";
+        $result .= (/^\$(${userident_re})\z/ ? $1 : $2)."=";
       }
       # Reduce indent before first wrap to account for stuff alrady there
       my $used = length($result) - rindex($result,"\n") - 1;
@@ -209,7 +206,7 @@ sub DB::DB_Vis_Interpolate {
 
 package Vis;
 
-use version 0.77; our $VERSION = version->declare(sprintf "v%s", q$Revision: 1.159 $ =~ /(\d[.\d]+)/);
+use version 0.77; our $VERSION = version->declare(sprintf "v%s", q$Revision: 1.160 $ =~ /(\d[.\d]+)/);
 
 use Exporter;
 use Carp;
@@ -837,7 +834,7 @@ sub _postprocess_DD_result {
 my $sane_cW = $^W;
 our @save_stack;
 sub ResavePunct() {
-  @{ save_stack[0] } = ( $@, $!+0, $^E+0, $,, $/, $\, $^W );
+  @{ $save_stack[-1] } = ( $@, $!+0, $^E+0, $,, $/, $\, $^W );
 }
 sub SaveAndResetPunct() {
   # Save things which will later be restored, and reset to sane values.
@@ -849,7 +846,7 @@ sub SaveAndResetPunct() {
   $^W = $sane_cW; # our load-time warnings
 }
 sub RestorePunct() {
-  ( $@, $!, $^E, $,, $/, $\, $^W ) = pop @save_stack;
+  ( $@, $!, $^E, $,, $/, $\, $^W ) = @{ pop @save_stack };
   # Erase other package variables which might refer to user objects
   # which would otherwise not be destroyed when expected
   # FIXME are these obsolete?
