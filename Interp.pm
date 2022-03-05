@@ -21,52 +21,55 @@ package Vis;
 
 package DB;
 
-# eval a string in the user's context and return the result
-# @Vis::saved = ($@, $!, $^E, $,, $/, $\, $^W) must be pre-set,
-# and will be temporarily restored during the eval.
+# eval a string in the user's context and return the result.
+# Must be entered via "goto &..." so the first non-DB frame is the user's.
+# The following globals must be pre-set:
+#   @Vis::saved = ($@, $!, $^E, $,, $/, $\, $^W)
+#   $Vis:evalarg 
 sub DB_Vis_Eval {   # Many ideas here taken from perl5db.pl
+  Carp::confess "Recursive svis/dvis not supported" if $Vis::busy;
 
-  # The call stack:
-  # FIXME this may not be true any more. Probably user is immediate caller
-  #   0: An internal Vis function which called us
-  #   1: User's sub which called a Vis function or method
-  #   2: The caller of the user's sub (this frame defines @_)
-
+  # We can not use lexicals because they could mask user vars
+  
   ($Vis::pkg) = (caller(0))[0];  # package containig user's call
 
   # Get @_ values from the closest frame above the user's call which
-  # has arguments.  This will be the very next frame (i.e. frame 2)
+  # has arguments.  This will be the very next frame (i.e. frame 1)
   # unless the user was called using "&subname;".
   # N.B. caller() leaves the args in @DB::args
   # FIXME check/debug this
   for ($Vis::DistToArgs = 1 ; ; $Vis::DistToArgs++) {
-    my ($pkg,undef,undef,undef,$hasargs) = caller $Vis::DistToArgs;
-    if (! $pkg) {
+    my ($pkg,$hasargs) = (caller $Vis::DistToArgs)[0,4];
+    if (! $pkg) { # outer scope
       undef $Vis::DistToArgs;
       last;
     }
     last if $hasargs;
   }
-  # make visible as "@_" if the user is in a sub (otherwise we can't)
+  # make visible as "@_" 
   local *_ = defined($Vis::DistToArgs)
                ? \@DB::args
                : ['<@_ is not defined in the outer scope>'] ;
 
   # At this point, nothing is in scope except the name of this sub
   # and the simulated @_.
-  # FIXME: Use   package DB { ... } to simplify this and move to _Interpolate
-
+  $Vis::busy++;
   {
-    no strict 'refs';
+    #FIXME: If 'no strict refs' is not needed, simplify be rming {...}
+    #no strict 'refs';
     ($!, $^E, $,, $/, $\, $^W) = @Vis::saved[1..6];
     # LHS of assignment must be inside eval to catch die from tie handlers
     $Vis::evalstr = "package $Vis::pkg;"
-                   .' $@ = $Vis::saved[0];'
-                   .' @Vis::result = "'.$Vis::evalarg.'";'
-                   .' $Vis::saved[0] = $@;'  # might be set by a tie handler
-                   ;
+                         .' $@ = $Vis::saved[0];'
+                         .' { local @Vis::saved;'
+                         .'   @Vis::result = "'.$Vis::evalarg.'";'
+                         .' } '
+                         .' $Vis::saved[0] = $@;'  # might be set via tie
+                         ;
     eval $Vis::evalstr;
   };
+  $Vis::busy--;
+
   if (my $exmsg = $@) {
     my ($pkg, $fname, $lno) = (caller(0));
     $exmsg =~ s/ at \(eval \d+\) line \d+[^\n]*//sg;
@@ -81,8 +84,8 @@ sub DB_Vis_Eval {   # Many ideas here taken from perl5db.pl
   #
   # However $@ here is from our eval, not the result of any tie handlers.
   # $@ was saved to $saved[0] inside the eval, and we want to keep that value.
-  # The following "local $saved[0]" causes that value to be preserved
-  # (actually restored) instead of the value saved by &SaveAndResetPunct
+  # The following "local $saved[0]" causes that value to be preserved over
+  # the call to &SaveAndResetPunct
   { local $Vis::saved[0]; &Vis::SaveAndResetPunct; }
 
   my @res = @Vis::result;
@@ -98,7 +101,7 @@ sub DB_Vis_Eval {   # Many ideas here taken from perl5db.pl
 
 package Vis;
 
-use version 0.77; our $VERSION = version->declare(sprintf "v%s", q$Revision: 1.156 $ =~ /(\d[.\d]+)/);
+use version 0.77; our $VERSION = version->declare(sprintf "v%s", q$Revision: 1.157 $ =~ /(\d[.\d]+)/);
 
 use Exporter;
 use Carp;
@@ -511,119 +514,173 @@ sub __sortkeys {
   ]
 }
 
-sub __adjust_spacing() { # edits $_ in place
-  s/\s\s+/ /sg;              # condense e.g. sub{...} with Deparse(1) 
-  s/([\]\}],)(\S)/$1\ $2/sg;  # add space after ],
-}
-
+# FIXME: These don't take into account quoted strings in the interior!
 my $curlies_re = RE_balanced(-parens=>'{}');
 my $parens_re = RE_balanced(-parens=>'()');
 my $curliesorsquares_re = RE_balanced(-parens=>'{}[]');
+
 my $qquote_re = qr/"(?:[^"\\]++|\\.)*+"/;
 my $squote_re = qr/'(?:[^'\\]++|\\.)*+'/;
 my $quote_re = qr/${qquote_re}|${squote_re}/;
-my $nonbracket_nonquote_atom_re = qr/
-       0x\{[a0fA-F0-9]+\}     # hex escape
-     | sub\ ${curlies_re}     # sub stubs or whole thing with Depars(1)
-     | \\[0-7]{2,3}           # octal escape
-     | -?\.?\d[-\d\.eE]*+ | (?i:NaN|[-+]?Inf)  # number
-     | \([A-Z][\w:]++\)  # our stringification prefix
-     | bless\( | \)
-     | \b[A-Za-z]\w*+\b       # bareword e.g. hash key
-     | =>
-     | \\  # just a take-reference operator.  PROBLEM?
-     | [\*:]    # e.g. in glob refs fully::qualified::names
-     #| [\$=;]   # so we can parse Indent(>0) with "$VAR1 = ... ;"
-     | ,
-/x;
-my $nonquote_atom_re = qr/
-       ${nonbracket_nonquote_atom_re} | [\[\]\{\}] /x;
-my $nonbracket_atom_re = qr/
-       ${nonbracket_nonquote_atom_re} | ${quote_re} /x;
-my $atom_re = qr/ ${nonbracket_atom_re} | [\[\]\{\}] /x;
 
-#my $brackpair_re = qr/ \[ (?!\[) ${atom_re}*? \] /x; # only one level
-my $brackpair_re = qr/ \[ ${nonbracket_atom_re}*? \] /x; #TEMP
+# These never match spaces (except as part of a quote)
+my $nonquote_atom_re 
+      = qr/ (?: [^,;\{\}\[\]"'\s]++ | \\["'] )++ | [,;\{\}\[\]] /xs; 
+my $atom_re = qr/ $quote_re | $nonquote_atom_re /x;
+
+
+#my $nonbracket_nonquote_atom_re = qr/
+#       sub\ ${curlies_re}     # sub stub or arbitrary code with Deparse(1)
+#    # | 0x\{[a0fA-F0-9]+\}     # hex escape
+#     | \\[0-7]{1,3}+          # octal escape
+#     | -?\.?\d[-\d\.eE]*+ | (?i:NaN|[-+]?Inf)  # number
+#     | \([A-Z][\w:]++\)       # (stringification prefix)
+#     | bless\( | \)
+#     | \b[A-Za-z_]\w*+\b      # bareword e.g. hash key
+#     | =>
+#     | \\  # just a take-reference operator.  PROBLEM?
+#     | [\*:]    # e.g. in glob refs fully::qualified::names
+#   #  | [\$=;]   # so we can parse Indent(>0) with "$VAR1 = ... ;"
+#     | ,
+#     # DOES NOT INCLUDE top-level white space
+#/x;
+#my $nonquote_atom_re = qr/
+#       ${nonbracket_nonquote_atom_re} | [\[\]\{\}] /x;
+#my $nonbracket_atom_re = qr/
+#       ${nonbracket_nonquote_atom_re} | ${quote_re} /x;
+#my $atom_re = qr/ ${nonbracket_atom_re} | [\[\]\{\}] /x;
+
+################ TEMP TEST
+#'{k => "v"}' =~ /\A${nonquote_atom_re}/ or die;
+#'{k => "v"}' =~ /\A(?: ${nonquote_atom_re} | ${quote_re} )++(?<t>.*)/xs or die;
+#say "##TEST t=($+{t})";
+#'{k => "v"}' =~ /\A(?: ${nonquote_atom_re} | ${quote_re} )++\z/xs or die;
+
+sub __adjust_spacing() { # edits $_ in place
+  #BUG HERE will corrupt interior of quoted strings
+  #s/\s\s+/ /sg;              # condense e.g. sub{...} with Deparse(1) 
+  #s/([\]\}],)(\S)/$1\ $2/sg;  # add space after ],
+  
+#  { oops if defined(pos);
+#    while (!/\G\z/sgc) {
+#      if (/\G${nonquote_atom_re}/sgc) {}
+#      elsif (/\G${quote_re}/sgc)      {}
+#      elsif (/\G\s/sgc)               {}
+#      else {
+#        oops "regex problem: Parse failed at '",substr($_,pos,1),"', pos ${\pos} of «$_»";
+#      }
+#    }
+#    /\G./sg && oops;
+#    oops "pos=${\pos} str=",debugvis($_) if defined(pos);
+#  }
+#
+#  ### TEMP? Just verify that we can parse everything
+#  ### (probably redundant with 'unmatched tail' check in __fold)
+#  /\A(?: ${nonquote_atom_re} | ${quote_re} | \s+ )+\z/xs or oops "regex problem($_)";
+  { oops if defined(pos);
+    while (!/\G\z/sgc) {
+      if (/\G${atom_re}\s*/sgc) {}
+      else {
+        oops "regex problem: Parse failed at '",substr($_,pos,1),"', pos ${\pos} of «$_»";
+      }
+    }
+    /\G./sg && oops;
+    oops "pos=${\pos} str=",debugvis($_) if defined(pos);
+  }
+
+  ### TEMP? Just verify that we can parse everything
+  ### (probably redundant with 'unmatched tail' check in __fold)
+  /\A(?: ${atom_re} | \s+ )+\z/xs or oops "regex problem($_)";
+
+  s( $quote_re ?+ \K 
+     ( (?: \bsub\s*${curlies_re} | $nonquote_atom_re | \s+)*+
+     ) )
+   ( do {
+       local $_ = $1;
+       s/\s+/ /sg;   # remove all unnecessary spaces
+       s/\ (?![\$\@])//g;
+       s/=>/ => /g;  # put back around  =>
+       s/\[,/\[, /g; # after ],
+       s/\bsub\ ?(${curlies_re})/"sub { ".substr($1,1,length($1)-2)." }"/eg;
+       $_
+     }
+   )exsg;
+}#__adjust_spacing
 
 sub __fold($$) { # edits $_ in place
   my ($maxwid, $pad) = @_;
 
-  #say "## fold input:", debugvis($_);
-  #say "## pad:", debugvis($pad);
+  say "## fold input (maxwid=$maxwid):", debugvis($_);
+  say "## pad:", debugvis($pad);
  
-  return
-    if $maxwid == 0;  # no folding
-
+  $maxwid = INT_MAX if $maxwid==0;  # no folding, but maybe space adjustments
   $maxwid -= length($pad);
   my $smidgen = min(5, int($maxwid / 6));
-  #say "## Adjusted maxwid=$maxwid smidgen=$smidgen";
 
   pos = 0;
   my $prev_indent = 0;
   my $next_indent = 0;
   our $ind; local $ind = 0;
-  s(   \G
-       (?{ local $ind = $next_indent }) # initialize localized var
-       (
-         (\s*${atom_re},?+)  # at least one even if too wide
-         (?{ local $ind = $ind;
-             { local $_=$^N; /^[\[\{\(]/ && $ind++; /^[\]\}\)]/ && $ind--; }
-             say "First atom=<<$^N>> ind=$ind";
-           })
-         (?:
-             \s*
-             (${atom_re},?+)
-             (?{ local $ind = $ind;
-                 { local $_=$^N; /^[\[\{\(]/ && $ind++; /^[\]\}\)]/ && $ind--; }
-               })
-             (?(?{ die "urp undef pos!" unless defined(pos);
-                   die "oop" unless defined($-[0]);
-                   die "undef ind" unless defined($ind);
-                   my $len = $prev_indent + pos() - $-[0];
-                   say "Continuation atom=<<$^N>> pos=${\pos()} len=$len ind=$ind next_indent=$next_indent maxwid=$maxwid smidgen=$smidgen";
-                   $len <= ($^N eq "[" ? $maxwid-$smidgen : $maxwid)
-                 })|(*FAIL))
-         )*+
-       )
-       (?{ $next_indent = $ind }) # copy to non-localized storage
-       (?<extra>\s*)
+  my sub __ind_adjustment(;$) {
+    say "@{_}atom=<<$^N>> pos=${\pos} p_indent=$prev_indent n_indent=$next_indent ind=$ind mw=$maxwid,$smidgen";
+    local $_ = $^N;;
+    /^["']/ ? 0 : ( (()=/[\[\{\(]/) - (()=/[\]\}\)]/) );
+  }
+  s(\G
+    (?{ say "##Visfold at top: pos=",u(pos)," ->«",substr($_,pos//0),"»" })
+    (?{ local $ind = $next_indent }) # initialize localized var
+    (
+      (\s*${atom_re},?+)  # at least one even if too wide
+      (?{ local $ind = $ind + __ind_adjustment("First ") })
+      (?:
+          \s*
+          (${atom_re},?+)
+          (?{ local $ind = $ind + __ind_adjustment("Cont  ") })
+          (?(?{ my $len = $prev_indent + pos() - $-[0];
+                $len <= ($^N eq "[" ? $maxwid-$smidgen : $maxwid)
+              })|(*FAIL))
+      )*+
+    )
+    (?{ $next_indent = $ind }) # copy to non-localized storage
+    (?<extra>\s*)
+    (?{ say "##Visfold SUCCEEDED: pos=",u(pos) })
    )(do{
        my $len = length($1);
        if ($len > $maxwid) {
-         #say "##VisFFOL over-long pos=${\pos()} (prev_indent=$prev_indent next_indent=$next_indent len=$len mw=$maxwid)\n«$1»";
+         #say "##VisFFOL over-long pos=${\pos} (prev_indent=$prev_indent next_indent=$next_indent len=$len mw=$maxwid)\n«$1»";
        } else {
-         #say "##VisFFOL ok len    pos=${\pos()} (prev_indent=$prev_indent next_indent=$next_indent len=$len mw=$maxwid)\n«$1»";
+         #say "##VisFFOL ok len    pos=${\pos} (prev_indent=$prev_indent next_indent=$next_indent len=$len mw=$maxwid)\n«$1»";
        }
        my $indent = $prev_indent;
        $prev_indent = $next_indent;
        $pad . (" " x $indent) . $1 ."\n"
-     })exsg
+     }
+   )exsg
     or oops "\nnot matched (pad='$pad' maxwid=$maxwid):\n", debugvis($_),"\n";
   s/\n\z//
-    or die "unmatched tail (pad='${pad}') in:\n",debugvis($_);
+    or oops "unmatched tail (pad='${pad}') in:\n",debugvis($_);
   #say "## fold RESULT:", debugvis($_);
 }#__fold
 
 sub __unescape_printables() {
   # Data::Dumper outputs wide characters as escapes with Useqq(1).
-  say "__un INPUT:$_";
+  #say "__un INPUT:$_";
 
-  s( \G ( (?: \s* ${nonquote_atom_re} )*+ \s* ) (?<q> ${quote_re} )
-   )( my ($left, $quote) = ($1,$+{q});
-     say "__un <<<<<<<<<<< pos=${\pos()} <<<<<< left=<<${\u($left)}>> quote=<<${\u($quote)}>>";
-     say '%+ = ', debugvis(\%+);
-     say '@- = ', debugvis(\@-);
-     { local $_ = $quote;
-       s{ ( (?: [^\\]++ | \\(?!x)  )*+ ) \K ( \\ x \{ (?<hex>[a-fA-F0-9]+) \} )
-        }{
-           #say "Maybe converting $+{hex} from '$2'";
-           my $c = chr(hex($+{hex}));
-           length($+{hex}) <= 6 && $c !~ m{ \P{XPosixGraph}|[\0-\377] } ? $c : $2
-        }xesg;
-        $quote = $_;
-     }
-     #say "__un >>>>>>>>>>>>>>>>>>>>> left=<<$left>> quote=<<$quote>>";
-     $left . $quote
+  s( \G (${atom_re}) (?<trailing>\s*)
+   )( do{
+        local $_ = $1;
+        if (/^"/) {  # "double quoted string
+          s{ (?: [^\\]++ | \\(?!x) )*+ \K ( \\x\{ (?<hex>[a-fA-F0-9]+) \} )
+           }{
+              #say "Maybe converting $+{hex} from '$1'";
+              my $c;
+              length($+{hex}) <= 6 
+                && ($c = chr(hex($+{hex}))) !~ m<\P{XPosixGraph}|[\0-\377]> 
+              ? $c : $1
+           }xesg;
+        }
+        $_
+      }.$+{trailing}
    )xesg;
 }
 
@@ -737,10 +794,12 @@ sub _Interpolate {
     __check_notmissed($1, pos()-length($2)-length($1));
     if ($2) {
       my $sigl = substr($2,0,1);
+      #FIXME BUG (kind of) HERE: Vis::Maxwidth is not reduced for the name= prefix
+      #nor other preceding text, so the first line will likely be over-long
       if ($s_or_d eq 'd') {
         local $_ = $2;
         # Show "foo=<value>" for "$foo" but otherwise use entire expr as label
-        $newstr .= (/^\$(${userident_re})\z/ ? $1 : $2)."=";
+        $newstr .= (/^\$(${userident_re})\z/ ? $1 : "\\".$2)."=";
       }
       if ($sigl eq '$') {
         $newstr .= "\${\\Vis::vis${q}($2)}";
