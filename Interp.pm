@@ -4,6 +4,7 @@
 # Other portions have been released into the Public Domain in accordance with
 # Creative Commons CC0 (http://creativecommons.org/publicdomain/zero/1.0/)
 use strict; use warnings FATAL => 'all'; use 5.012;
+use feature qw(switch state);
 
 use utf8;
 # This file contains UTF-8 characters in debug-output strings (e.g. « and »).
@@ -21,14 +22,15 @@ package Vis;
 
 package DB;
 
-# eval a string in the user's context and return the result.
-# Must be entered via "goto &..." so the first non-DB frame is the user's.
+# eval a string in the user's context and return the result.  The nearest
+# non-DB frame must be the original user's call; this is accomplished by
+# using "goto &_Interpolate" in the entry-point sub to substitute a call
+# directly into package DB.  
 # The following globals must be pre-set:
 #   @Vis::saved = ($@, $!, $^E, $,, $/, $\, $^W)
 #   $Vis:evalarg 
-sub DB_Vis_Eval {   # Many ideas here taken from perl5db.pl
-  warn "### DB_Vis_Eval Entry----------------------------------\n";
-  Carp::confess "Recursive svis/dvis not supported" if $Vis::busy;
+sub DB_Vis_EvalInner {   # Many ideas here taken from perl5db.pl
+  warn "### DB_Vis_EvalInner Entry evalarg='$Vis::evalarg' ----------------------------------\n";
 
   # We can not use lexicals because they could mask user vars
   
@@ -52,16 +54,16 @@ sub DB_Vis_Eval {   # Many ideas here taken from perl5db.pl
 
   # At this point, nothing is in scope except the name of this sub
   # and the simulated @_.
-  $Vis::busy++;
   {
     #FIXME: If 'no strict refs' is not needed, simplify be rming {...}
     #no strict 'refs';
+Carp::confess("BUG") unless @Vis::saved;
     ($!, $^E, $,, $/, $\, $^W) = @Vis::saved[1..6];
     # LHS of assignment must be inside eval to catch die from tie handlers
     $Vis::evalstr = "package $Vis::pkg;"
                          .' $@ = $Vis::saved[0];'
                          .' { local @Vis::saved;'
-                         .'   @Vis::result = "'.$Vis::evalarg.'";'
+                         .'   @Vis::result = '.$Vis::evalarg.';'
                          .' } '
                          .' $Vis::saved[0] = $@;'  # might be set via tie
                          ;
@@ -69,42 +71,148 @@ sub DB_Vis_Eval {   # Many ideas here taken from perl5db.pl
   };
   $Vis::busy--;
 
-  if (my $exmsg = $@) {
-    my ($pkg, $fname, $lno) = (caller(0));
-    $exmsg =~ s/ at \(eval \d+\) line \d+[^\n]*//sg;
-    Carp::confess("${Vis::funcname}: Error interpolating '$Vis::evalarg' at $fname line $lno:\n$exmsg\n");
-  }
-
-  package Vis;
-
   # Because of tied variables, we may have just executed user code!
   # Re-save the possibly-modified punctuation variables and reset them to
   # sane values to ensure that our code can function.
   #
   # However $@ here is from our eval, not the result of any tie handlers.
   # $@ was saved to $saved[0] inside the eval, and we want to keep that value.
-  # The following "local $saved[0]" causes that value to be preserved over
+  # The following "local" statement causes that value to be preserved over
   # the call to &SaveAndResetPunct
-  { local $Vis::saved[0]; &Vis::SaveAndResetPunct; }
+  { local $Vis::save_stack[0]->[0]; &Vis::Resavepunct; }
+
+  if (my $exmsg = $@) {
+    my ($pkg, $fname, $lno) = (caller($main::dist - 1));
+    $exmsg =~ s/ at \(eval \d+\) line \d+[^\n]*//sg;
+    Carp::confess("${Vis::funcname}: Error interpolating '$Vis::evalarg' at $fname line $lno:\n$exmsg\n");
+  }
 
   my @res = @Vis::result;
 
-  # Erase package variables which might contain references to user objects
-  # which would otherwise not be destroyed when expected
-  undef @Vis::saved; undef @Vis::result; undef $Vis::evalarg;
-
-  #@res;
   Vis::oops() if @res != 1; # we never generate array results
   $res[0]
-}# DB_Vis_Eval
+}# DB_Vis_EvalInner
+
+sub DB_Vis_Eval($$) {
+  my ($label_for_errmsg, $evalarg) = @_;
+  # The inner-most function can not have any lexicals, so pass in globals
+  $Vis::funcname = $label_for_errmsg;
+  $Vis::evalarg = $evalarg;
+  state $busy;
+  Carp::confess("Recursive svis/dvis not supported")
+    if $busy++;
+  my $r = &DB::DB_Vis_EvalInner;
+  $busy--;
+  $r
+}
+
+sub DB::DB_Vis_Interpolate {
+  (my $self, local $_, my $s_or_d) = @_;
+  &Vis::SaveAndResetPunct;
+
+  # cf man perldata
+  my $userident_re = qr/ (?: (?=\p{Word})\p{XID_Start} | _ )
+                         (?: (?=\p{Word})\p{XID_Continue}  )* /x;
+  
+  my $varname_re = qr/ ${userident_re} | \^[A-Z] | [0-9]+
+                                       | [-+!().,\/:<>?\[\]\^\\]
+                                       /x;
+  
+  my $varname_or_refexpr_re = qr/ ${varname_re} | ${Vis::curlies_re} /x;
+
+  return "<undef arg>" 
+    if ! defined;
+  if (/\b((?:ARRAY|HASH)\(0x[a-fA-F0-9]+\))/) {
+    state $warned=0;
+    Carp::carp("Warning: String passed to ${s_or_d}vis may have been interpolated by Perl\n(use 'single quotes' to avoid this)\n") unless $warned++;
+  }
+  my $debug = $self->Debug;
+  my $useqq = $self->Useqq;
+  my $q = $useqq ? "" : "q";
+  my $funcname = $s_or_d . "vis" .$q;
+  my sub __check_notmissed($$) {
+    my ($plainstuff, $posn) = @_;
+    local $_ = $_;
+    $plainstuff !~ /(?<!\\)([\$\@\%])/
+      or Carp::confess("\n***Vis bug: Unparsed '$1' at offset ",u($posn),
+                       " ->",substr($_,$posn//0) );
+  }
+  my $result = "";
+  while (
+    /\G (.*?)
+        (
+         # $#arrayvar $#$$...refvarname $#{aref expr} $#$$...{ref2ref expr}
+         #
+         (?: \$\#\$*+\K ${varname_or_refexpr_re} )
+         |
+         # $scalarvar $$$...refvarname ${sref expr} $$$...{ref2ref expr}
+         #  followed by [] {} ->[] ->{} ->method() ... «zero or more»
+         #
+         (?:
+           \$++\K ${varname_or_refexpr_re}
+           (?:
+             (?: ->\K(?: ${$Vis::curliesorsquares_re} | ${userident_re}${Vis::parens_re}? ))
+             |
+             ${$Vis::curliesorsquares_re}
+           )*
+         )
+         |
+         # @arrayvar @$$...varname @{aref expr} @$$...{ref2ref expr}
+         #  followed by [] {} «zero or one»
+         #
+         (?: \@\$*+\K ${varname_or_refexpr_re} ${$Vis::curliesorsquares_re}? )
+         |
+         # %hash %$hrefvar %{href expr} %$$...sref2hrefvar «no follow-ons»
+         (?: \%\$*+\K ${varname_or_refexpr_re} )
+        )
+    /xsgc) {
+    $result .= $1;
+    __check_notmissed($1, pos()-length($2)-length($1));
+    if ($2) {
+      my $sigl = substr($2,0,1);
+      if ($s_or_d eq 'd') {
+        local $_ = $2;
+        # Show "foo=<value>" for "$foo" but otherwise use entire expr as label
+        $result .= (/^\$(${userident_re})\z/ ? $1 : "\\".$2)."=";
+      }
+      # Reduce indent before first wrap to account for stuff alrady there
+      my $used = length($result) - rindex($result,"\n") - 1;
+      local $Vis::Maxwidth = $Vis::Maxwidth;
+      $Vis::Maxwidth -= $used 
+        if $used < $Vis::Maxwidth;
+      say "${s_or_d}vis: used=$used, temp reduced Maxwidth=$Vis::Maxwidth";
+
+      if ($sigl eq '$') {
+        $result .= Vis::vis( DB::DB_Vis_Eval($funcname, $2) );
+      }
+      elsif ($sigl eq '@') {
+        # FIXME verify that multi-value eval results work
+        $result .= Vis::avis( DB::DB_Vis_Eval($funcname, $2) );
+      }
+      elsif ($sigl eq '%') {
+        $result .= Vis::hvis( DB::DB_Vis_Eval($funcname, $2) );
+      }
+      else { Carp::confess("BUG:sigl='$sigl'") }
+    }
+  }
+  if (!defined(pos) || pos() < length($_)) {
+    my $leftover = substr($_,pos()//0);
+    #say "LEFTOVER: «$leftover»";
+    __check_notmissed($leftover,pos);
+    $result .= $leftover;
+  }
+
+  &Vis::RestorePunct;
+  $result
+}#DB::DB_Vis_Interpolate
+
 
 package Vis;
 
-use version 0.77; our $VERSION = version->declare(sprintf "v%s", q$Revision: 1.158 $ =~ /(\d[.\d]+)/);
+use version 0.77; our $VERSION = version->declare(sprintf "v%s", q$Revision: 1.159 $ =~ /(\d[.\d]+)/);
 
 use Exporter;
 use Carp;
-use feature qw(switch state);
 use POSIX qw(INT_MAX);
 use Encode ();
 use Scalar::Util qw(blessed reftype refaddr looks_like_number);
@@ -358,6 +466,7 @@ sub __walk_worker($$$$$) {
 
 sub Dump {
   my $self = $_[0];
+  &SaveAndResetPunct;
   local $_;
   if (! ref $self) { # ala Data::Dumper
     $self = $self->new(@_[1..$#_]);
@@ -405,7 +514,10 @@ sub Dump {
     ($@, $?) = ($sAt, $sQ);
   }
   $self->Pad($pad);
-  $self->_postprocess_DD_result($_)
+  $_ = $self->_postprocess_DD_result($_);
+
+  &RestorePunct;
+  $_
 }
 
 # Walk an arbitrary structure calling &coderef on each item. stopping
@@ -514,9 +626,9 @@ sub __sortkeys {
 }
 
 # FIXME: These don't take into account quoted strings in the interior!
-my $curlies_re = RE_balanced(-parens=>'{}');
-my $parens_re = RE_balanced(-parens=>'()');
-my $curliesorsquares_re = RE_balanced(-parens=>'{}[]');
+our $curlies_re = RE_balanced(-parens=>'{}');
+our $parens_re = RE_balanced(-parens=>'()');
+our $curliesorsquares_re = RE_balanced(-parens=>'{}[]');
 
 my $qquote_re = qr/"(?:[^"\\]++|\\.)*+"/;
 my $squote_re = qr/'(?:[^'\\]++|\\.)*+'/;
@@ -723,106 +835,26 @@ sub _postprocess_DD_result {
 } #_postprocess_DD_result {
 
 my $sane_cW = $^W;
-our @saved;
+our @save_stack;
+sub ResavePunct() {
+  @{ save_stack[0] } = ( $@, $!+0, $^E+0, $,, $/, $\, $^W );
+}
 sub SaveAndResetPunct() {
   # Save things which will later be restored, and reset to sane values.
-  our @saved = ( $@, $!+0, $^E+0, $,, $/, $\, $^W );
+  push @save_stack, [];
+  ResavePunct;
   $,  = "";       # output field separator is null string
   $/  = "\n";     # input record separator is newline
   $\  = "";       # output record separator is null string
   $^W = $sane_cW; # our load-time warnings
 }
-
-# cf man perldata
-my $userident_re = qr/ (?: (?=\p{Word})\p{XID_Start} | _ )
-                       (?: (?=\p{Word})\p{XID_Continue}  )* /x;
-
-my $varname_re = qr/ ${userident_re} | \^[A-Z] | [0-9]+
-                                     | [-+!().,\/:<>?\[\]\^\\]
-                                     /x;
-
-my $varname_or_refexpr_re = qr/ ${varname_re} | ${curlies_re} /x;
-
-sub DB::DB_Vis_Interpolate {
-  (my $self, local $_, my $s_or_d) = @_;
-  return "<undef arg>" 
-    if ! defined;
-  SaveAndResetPunct;
-  if (/\b((?:ARRAY|HASH)\(0x[a-fA-F0-9]+\))/) {
-    state $warned=0;
-    Carp::carp "Warning: String passed to ${s_or_d}vis may have been interpolated by Perl\n(use 'single quotes' to avoid this)\n" unless $warned++;
-  }
-  my $debug = $self->Debug;
-  my $useqq = $self->Useqq;
-  my $q = $useqq ? "" : "q";
-  my sub __check_notmissed($$) {
-    my ($plainstuff, $posn) = @_;
-    local $_ = $_;
-    $plainstuff !~ /(?<!\\)([\$\@\%])/
-      or confess "\n***Vis bug: Unparsed '$1' at offset ",u($posn),
-                 " ->",substr($_,$posn//0);
-  }
-  my $newstr = "";
-  while (
-    /\G (.*?)
-        (
-         # $#arrayvar $#$$...refvarname $#{aref expr} $#$$...{ref2ref expr}
-         #
-         (?: \$\#\$*+\K ${varname_or_refexpr_re} )
-         |
-         # $scalarvar $$$...refvarname ${sref expr} $$$...{ref2ref expr}
-         #  followed by [] {} ->[] ->{} ->method() ... «zero or more»
-         #
-         (?:
-           \$++\K ${varname_or_refexpr_re}
-           (?:
-             (?: ->\K(?: ${curliesorsquares_re} | ${userident_re}${parens_re}? ))
-             |
-             ${curliesorsquares_re}
-           )*
-         )
-         |
-         # @arrayvar @$$...varname @{aref expr} @$$...{ref2ref expr}
-         #  followed by [] {} «zero or one»
-         #
-         (?: \@\$*+\K ${varname_or_refexpr_re} ${curliesorsquares_re}? )
-         |
-         # %hash %$hrefvar %{href expr} %$$...sref2hrefvar «no follow-ons»
-         (?: \%\$*+\K ${varname_or_refexpr_re} )
-        )
-    /xsgc) {
-    $newstr .= $1;
-    __check_notmissed($1, pos()-length($2)-length($1));
-    if ($2) {
-      my $sigl = substr($2,0,1);
-      if ($s_or_d eq 'd') {
-        local $_ = $2;
-        # Show "foo=<value>" for "$foo" but otherwise use entire expr as label
-        $newstr .= (/^\$(${userident_re})\z/ ? $1 : "\\".$2)."=";
-      }
-      if ($sigl eq '$') {
-        $newstr .= "\${\\Vis::vis${q}($2)}";
-      }
-      elsif ($sigl eq '@') {
-        $newstr .= "\${\\Vis::avis${q}($2)}";
-      }
-      elsif ($sigl eq '%') {
-        $newstr .= "\${\\Vis::hvis${q}($2)}";
-      }
-      else { confess "BUG:sigl='$sigl'" }
-    }
-  }
-  if (!defined(pos) || pos() < length($_)) {
-    my $leftover = substr($_,pos()//0);
-    #say "LEFTOVER: «$leftover»";
-    __check_notmissed($leftover,pos);
-    $newstr .= $leftover;
-  }
-  say "##Vis Interpolating (q='$q' useqq=",u($useqq),"):",debugvis($newstr) if $debug;
-  $Vis::funcname = __PACKAGE__."::".$s_or_d."vis";
-  $Vis::evalarg = $newstr;
-  goto &DB::DB_Vis_Eval
-}#DB::DB_Vis_Interpolate
+sub RestorePunct() {
+  ( $@, $!, $^E, $,, $/, $\, $^W ) = pop @save_stack;
+  # Erase other package variables which might refer to user objects
+  # which would otherwise not be destroyed when expected
+  # FIXME are these obsolete?
+  undef @Vis::result; undef $Vis::evalarg; #????
+}
 
 1;
  __END__
@@ -920,10 +952,15 @@ sub timed_run(&$@) {
   if (wantarray) {return @result} else {return $result};
 }
 
+# check $code_display, qr/$exp/, $doeval->($code, $item) ;
+# { my $code="Vis->new->hvis(k=>'v');"; check $code, '(k => "v")',eval $code }
 sub check($$@) {
   my ($code, $expected_arg, @actual) = @_;
   local $_;  # preserve $1 etc. for caller
+  say "##TTcheck code=«$code»\n  expected_arg=«$expected_arg»\n  actual=(@actual)"; 
   my @expected = ref($expected_arg) eq "ARRAY" ? @$expected_arg : ($expected_arg);
+  die "ARE WE USING THIS FEATURE?" if @actual > 1;
+  die "ARE WE USING THIS FEATURE?" if @expected > 1;
   confess "\nTESTa FAILED: $code\n"
          ."Expected ".scalar(@expected)." results, but got ".scalar(@actual).":\n"
          ."expected=(@expected)\n"
@@ -935,24 +972,27 @@ sub check($$@) {
     my $expected = $expected[$i];
     if (ref($expected) eq "Regexp") {
       confess "\nTESTb FAILED: ",$code,"\n"
-             ."Expected (Regexp):".${expected}."«end»\n"
-             ."Got              :".u($actual)."«end»\n"
+             ."Expected (Regexp):u\n".${expected}."«end»\n"
+             ."Got:\n".u($actual)."«end»\n"
              ."Vis::Maxwidth = $Vis::Maxwidth\n"
         unless $actual =~ ($expected // "Never Matched");
     } else {
       confess "\nTESTc FAILED: $code\n"
-             ."Expected:".u($expected)."«end»\n"
-             ."Got     :".u($actual)."«end»\n"
+             ."Expected:\n".u($expected)."«end»\n"
+             ."Got:\n".u($actual)."«end»\n"
              ."Vis::Maxwidth = $Vis::Maxwidth\n"
+             .Data::Dumper->new([$expected,$actual],['e','a'])->Dump
         unless (!defined($actual) && !defined($expected))
                || (defined($actual) && defined($expected) && $actual eq $expected);
     }
   }
 }
 
-# Run a variety of tests on an item which is a string or strigified object.
+# Run a variety of tests on an item which is a string or strigified object
+# which is not presented as a bare number (i.e. it is shown in quotes).
 # The caller provides a sub which does the eval in the desired context,
 # for example with "use bignum".
+# The expected_re matches the item without surrounding quotes.
 sub checkstringy(&$$) {
   my ($doeval, $item, $expected_re) = @_;
   my $expqq_re = "\"${expected_re}\"";
@@ -976,12 +1016,50 @@ sub checkstringy(&$$) {
     [ 'vis({ aaa => $_[1], bbb => "abc" })', '{aaa => _Q_,bbb => "abc"}' ],
   ) {
     my ($code, $exp) = @$_;
-say "##orig exp:${exp}«end»";
     $exp = quotemeta $exp;
-say "##  qm exp:${exp}«end»";
     $exp =~ s/_Q_/$expqq_re/g;
     $exp =~ s/_q_/$expq_re/g;
-say "## fin exp:${exp}«end»";
+    my $code_display = $code . " with \$_[1]=«$item»";
+    local $Vis::Maxwidth = 0;  # disable wrapping
+    check $code_display, qr/$exp/, $doeval->($code, $item) ;
+  }
+}
+
+# Run a variety of tests on non-string item, i.e. something which is a
+# number or structured object (which might contains strings within, e.g.
+# values or quoted keys in a hash).
+#
+# The given regexp specifies the expected result with Useqq(1), i.e.
+# double-quoted; a single-quoted version is derived internally.
+sub checklit(&$$) {
+  my ($doeval, $item, $dq_expected_re) = @_;
+  (my $sq_expected_re = $dq_expected_re) 
+    =~ s{ ( [^\\"]++|(\\.) )*+ \K " }{'}xsg
+       or do{ die "bug" if $dq_expected_re =~ /(?<![^\\])'/; }; #probably
+  say "dq_expected_re=$dq_expected_re";
+  say "sq_expected_re=$sq_expected_re";
+  foreach (
+    [ 'Vis->new()->vis($_[1])',  '_Q_' ],
+    [ 'vis($_[1])',              '_Q_' ],
+    [ 'visq($_[1])',             '_q_' ],
+    [ 'avis($_[1])',             '(_Q_)' ],
+    [ 'avisq($_[1])',            '(_q_)' ],
+    #currently broken due to $VAR problem: [ 'avisq($_[1], $_[1])',     '(_q_, _q_)' ],
+    [ 'lvis($_[1])',             '_Q_' ],
+    [ 'lvisq($_[1])',            '_q_' ],
+    [ 'svis(\'$_[1]\')',         '_Q_' ],
+    [ 'svis(\'foo$_[1]\')',      'foo_Q_' ],
+    [ 'svis(\'foo$\'."_[1]")',   'foo_Q_' ],
+    [ 'dvis(\'$_[1]\')',         '$_[1]=_Q_' ],
+    [ 'dvis(\'foo$_[1]bar\')',   'foo$_[1]=_Q_bar' ],
+    [ 'dvisq(\'foo$_[1]\')',     'foo$_[1]=_q_' ],
+    [ 'dvisq(\'foo$_[1]bar\')',  'foo$_[1]=_q_bar' ],
+    [ 'vis({ aaa => $_[1], bbb => "abc" })', '{aaa => _Q_,bbb => "abc"}' ],
+  ) {
+    my ($code, $exp_template) = @$_;
+    my $exp = quotemeta $exp_template;
+    $exp =~ s/_Q_/$dq_expected_re/g;
+    $exp =~ s/_q_/$sq_expected_re/g;
     my $code_display = $code . " with \$_[1]=«$item»";
     local $Vis::Maxwidth = 0;  # disable wrapping
     check $code_display, qr/$exp/, $doeval->($code, $item) ;
@@ -1228,7 +1306,7 @@ $_ = "GroupA.GroupB";
                    sub{ my $x = 42; };';
   { my $code = 'vis($data)'; check $code, "sub { \"DUMMY\" }", eval $code; }
   $Data::Dumper::Deparse = 1;
-  { my $code = 'vis($data)'; check $code, "sub { my \$x = 42;}", eval $code; }
+  { my $code = 'vis($data)'; check $code, "sub { my \$x=42; }", eval $code; }
 }
 
 # Floating point values (single values special-cased to show not as 'string')
@@ -1255,11 +1333,11 @@ my $ratstr  = '1/9';
 
   my $bigf = eval $bigfstr // die;
   die unless blessed($bigf) =~ /^Math::BigFloat/;
-  checkstringy(sub{eval $_[0]}, $bigf, qr/(?:\(Math::BigFloat[^\)]*\))?${bigfstr}/);
+  checklit(sub{eval $_[0]}, $bigf, qr/(?:\(Math::BigFloat[^\)]*\))?${bigfstr}/);
 
   my $bigi = eval $bigistr // die;
   die unless blessed($bigi) =~ /^Math::BigInt/;
-  checkstringy(sub{eval $_[0]}, $bigi, qr/(?:\(Math::BigInt[^\)]*\))?${bigistr}/);
+  checklit(sub{eval $_[0]}, $bigi, qr/(?:\(Math::BigInt[^\)]*\))?${bigistr}/);
 
   # Confirm that various Stringify values disable
   foreach my $Sval (0, undef, "", [], [0], [""]) {
@@ -1272,7 +1350,7 @@ my $ratstr  = '1/9';
   use bigrat;
   my $rat = eval $ratstr // die;
   die unless blessed($rat) =~ /^Math::BigRat/;
-  checkstringy(sub{eval $_[0]}, $rat, qr/(?:\(Math::BigRat[^\)]*\))?${ratstr}/);
+  checklit(sub{eval $_[0]}, $rat, qr/(?:\(Math::BigRat[^\)]*\))?${ratstr}/);
 }
 {
   # no 'bignum' etc. in effect, just explicit class names
@@ -1290,7 +1368,7 @@ my $ratstr  = '1/9';
   }
   # With explicit stringification of BigFloat only
   { local $Vis::Stringify = [qr/^Math::BigFloat/];
-    checkstringy(sub{eval $_[0]}, $bigf, qr/(?:\(Math::BigFloat[^\)]*\))?${bigfstr}/);
+    checklit(sub{eval $_[0]}, $bigf, qr/(?:\(Math::BigFloat[^\)]*\))?${bigfstr}/);
     # But not other classes
     my $s = vis($rat); die "bug($s)" unless $s =~ /^bless.*BigRat/s;
   }
@@ -1314,12 +1392,11 @@ my $ratstr  = '1/9';
 }
 
 # There was a bug for s/dvis called direct from outer scope, so don't use eval:
-check 'global divs %toplex_h',
-      '%toplex_h=("" => "Emp", A => 111, "B B" => 222,'."\n"
-     .'           C => {d => 888, e => 999}, D => {},'."\n"
-     .'           EEEEEEEEEEEEEEEEEEEEEEEEEE => \\42, F => \\\\\\43'."\n"
-     .'          )'."\n",
-      dvis('%toplex_h\n');
+check 
+  'global divs %toplex_h',
+  '%toplex_h=("" => "Emp",A => 111,"B B" => 222,C => {d => 888,e => 999}, D => {},'."\n"
+    .' EEEEEEEEEEEEEEEEEEEEEEEEEE => \\42,F => \\\\\\43)',
+  dvis('%toplex_h');
 check 'global divs @ARGV', q(@ARGV=("fake","argv")), dvis('@ARGV');
 check 'global divs $.', q($.=1234), dvis('$.');
 check 'global divs $ENV{EnvVar}', q("Test EnvVar Value"), svis('$ENV{EnvVar}');
