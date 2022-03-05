@@ -27,29 +27,28 @@ package DB;
 #   @Vis::saved = ($@, $!, $^E, $,, $/, $\, $^W)
 #   $Vis:evalarg 
 sub DB_Vis_Eval {   # Many ideas here taken from perl5db.pl
+  warn "### DB_Vis_Eval Entry----------------------------------\n";
   Carp::confess "Recursive svis/dvis not supported" if $Vis::busy;
 
   # We can not use lexicals because they could mask user vars
   
   ($Vis::pkg) = (caller(0))[0];  # package containig user's call
 
-  # Get @_ values from the closest frame above the user's call which
-  # has arguments.  This will be the very next frame (i.e. frame 1)
-  # unless the user was called using "&subname;".
-  # N.B. caller() leaves the args in @DB::args
-  # FIXME check/debug this
-  for ($Vis::DistToArgs = 1 ; ; $Vis::DistToArgs++) {
-    my ($pkg,$hasargs) = (caller $Vis::DistToArgs)[0,4];
-    if (! $pkg) { # outer scope
-      undef $Vis::DistToArgs;
-      last;
+  # Get @_ values from the closest non-DB caller which has arguments.
+  # This will be the closest caller unless that sub as called 
+  # using "&subname;".  N.B. caller() leaves the args in @DB::args
+  # FIXME: change main:: to Vis:: ...
+  for ($main::dist = 0; (caller($main::dist)//"") eq "DB"; $main::dist++) {}
+  while() {
+    $main::dist++;
+    my ($pkg, $hasargs) = (caller($main::dist))[0,4];
+    if (! defined $pkg){
+      @DB::args = ('<@_ is not defined in the outer block>');
+      last
     }
     last if $hasargs;
   }
-  # make visible as "@_" 
-  local *_ = defined($Vis::DistToArgs)
-               ? \@DB::args
-               : ['<@_ is not defined in the outer scope>'] ;
+  local *_ = \@DB::args;
 
   # At this point, nothing is in scope except the name of this sub
   # and the simulated @_.
@@ -101,7 +100,7 @@ sub DB_Vis_Eval {   # Many ideas here taken from perl5db.pl
 
 package Vis;
 
-use version 0.77; our $VERSION = version->declare(sprintf "v%s", q$Revision: 1.157 $ =~ /(\d[.\d]+)/);
+use version 0.77; our $VERSION = version->declare(sprintf "v%s", q$Revision: 1.158 $ =~ /(\d[.\d]+)/);
 
 use Exporter;
 use Carp;
@@ -240,10 +239,10 @@ sub hlvisq(@) { &_getobj_hash  ->VisType('hl')->Useqq(0)->Dump; }
 
 # Trampolines which replace the call frame with a call directly to the
 # interpolation code which uses package DB to access the user's context.
-sub svis(_)  { @_ = (&_getobj,           shift, 's'); goto &_Interpolate }
-sub svisq(_) { @_ = (&_getobj->Useqq(0), shift, 's'); goto &_Interpolate }
-sub dvis(_)  { @_ = (&_getobj,           shift, 'd'); goto &_Interpolate }
-sub dvisq(_) { @_ = (&_getobj->Useqq(0), shift, 'd'); goto &_Interpolate }
+sub svis(_) { @_=(&_getobj,           shift, 's');goto &DB::DB_Vis_Interpolate }
+sub svisq(_){ @_=(&_getobj->Useqq(0), shift, 's');goto &DB::DB_Vis_Interpolate }
+sub dvis(_) { @_=(&_getobj,           shift, 'd');goto &DB::DB_Vis_Interpolate }
+sub dvisq(_){ @_=(&_getobj->Useqq(0), shift, 'd');goto &DB::DB_Vis_Interpolate }
 
 # Our new() takes no parameters and returns a default-initialized object,
 # on which option-setting methods may be called and finally "vis", "avis", etc.
@@ -744,12 +743,7 @@ my $varname_re = qr/ ${userident_re} | \^[A-Z] | [0-9]+
 
 my $varname_or_refexpr_re = qr/ ${varname_re} | ${curlies_re} /x;
 
-my sub __check_notmissed($$) {
-  my ($fragment, $posn) = @_;
-  confess "\n***Vis bug: Unparsed '$1' at offset ",u($posn),
-          " ->",substr($_,$posn//0) if $fragment =~ /(?<!\\)([\$\@\%])/;
-}
-sub _Interpolate {
+sub DB::DB_Vis_Interpolate {
   (my $self, local $_, my $s_or_d) = @_;
   return "<undef arg>" 
     if ! defined;
@@ -761,6 +755,13 @@ sub _Interpolate {
   my $debug = $self->Debug;
   my $useqq = $self->Useqq;
   my $q = $useqq ? "" : "q";
+  my sub __check_notmissed($$) {
+    my ($plainstuff, $posn) = @_;
+    local $_ = $_;
+    $plainstuff !~ /(?<!\\)([\$\@\%])/
+      or confess "\n***Vis bug: Unparsed '$1' at offset ",u($posn),
+                 " ->",substr($_,$posn//0);
+  }
   my $newstr = "";
   while (
     /\G (.*?)
@@ -794,8 +795,6 @@ sub _Interpolate {
     __check_notmissed($1, pos()-length($2)-length($1));
     if ($2) {
       my $sigl = substr($2,0,1);
-      #FIXME BUG (kind of) HERE: Vis::Maxwidth is not reduced for the name= prefix
-      #nor other preceding text, so the first line will likely be over-long
       if ($s_or_d eq 'd') {
         local $_ = $2;
         # Show "foo=<value>" for "$foo" but otherwise use entire expr as label
@@ -823,7 +822,7 @@ sub _Interpolate {
   $Vis::funcname = __PACKAGE__."::".$s_or_d."vis";
   $Vis::evalarg = $newstr;
   goto &DB::DB_Vis_Eval
-}#_Interpolate
+}#DB::DB_Vis_Interpolate
 
 1;
  __END__
