@@ -179,10 +179,9 @@ sub DB::DB_Vis_Interpolate {
   $result
 }#DB::DB_Vis_Interpolate
 
-
 package Vis;
 
-use version 0.77; our $VERSION = version->declare(sprintf "v%s", q$Revision: 2.0 $ =~ /(\d[.\d]+)/);
+use version 0.77; our $VERSION = version->declare(sprintf "v%s", q$Revision: 2.1 $ =~ /(\d[.\d]+)/);
 
 use Exporter;
 use Carp;
