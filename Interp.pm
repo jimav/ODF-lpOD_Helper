@@ -185,7 +185,7 @@ sub DB_Vis_Interpolate {
 
 package Vis;
 
-use version 0.77; our $VERSION = version->declare(sprintf "v%s", q$Revision: 2.2 $ =~ /(\d[.\d]+)/);
+use version 0.77; our $VERSION = version->declare(sprintf "v%s", q$Revision: 2.3 $ =~ /(\d[.\d]+)/);
 
 use Exporter;
 use Carp;
@@ -686,6 +686,7 @@ sub _fold { # edits $_ in place
     or oops "unmatched tail (pad='${pad}') in:\n",debugvis($_);
   #say "## fold RESULT:", debugvis($_);
 }#__fold
+
 
 sub __unescape_printables() {
   # Data::Dumper outputs wide characters as escapes with Useqq(1).
