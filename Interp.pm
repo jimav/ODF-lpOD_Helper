@@ -33,6 +33,7 @@ sub DB_Vis_Evalwrapper {
 # using "goto &DB::DB_Vis_Interpolate" in the entry-point sub.
 sub DB_Vis_Eval($$) {
   my ($label_for_errmsg, $evalarg) = @_;
+  Carp::confess("Vis bug:empty evalarg") if $evalarg eq "";
   # Many ideas here taken from perl5db.pl
 
   # Find the closest non-DB caller.  The eval will be done in that package.
@@ -66,6 +67,7 @@ sub DB_Vis_Eval($$) {
      .' $Vis::user_dollarat = $@; '  # possibly changed by a tie handler
      ;
      &DB_Vis_Evalwrapper;
+say "RAW errmsg:$@\nstring_to_eval=«$Vis::string_to_eval»" if $@;
      @Vis::result
   };
   my $errmsg = $@;
@@ -113,9 +115,16 @@ sub DB_Vis_Interpolate {
                        " ->",substr($_,$posn//0) );
   }
   my $result = "";
+  say "#Vis_Interp START «$_»" if $debug;
   while (
-    /\G (.*?)
-        (
+    /\G ( ( (?: [^\\\$\@\%] | \\[^\$\@\%] )*+ )
+          (?{ say "#Vis Interp: plain text «$^N» \\K" if $debug; })
+          \K
+        )
+        (?<expr>
+         # \x -> x for any x
+         \\.
+         |
          # $#arrayvar $#$$...refvarname $#{aref expr} $#$$...{ref2ref expr}
          #
          (?: \$\#\$*+\K ${varname_or_refexpr_re} )
@@ -141,14 +150,22 @@ sub DB_Vis_Interpolate {
          (?: \%\$*+\K ${varname_or_refexpr_re} )
         )
     /xsgc) {
+    #say "#Vis Interp: plain text «$1»" if $debug;
+    BUG HERE: Need to eval "plain" text in "dq string" to catch \\ \n \t etc.
     $result .= $1;
-    __check_notmissed($1, pos()-length($2)-length($1));
-    if ($2) {
-      my $sigl = substr($2,0,1);
+    __check_notmissed($1, pos()-length($+{expr})-length($1));
+    if (my $expr = $+{expr}) {{
+      say "#Vis Interp: expr «$expr»" if $debug;
+      my $sigl = substr($expr,0,1);
+      if ($sigl eq '\\') {
+        Carp::confess("bug") unless length($expr)==2; 
+        $result .= substr($expr,1,1);
+        last
+      }
       if ($s_or_d eq 'd') {
-        local $_ = $2;
+        local $_ = $expr;
         # Show "foo=<value>" for "$foo" but otherwise use entire expr as label
-        $result .= (/^\$(${userident_re})\z/ ? $1 : $2)."=";
+        $result .= (/^\$(${userident_re})\z/ ? $1 : $expr)."=";
       }
       # Reduce indent before first wrap to account for stuff alrady there
       my $leftwid = length($result) - rindex($result,"\n") - 1;
@@ -160,17 +177,17 @@ sub DB_Vis_Interpolate {
       say "${s_or_d}vis: leftwid=$leftwid, temp Maxwidth1=",u($Vis::Maxwidth1)," Useqq=",u($self->Useqq) if $debug;
 
       if ($sigl eq '$') {
-        $result .= $self->vis( DB::DB_Vis_Eval($funcname, $2) );
+        $result .= $self->vis( DB::DB_Vis_Eval($funcname, $expr) );
       }
       elsif ($sigl eq '@') {
         # FIXME verify that multi-value eval results work
-        $result .= $self->avis( DB::DB_Vis_Eval($funcname, $2) );
+        $result .= $self->avis( DB::DB_Vis_Eval($funcname, $expr) );
       }
       elsif ($sigl eq '%') {
-        $result .= $self->hvis( DB::DB_Vis_Eval($funcname, $2) );
+        $result .= $self->hvis( DB::DB_Vis_Eval($funcname, $expr) );
       }
       else { Carp::confess("BUG:sigl='$sigl'") }
-    }
+    }}
   }
   if (!defined(pos) || pos() < length($_)) {
     my $leftover = substr($_,pos()//0);
@@ -185,7 +202,7 @@ sub DB_Vis_Interpolate {
 
 package Vis;
 
-use version 0.77; our $VERSION = version->declare(sprintf "v%s", q$Revision: 2.3 $ =~ /(\d[.\d]+)/);
+use version 0.77; our $VERSION = version->declare(sprintf "v%s", q$Revision: 2.4 $ =~ /(\d[.\d]+)/);
 
 use Exporter;
 use Carp;
@@ -603,6 +620,7 @@ our $curlies_re = RE_balanced(-parens=>'{}');
 our $parens_re = RE_balanced(-parens=>'()');
 our $curliesorsquares_re = RE_balanced(-parens=>'{}[]');
 
+my $bareword_re = qr/\b[A-Za-z_][A-Za-z0-9_]*\b/;
 my $qquote_re = qr/"(?:[^"\\]++|\\.)*+"/;
 my $squote_re = qr/'(?:[^'\\]++|\\.)*+'/;
 my $quote_re = qr/${qquote_re}|${squote_re}/;
@@ -627,12 +645,15 @@ sub __adjust_spacing() { # edits $_ in place
        s/\s+/ /sg;   # remove all unnecessary spaces
        s/\ (?![\$\@])//g;
        s/=>/ => /g;  # put back around  =>
-       s/\[,/\[, /g; # after ],
+       s/\],(?!\ )/\], /g; # after ],
+       #s/,(?!\ )/, /g;      # space after every comma
        s/\bsub\ ?(${curlies_re})/"sub { ".substr($1,1,length($1)-2)." }"/eg;
        $_
      }
    )exsg;
 }#__adjust_spacing
+
+my $foldunit_re = qr/${atom_re}(?: , | \s*=>)?+/x;
 
 sub _fold { # edits $_ in place
   my $self = shift;
@@ -660,11 +681,11 @@ sub _fold { # edits $_ in place
     #(?{ say "##Visfold at top: pos=",u(pos)," ->«",substr($_,pos//0),"»" })
     (?{ local $nind = $next_indent }) # initialize localized var
     (
-      (\s*${atom_re},?+)  # at least one even if too wide
+      \s*(${foldunit_re})  # at least one even if too wide
       (?{ local $nind = $nind + __ind_adjustment("First ") })
       (?:
           \s*
-          (${atom_re},?+)
+          (${foldunit_re})
           (?{ local $nind = $nind + __ind_adjustment("Cont  ") })
           (?(?{ my $len = $curr_indent + pos() - $-[0];
                 $len <= ($^N eq "[" ? $maxwid-$smidgen : $maxwid)
@@ -686,7 +707,6 @@ sub _fold { # edits $_ in place
     or oops "unmatched tail (pad='${pad}') in:\n",debugvis($_);
   #say "## fold RESULT:", debugvis($_);
 }#__fold
-
 
 sub __unescape_printables() {
   # Data::Dumper outputs wide characters as escapes with Useqq(1).
