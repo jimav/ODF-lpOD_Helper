@@ -7,6 +7,7 @@ use strict; use warnings FATAL => 'all'; use 5.012;
 use feature qw(switch state);
 
 # POD documentation follows __END__
+# _names are internal methods, __names are functions
 
 use utf8;
 # This file contains Unicode characters in debug-output strings (e.g. « and »).
@@ -79,8 +80,9 @@ sub DB_Vis_Eval($$) {
   @result;
 }# DB_Vis_Eval
 
-sub DB::DB_Vis_Interpolate {
+sub DB_Vis_Interpolate {
   (my $self, local $_, my $s_or_d) = @_;
+  my sub u(_) { $_[0] // "undef" }
   &Vis::SaveAndResetPunct;
 
   # cf man perldata
@@ -149,21 +151,23 @@ sub DB::DB_Vis_Interpolate {
         $result .= (/^\$(${userident_re})\z/ ? $1 : $2)."=";
       }
       # Reduce indent before first wrap to account for stuff alrady there
-      my $used = length($result) - rindex($result,"\n") - 1;
-      local $Vis::Maxwidth = $Vis::Maxwidth;
-      $Vis::Maxwidth -= $used 
-        if $used < $Vis::Maxwidth;
-      say "${s_or_d}vis: used=$used, temp reduced Maxwidth=$Vis::Maxwidth";
+      my $leftwid = length($result) - rindex($result,"\n") - 1;
+      my $maxwidth = $self->{Maxwidth};
+      local $self->{Maxwidth1} = $self->{Maxwidth1} // $maxwidth;
+      if ($maxwidth) {
+        $self->{Maxwidth1} -= $leftwid if $leftwid < $self->{Maxwidth1}
+      }
+      say "${s_or_d}vis: leftwid=$leftwid, temp Maxwidth1=",u($Vis::Maxwidth1)," Useqq=",u($self->Useqq) if $debug;
 
       if ($sigl eq '$') {
-        $result .= Vis::vis( DB::DB_Vis_Eval($funcname, $2) );
+        $result .= $self->vis( DB::DB_Vis_Eval($funcname, $2) );
       }
       elsif ($sigl eq '@') {
         # FIXME verify that multi-value eval results work
-        $result .= Vis::avis( DB::DB_Vis_Eval($funcname, $2) );
+        $result .= $self->avis( DB::DB_Vis_Eval($funcname, $2) );
       }
       elsif ($sigl eq '%') {
-        $result .= Vis::hvis( DB::DB_Vis_Eval($funcname, $2) );
+        $result .= $self->hvis( DB::DB_Vis_Eval($funcname, $2) );
       }
       else { Carp::confess("BUG:sigl='$sigl'") }
     }
@@ -181,7 +185,7 @@ sub DB::DB_Vis_Interpolate {
 
 package Vis;
 
-use version 0.77; our $VERSION = version->declare(sprintf "v%s", q$Revision: 2.1 $ =~ /(\d[.\d]+)/);
+use version 0.77; our $VERSION = version->declare(sprintf "v%s", q$Revision: 2.2 $ =~ /(\d[.\d]+)/);
 
 use Exporter;
 use Carp;
@@ -208,7 +212,8 @@ our @EXPORT_OK = qw($Maxwidth $MaxStringwidth $Truncsuffix $Debug
 our @ISA       = ('Data::Dumper'); # see comments at new()
 
 # Used by non-oo functions, and initial settings by new()
-our ($Maxwidth, $MaxStringwidth, $Truncsuffix, $Debug, $Stringify,
+our ($Debug, $MaxStringwidth, $Truncsuffix, $Stringify,
+     $Maxwidth, $Maxwidth1,
      $Useqq, $Quotekeys, $Sortkeys, $Terse, $Indent, $Sparseseen);
 
 $Debug          = 0            unless defined $Debug;
@@ -239,7 +244,7 @@ sub Maxwidth {
   return(wantarray ? ($s->{Maxwidth}, $s->{Maxwidth1}) : $s->{Maxwidth})
     if @_ == 1;
   $s->{Maxwidth} = $v; 
-  $s->{Maxwidth1} = $v1 if @_==3
+  $s->{Maxwidth1} = $v1 if @_==3;
   $s
 }
 sub Maxwidth1 {
@@ -297,36 +302,36 @@ sub qshpath(_) {  # like qsh but does not quote initial ~ or ~username
 }
 
 ########### FUNCTIONAL/OO APIs #############
-sub _getobj {
+sub __getobj {
   (blessed($_[0]) && $_[0]->isa(__PACKAGE__) ? shift : __PACKAGE__->new())
 }
-sub _getobj_scalar { &_getobj->Values([$_[0]]) }
-sub _getobj_array  { &_getobj->Values([\@_])   } #->Values([[@_]])
-sub _getobj_hash {
-  my $o = &_getobj;
+sub __getobj_s { &__getobj->Values([$_[0]]) }
+sub __getobj_a { &__getobj->Values([\@_])   } #->Values([[@_]])
+sub __getobj_h {
+  my $o = &__getobj;
   (scalar(@_) % 2)==0 or croak "Uneven number args for hash key => val pairs";
   $o ->Values([{@_}])
 }
 
 # These can be called as *FUNCTIONS* or as *METHODS* of an
 # already-created Vis object.
-sub vis(_)    { &_getobj_scalar->VisType('s' )->Dump; }
-sub visq(_)   { &_getobj_scalar->VisType('s' )->Useqq(0)->Dump; }
-sub avis(@)   { &_getobj_array ->VisType('a' )->Dump; }
-sub avisq(@)  { &_getobj_array ->VisType('a' )->Useqq(0)->Dump; }
-sub lvis(@)   { &_getobj_array ->VisType('l' )->Dump; }
-sub lvisq(@)  { &_getobj_array ->VisType('l' )->Useqq(0)->Dump; }
-sub hvis(@)   { &_getobj_hash  ->VisType('h' )->Dump; }
-sub hvisq(@)  { &_getobj_hash  ->VisType('h' )->Useqq(0)->Dump; }
-sub hlvis(@)  { &_getobj_hash  ->VisType('hl')->Dump; }
-sub hlvisq(@) { &_getobj_hash  ->VisType('hl')->Useqq(0)->Dump; }
+sub vis(_)    { &__getobj_s ->VisType('s' )->Dump; }
+sub visq(_)   { &__getobj_s ->VisType('s' )->Useqq(0)->Dump; }
+sub avis(@)   { &__getobj_a ->VisType('a' )->Dump; }
+sub avisq(@)  { &__getobj_a ->VisType('a' )->Useqq(0)->Dump; }
+sub lvis(@)   { &__getobj_a ->VisType('l' )->Dump; }
+sub lvisq(@)  { &__getobj_a ->VisType('l' )->Useqq(0)->Dump; }
+sub hvis(@)   { &__getobj_h ->VisType('h' )->Dump; }
+sub hvisq(@)  { &__getobj_h ->VisType('h' )->Useqq(0)->Dump; }
+sub hlvis(@)  { &__getobj_h ->VisType('hl')->Dump; }
+sub hlvisq(@) { &__getobj_h ->VisType('hl')->Useqq(0)->Dump; }
 
 # Trampolines which replace the call frame with a call directly to the
 # interpolation code which uses package DB to access the user's context.
-sub svis(_) { @_=(&_getobj,           shift, 's');goto &DB::DB_Vis_Interpolate }
-sub svisq(_){ @_=(&_getobj->Useqq(0), shift, 's');goto &DB::DB_Vis_Interpolate }
-sub dvis(_) { @_=(&_getobj,           shift, 'd');goto &DB::DB_Vis_Interpolate }
-sub dvisq(_){ @_=(&_getobj->Useqq(0), shift, 'd');goto &DB::DB_Vis_Interpolate }
+sub svis(_) { @_=(&__getobj,          shift,'s');goto &DB::DB_Vis_Interpolate }
+sub svisq(_){ @_=(&__getobj->Useqq(0),shift,'s');goto &DB::DB_Vis_Interpolate }
+sub dvis(_) { @_=(&__getobj,          shift,'d');goto &DB::DB_Vis_Interpolate }
+sub dvisq(_){ @_=(&__getobj->Useqq(0),shift,'d');goto &DB::DB_Vis_Interpolate }
 
 # Our new() takes no parameters and returns a default-initialized object,
 # on which option-setting methods may be called and finally "vis", "avis", etc.
@@ -366,7 +371,6 @@ sub _config_defaults {
     # perl bug: Localizing *_ does not deal with the special filehandle "_"
     #  see https://github.com/Perl/perl5/issues/19142
     $Maxwidth = get_terminal_columns(debug => $Debug)//80;
-    $Maxwidth1 = undef;
   }
 
   $self
@@ -476,6 +480,7 @@ sub Dump {
   # and insert the user's Pad before each line.
   my $pad = $self->Pad();
   $self->Indent(0)->Pad("");
+  say "##Vis b4 SUPER: Indent=",$self->Indent(), " Useqq=",u($self->Useqq), " Pad=",debugvis($self->Pad) if $debug;
   {
     my ($sAt, $sQ) = ($@, $?); # Data::Dumper corrupts these
     $_ = $self->SUPER::Dump;
@@ -629,51 +634,50 @@ sub __adjust_spacing() { # edits $_ in place
    )exsg;
 }#__adjust_spacing
 
-sub __fold($$) { # edits $_ in place
-  my ($maxwid, $pad) = @_;
- 
+sub _fold { # edits $_ in place
+  my $self = shift;
+  my ($debug, $maxwidth, $maxwidth1, $pad) = 
+       (@$self{qw/VisDebug Maxwidth Maxwidth1/}, $self->Pad);
   return 
-    if $maxwid == 0;  # no folding
+    if $maxwidth == 0;  # no folding
+  my $maxwid = $maxwidth1 || $maxwidth;
   #$maxwid = INT_MAX if $maxwid==0;  # no folding, but maybe space adjustments
-  $maxwid = min(0, $maxwid - length($pad));
+  $maxwid = max(0, $maxwid - length($pad));
   my $smidgen = max(5, int($maxwid / 6));
+  my $indent_unit = 2;
+  #say "#VisFold WIDTHS: mw=$maxwid sm=$smidgen, iu=$indent_unit maxw=",u($maxwidth), " maxw1=",u($maxwidth1);
 
   pos = 0;
-  my $prev_indent = 0;
+  my $curr_indent = 0;
   my $next_indent = 0;
-  our $ind; local $ind = 0;
+  our $nind; local $nind = 0;
   my sub __ind_adjustment(;$) {
-    #say "@{_}atom=<<$^N>> pos=${\pos} p_indent=$prev_indent n_indent=$next_indent ind=$ind mw=$maxwid,$smidgen";
+    say "#VisFold: @{_}atom «$^N» pos=${\pos} p_indent=$curr_indent n_indent=$next_indent nind=$nind mw=$maxwid,$smidgen" if $debug;
     local $_ = $^N;;
-    /^["']/ ? 0 : ( (()=/[\[\{\(]/) - (()=/[\]\}\)]/) );
+    /^["']/ ? 0 : ( (()=/[\[\{\(]/) - (()=/[\]\}\)]/) )*$indent_unit;
   }
   s(\G
     #(?{ say "##Visfold at top: pos=",u(pos)," ->«",substr($_,pos//0),"»" })
-    (?{ local $ind = $next_indent }) # initialize localized var
+    (?{ local $nind = $next_indent }) # initialize localized var
     (
       (\s*${atom_re},?+)  # at least one even if too wide
-      (?{ local $ind = $ind + __ind_adjustment("First ") })
+      (?{ local $nind = $nind + __ind_adjustment("First ") })
       (?:
           \s*
           (${atom_re},?+)
-          (?{ local $ind = $ind + __ind_adjustment("Cont  ") })
-          (?(?{ my $len = $prev_indent + pos() - $-[0];
+          (?{ local $nind = $nind + __ind_adjustment("Cont  ") })
+          (?(?{ my $len = $curr_indent + pos() - $-[0];
                 $len <= ($^N eq "[" ? $maxwid-$smidgen : $maxwid)
               })|(*FAIL))
       )*+
     )
-    (?{ $next_indent = $ind }) # copy to non-localized storage
+    (?{ $next_indent = $nind }) # copy to non-localized storage
     (?<extra>\s*)
-    #(?{ say "##Visfold SUCCEEDED: pos=",u(pos) })
    )(do{
        my $len = length($1);
-       if ($len > $maxwid) {
-         #say "##VisFFOL over-long pos=${\pos} (prev_indent=$prev_indent next_indent=$next_indent len=$len mw=$maxwid)\n«$1»";
-       } else {
-         #say "##VisFFOL ok len    pos=${\pos} (prev_indent=$prev_indent next_indent=$next_indent len=$len mw=$maxwid)\n«$1»";
-       }
-       my $indent = $prev_indent;
-       $prev_indent = $next_indent;
+       my $indent = $curr_indent;
+       $curr_indent = $next_indent;
+       $maxwid = max(0, $maxwidth - length($pad)); # stop using maxwidth1
        $pad . (" " x $indent) . $1 ."\n"
      }
    )exsg
@@ -707,8 +711,8 @@ sub __unescape_printables() {
 sub _postprocess_DD_result {
   (my $self, local $_) = @_;
 
-  my ($debug, $vistype, $maxwidth)
-    = @$self{qw/VisDebug VisType Maxwidth/};
+  my ($debug, $vistype, $maxwidth, $maxwidth1)
+    = @$self{qw/VisDebug VisType Maxwidth Maxwidth1/};
 
   croak "invalid VisType ", u($vistype)
     unless ($vistype//0) =~ /^(?:[salh]|hl)$/;
@@ -720,7 +724,7 @@ sub _postprocess_DD_result {
 
   __unescape_printables;
   __adjust_spacing;
-  __fold($maxwidth, $self->Pad());
+  $self->_fold();
 
   if (($vistype//"s") eq "s") { }
   elsif ($vistype eq "a") {
