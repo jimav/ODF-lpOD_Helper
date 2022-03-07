@@ -1,13 +1,21 @@
 # Copyright © Jim Avera 2012-2022.  This document contains code snippets
 # from perl5db.pl and Data::Dumper as noted in adjacent comments, and
 # those extracts remain subject to the licenses of their respective sources.
-# Other portions have been released into the Public Domain in accordance with
-# Creative Commons CC0 (http://creativecommons.org/publicdomain/zero/1.0/)
+# Excepting those portions, this file has been dedicated to the Public Domain 
+# per Creative Commons CC0 (http://creativecommons.org/publicdomain/zero/1.0/)
 use strict; use warnings FATAL => 'all'; use 5.012;
 use feature qw(switch state);
 
+# This must appear before any declarations which might alias user variables 
+# referenced in strings interpolated by svis or dvis.
+package DB;
+sub DB_Vis_Evalwrapper {   
+  # A separate sub so no lexicals are visible
+  eval $Vis::string_to_eval;
+}
+
+package Vis;
 # POD documentation follows __END__
-# _names are internal methods, __names are functions
 
 use utf8;
 # This file contains Unicode characters in debug-output strings (e.g. « and »).
@@ -15,194 +23,7 @@ use utf8;
 #   use open ':std' => ':locale';
 # or equivalent to encode wide characters for your terminal.
 
-package Vis;
-# See below for $VERSION
-
-package DB;
-
-# This must appear before any declarations which might alias user variables 
-# referenced in strings interpolated by svis or dvis.
-#
-sub DB_Vis_Evalwrapper {   
-  # A separate sub so no lexicals are visible
-  eval $Vis::string_to_eval;
-}
-
-# eval a string in the user's context and return the result.  The nearest
-# non-DB frame must be the original user's call; this is accomplished by
-# using "goto &DB::DB_Vis_Interpolate" in the entry-point sub.
-sub DB_Vis_Eval($$) {
-  my ($label_for_errmsg, $evalarg) = @_;
-  Carp::confess("Vis bug:empty evalarg") if $evalarg eq "";
-  # Many ideas here taken from perl5db.pl
-
-  # Find the closest non-DB caller.  The eval will be done in that package.
-  # Find the next caller further up which has arguments (i.e. wasn't doing
-  # "&subname;"), and set our local @_ to be those arguments
-  my ($distance, $pkg, $fname, $lno);
-  for ($distance = 0 ; ; $distance++) {
-    ($pkg, $fname, $lno) = caller($distance); 
-    last if $pkg ne "DB";
-  }
-  while() {
-    $distance++;
-    my ($p, $hasargs) = (caller($distance))[0,4];
-    if (! defined $p){
-      @DB::args = ('<@_ is not defined in the outer block>');
-      last
-    }
-    last if $hasargs;
-  }
-  local *_ = [ @DB::args ];  # copy in case of recursion
-
-  # &SaveAndResetPunct was called in DB_Vis_Interpolate
-  &Vis::RestorePunct;
-  $Vis::user_dollarat = $@; # 'eval' will reset $@
-  my @result = do {
-    local @Vis::result;
-    local $Vis::string_to_eval = 
-      "package $pkg; "
-     .' $@ = $Vis::user_dollarat; '
-     .' @Vis::result = '.$evalarg.';'
-     .' $Vis::user_dollarat = $@; '  # possibly changed by a tie handler
-     ;
-     &DB_Vis_Evalwrapper;
-say "RAW errmsg:$@\nstring_to_eval=«$Vis::string_to_eval»" if $@;
-     @Vis::result
-  };
-  my $errmsg = $@;
-  &Vis::SaveAndResetPunct;
-  $Vis::save_stack[-1]->[0] = $Vis::user_dollarat;
-
-  if ($errmsg) {
-    $errmsg =~ s/ at \(eval \d+\) line \d+[^\n]*\n?\z//s;
-    Carp::confess("${label_for_errmsg}: Error interpolating '$evalarg' at $fname line $lno:\n$errmsg\n");
-  }
-
-  @result;
-}# DB_Vis_Eval
-
-sub DB_Vis_Interpolate {
-  (my $self, local $_, my $s_or_d) = @_;
-  my sub u(_) { $_[0] // "undef" }
-  &Vis::SaveAndResetPunct;
-
-  # cf man perldata
-  my $userident_re = qr/ (?: (?=\p{Word})\p{XID_Start} | _ )
-                         (?: (?=\p{Word})\p{XID_Continue}  )* /x;
-  
-  my $varname_re = qr/ ${userident_re} | \^[A-Z] | [0-9]+
-                                       | [-+!().,\/:<>?\[\]\^\\]
-                                       /x;
-  
-  my $varname_or_refexpr_re = qr/ ${varname_re} | ${Vis::curlies_re} /x;
-
-  return "<undef arg>" 
-    if ! defined;
-  if (/\b((?:ARRAY|HASH)\(0x[a-fA-F0-9]+\))/) {
-    state $warned=0;
-    Carp::carp("Warning: String passed to ${s_or_d}vis may have been interpolated by Perl\n(use 'single quotes' to avoid this)\n") unless $warned++;
-  }
-  my $debug = $self->Debug;
-  my $useqq = $self->Useqq;
-  my $q = $useqq ? "" : "q";
-  my $funcname = $s_or_d . "vis" .$q;
-  my sub __check_notmissed($$) {
-    my ($plainstuff, $posn) = @_;
-    local $_ = $_;
-    $plainstuff !~ /(?<!\\)([\$\@\%])/
-      or Carp::confess("\n***Vis bug: Unparsed '$1' at offset ",u($posn),
-                       " ->",substr($_,$posn//0) );
-  }
-  my $result = "";
-  say "#Vis_Interp START «$_»" if $debug;
-  while (
-    /\G ( ( (?: [^\\\$\@\%] | \\[^\$\@\%] )*+ )
-          (?{ say "#Vis Interp: plain text «$^N» \\K" if $debug; })
-          \K
-        )
-        (?<expr>
-         # \x -> x for any x
-         \\.
-         |
-         # $#arrayvar $#$$...refvarname $#{aref expr} $#$$...{ref2ref expr}
-         #
-         (?: \$\#\$*+\K ${varname_or_refexpr_re} )
-         |
-         # $scalarvar $$$...refvarname ${sref expr} $$$...{ref2ref expr}
-         #  followed by [] {} ->[] ->{} ->method() ... «zero or more»
-         #
-         (?:
-           \$++\K ${varname_or_refexpr_re}
-           (?:
-             (?: ->\K(?: ${$Vis::curliesorsquares_re} | ${userident_re}${Vis::parens_re}? ))
-             |
-             ${$Vis::curliesorsquares_re}
-           )*
-         )
-         |
-         # @arrayvar @$$...varname @{aref expr} @$$...{ref2ref expr}
-         #  followed by [] {} «zero or one»
-         #
-         (?: \@\$*+\K ${varname_or_refexpr_re} ${$Vis::curliesorsquares_re}? )
-         |
-         # %hash %$hrefvar %{href expr} %$$...sref2hrefvar «no follow-ons»
-         (?: \%\$*+\K ${varname_or_refexpr_re} )
-        )
-    /xsgc) {
-    #say "#Vis Interp: plain text «$1»" if $debug;
-    BUG HERE: Need to eval "plain" text in "dq string" to catch \\ \n \t etc.
-    $result .= $1;
-    __check_notmissed($1, pos()-length($+{expr})-length($1));
-    if (my $expr = $+{expr}) {{
-      say "#Vis Interp: expr «$expr»" if $debug;
-      my $sigl = substr($expr,0,1);
-      if ($sigl eq '\\') {
-        Carp::confess("bug") unless length($expr)==2; 
-        $result .= substr($expr,1,1);
-        last
-      }
-      if ($s_or_d eq 'd') {
-        local $_ = $expr;
-        # Show "foo=<value>" for "$foo" but otherwise use entire expr as label
-        $result .= (/^\$(${userident_re})\z/ ? $1 : $expr)."=";
-      }
-      # Reduce indent before first wrap to account for stuff alrady there
-      my $leftwid = length($result) - rindex($result,"\n") - 1;
-      my $maxwidth = $self->{Maxwidth};
-      local $self->{Maxwidth1} = $self->{Maxwidth1} // $maxwidth;
-      if ($maxwidth) {
-        $self->{Maxwidth1} -= $leftwid if $leftwid < $self->{Maxwidth1}
-      }
-      say "${s_or_d}vis: leftwid=$leftwid, temp Maxwidth1=",u($Vis::Maxwidth1)," Useqq=",u($self->Useqq) if $debug;
-
-      if ($sigl eq '$') {
-        $result .= $self->vis( DB::DB_Vis_Eval($funcname, $expr) );
-      }
-      elsif ($sigl eq '@') {
-        # FIXME verify that multi-value eval results work
-        $result .= $self->avis( DB::DB_Vis_Eval($funcname, $expr) );
-      }
-      elsif ($sigl eq '%') {
-        $result .= $self->hvis( DB::DB_Vis_Eval($funcname, $expr) );
-      }
-      else { Carp::confess("BUG:sigl='$sigl'") }
-    }}
-  }
-  if (!defined(pos) || pos() < length($_)) {
-    my $leftover = substr($_,pos()//0);
-    #say "LEFTOVER: «$leftover»";
-    __check_notmissed($leftover,pos);
-    $result .= $leftover;
-  }
-
-  &Vis::RestorePunct;
-  $result
-}#DB::DB_Vis_Interpolate
-
-package Vis;
-
-use version 0.77; our $VERSION = version->declare(sprintf "v%s", q$Revision: 2.4 $ =~ /(\d[.\d]+)/);
+use version 0.77; our $VERSION = version->declare(sprintf "v%s", q$Revision: 2.5 $ =~ /(\d[.\d]+)/);
 
 use Exporter;
 use Carp;
@@ -282,7 +103,7 @@ sub VisType {
 }
 
 sub debugvis(_) {  # for our internal debug messages
-  my $s = Data::Dumper->new([shift])->Useqq(1)->Terse(1)->Indent(0)->Maxdepth(2)->Dump;
+  my $s = Data::Dumper->new([shift])->Useqq(1)->Terse(1)->Indent(0)->Maxdepth(0)->Dump;
   chomp $s;
   $s
 }
@@ -404,8 +225,10 @@ sub _config_defaults {
     ->Truncsuffix($Truncsuffix)
 }
 
-my $magic_num_prefix = "NUM:".\&new;        # "NUM:CODE(0x.......)"
-my $magic_numstr_prefix = "NUMSTR:".\&new;
+#my $unique = join "", map { chr ord('A')+$_ } (split //,rand()^refaddr(\&new));
+my $unique = refaddr \&new;
+my $magic_num_prefix    = "<NUMMagic$unique>";
+my $magic_numstr_prefix = "<NUMSTRMagic$unique>";
 
 sub __walk_worker($$$$$) {
   my (undef, $detection_pass, $stringify, $maxstringwidth, $truncsuf) = @_;
@@ -497,12 +320,13 @@ sub Dump {
   # and insert the user's Pad before each line.
   my $pad = $self->Pad();
   $self->Indent(0)->Pad("");
-  say "##Vis b4 SUPER: Indent=",$self->Indent(), " Useqq=",u($self->Useqq), " Pad=",debugvis($self->Pad) if $debug;
+  #say "##Vis b4 SUPER: Indent=",$self->Indent(), " Useqq=",u($self->Useqq), " Pad=",debugvis($self->Pad)," Values=(",join(",", map{u} $self->Values),")" if $debug;
   {
     my ($sAt, $sQ) = ($@, $?); # Data::Dumper corrupts these
     $_ = $self->SUPER::Dump;
     ($@, $?) = ($sAt, $sQ);
   }
+  #say "##Vis After SUPER ", Vis::debugvis($_);
   $self->Pad($pad);
   $_ = $self->_postprocess_DD_result($_);
 
@@ -630,7 +454,9 @@ my $nonquote_atom_re
       = qr/ (?: [^,;\{\}\[\]"'\s]++ | \\["'] )++ | [,;\{\}\[\]] /xs; 
 my $atom_re = qr/ $quote_re | $nonquote_atom_re /x;
 
-sub __adjust_spacing() { # edits $_ in place
+my $indent_unit = 2;
+
+sub __insert_spaces() { # edits $_ in place
   #FIXME BUG HERE might corrupt interior of quoted strings
   
   ### TEMP? Verify that we can parse everything
@@ -638,20 +464,23 @@ sub __adjust_spacing() { # edits $_ in place
   /\A(?: ${atom_re} | \s+ )+\z/xs or oops "regex problem($_)";
 
   s( $quote_re ?+ \K 
-     ( (?: \bsub\s*${curlies_re} | $nonquote_atom_re | \s+)*+ )
+     ( \bsub\s*${curlies_re} | (?: $nonquote_atom_re | \s+)*+ )
    )
    ( do {
        local $_ = $1;
-       s/\s+/ /sg;   # remove all unnecessary spaces
-       s/\ (?![\$\@])//g;
-       s/=>/ => /g;  # put back around  =>
-       s/\],(?!\ )/\], /g; # after ],
+       s/\ (?![\$\@])//g;                        # FIXME: is this correct?
+       s/^sub\ ?(${curlies_re})/"sub { ".substr($1,1,length($1)-2)." }"/eg;
+       s/=>/ => /g;
+       s/(=>\s*[-.\w\\]+,)/$1 /g;  #  key => value,<add space here>
+       s/([\]\}],)(?!\ )/$1 /g; # after ], or },
        #s/,(?!\ )/, /g;      # space after every comma
-       s/\bsub\ ?(${curlies_re})/"sub { ".substr($1,1,length($1)-2)." }"/eg;
+       # Insert a space after an opening bracket at start of line, so the
+       # first item will line up with the indentation of stuff at that level.
+       s/\ +/ /sg;           # collapse muiltiple spaces
        $_
      }
    )exsg;
-}#__adjust_spacing
+}#__insert_spaces
 
 my $foldunit_re = qr/${atom_re}(?: , | \s*=>)?+/x;
 
@@ -665,7 +494,6 @@ sub _fold { # edits $_ in place
   #$maxwid = INT_MAX if $maxwid==0;  # no folding, but maybe space adjustments
   $maxwid = max(0, $maxwid - length($pad));
   my $smidgen = max(5, int($maxwid / 6));
-  my $indent_unit = 2;
   #say "#VisFold WIDTHS: mw=$maxwid sm=$smidgen, iu=$indent_unit maxw=",u($maxwidth), " maxw1=",u($maxwidth1);
 
   pos = 0;
@@ -673,13 +501,18 @@ sub _fold { # edits $_ in place
   my $next_indent = 0;
   our $nind; local $nind = 0;
   my sub __ind_adjustment(;$) {
-    say "#VisFold: @{_}atom «$^N» pos=${\pos} p_indent=$curr_indent n_indent=$next_indent nind=$nind mw=$maxwid,$smidgen" if $debug;
+    if ($debug) {
+      my $len = $curr_indent + pos() - $-[0];
+      say "#VisFold: @{_}atom «$^N» len=$len pos=${\pos} \$-[0]=$-[0] c_indent=$curr_indent n_indent=$next_indent nind=$nind mw=$maxwid,$smidgen";
+    }
     local $_ = $^N;;
     /^["']/ ? 0 : ( (()=/[\[\{\(]/) - (()=/[\]\}\)]/) )*$indent_unit;
   }
   s(\G
-    #(?{ say "##Visfold at top: pos=",u(pos)," ->«",substr($_,pos//0),"»" })
-    (?{ local $nind = $next_indent }) # initialize localized var
+    (?{ say "##Visfold at top: pos=",u(pos)," ->«",substr($_,pos//0),"»"
+          if $debug;
+        local $nind = $next_indent;  # initialize localized var
+    })
     (
       \s*(${foldunit_re})  # at least one even if too wide
       (?{ local $nind = $nind + __ind_adjustment("First ") })
@@ -699,6 +532,8 @@ sub _fold { # edits $_ in place
        my $indent = $curr_indent;
        $curr_indent = $next_indent;
        $maxwid = max(0, $maxwidth - length($pad)); # stop using maxwidth1
+       say "#VisFold: --folding-- after «$1» pos ${\pos} new mw=$maxwid" 
+         if $debug;
        $pad . (" " x $indent) . $1 ."\n"
      }
    )exsg
@@ -744,7 +579,7 @@ sub _postprocess_DD_result {
   s/\Q$magic_numstr_prefix\E//sg;
 
   __unescape_printables;
-  __adjust_spacing;
+  __insert_spaces;
   $self->_fold();
 
   if (($vistype//"s") eq "s") { }
@@ -770,25 +605,525 @@ my $sane_cH = $^H;
 our @save_stack;
 sub SaveAndResetPunct() {
   # Save things which will later be restored, and reset to sane values.
-  push @save_stack, [ $@, $!+0, $^E+0, $,, $/, $\, $^W, $^H ];
+  push @save_stack, [ $@, $!+0, $^E+0, $,, $/, $\, $^W ];
   $,  = "";       # output field separator is null string
   $/  = "\n";     # input record separator is newline
   $\  = "";       # output record separator is null string
   $^W = $sane_cW; # our load-time warnings
-  $^H = $sane_cH; # our load-time strictures etc.
+  #$^H = $sane_cH; # our load-time strictures etc.
 }
 sub RestorePunct() {
-  ( $@, $!, $^E, $,, $/, $\, $^W, $^H ) = @{ pop @save_stack };
+  ( $@, $!, $^E, $,, $/, $\, $^W ) = @{ pop @save_stack };
 }
+
+package DB;
+# eval a string in the user's context and return the result.  The nearest
+# non-DB frame must be the original user's call; this is accomplished by
+# using "goto &DB::DB_Vis_Interpolate" in the entry-point sub.
+sub DB_Vis_Eval($$) {
+  my ($label_for_errmsg, $evalarg) = @_;
+  Carp::confess("Vis bug:empty evalarg") if $evalarg eq "";
+  # Many ideas here taken from perl5db.pl
+
+  # Find the closest non-DB caller.  The eval will be done in that package.
+  # Find the next caller further up which has arguments (i.e. wasn't doing
+  # "&subname;"), and set our local @_ to be those arguments
+  my ($distance, $pkg, $fname, $lno);
+  for ($distance = 0 ; ; $distance++) {
+    ($pkg, $fname, $lno) = caller($distance); 
+    last if $pkg ne "DB";
+  }
+  while() {
+    $distance++;
+    my ($p, $hasargs) = (caller($distance))[0,4];
+    if (! defined $p){
+      @DB::args = ('<@_ is not defined in the outer block>');
+      last
+    }
+    last if $hasargs;
+  }
+  local *_ = [ @DB::args ];  # copy in case of recursion
+
+  # &SaveAndResetPunct was called in DB_Vis_Interpolate
+  &Vis::RestorePunct;
+  $Vis::user_dollarat = $@; # 'eval' will reset $@
+  my @result = do {
+    local @Vis::result;
+    local $Vis::string_to_eval = 
+      "package $pkg; "
+     .' $@ = $Vis::user_dollarat; '
+     .' @Vis::result = '.$evalarg.';'
+     .' $Vis::user_dollarat = $@; '  # possibly changed by a tie handler
+     ;
+     &DB_Vis_Evalwrapper;
+     #say "RAW errmsg:$@\nstring_to_eval=«$Vis::string_to_eval»" if $@;
+     @Vis::result
+  };
+  my $errmsg = $@;
+  &Vis::SaveAndResetPunct;
+  $Vis::save_stack[-1]->[0] = $Vis::user_dollarat;
+
+  if ($errmsg) {
+    #warn "##RAW ERRMSG:«$errmsg» evalarg=«$evalarg» at ${fname}:$lno\n";
+    $errmsg =~ s/ at \(eval \d+\) line \d+[^\n]*\n?\z//s;
+    #warn "##COOKED MSG:«$errmsg»\n";
+    Carp::confess("${label_for_errmsg}: Error interpolating '$evalarg' at $fname line $lno:\n$errmsg\n");
+  }
+
+  wantarray ? @result : (do{die "bug" if @result>1}, $result[0])
+}# DB_Vis_Eval
+
+sub DB_Vis_Interpolate {
+  my ($self, $input, $s_or_d) = @_;
+  return "<undef arg>" if ! defined $input;
+
+  my sub u(_)       { &Vis::u  }
+  my sub oops(;@)   { goto &Vis::oops }
+  my sub confess(@) { goto &Carp::confess }
+  my sub carp(@)    { goto &Carp::carp }
+
+  # cf man perldata
+  state $userident_re = qr/ (?: (?=\p{Word})\p{XID_Start} | _ )
+                            (?: (?=\p{Word})\p{XID_Continue}  )* /x;
+  
+  state $pkgname_re = qr/ ${userident_re} (?: :: ${userident_re} )* /x;
+
+  state $anyvname_re = 
+    qr/ ${pkgname_re} | [0-9]+ | \^[A-Z] 
+                      | [-+!\$\&\;i"'().,\@\/:<>?\[\]\~\^\\] /x;
+  
+  state $anyvname_or_refexpr_re = qr/ ${anyvname_re} | ${Vis::curlies_re} /x;
+
+  &Vis::SaveAndResetPunct;
+
+  my $debug = $self->Debug;
+  my $useqq = $self->Useqq;
+  my $q = $useqq ? "" : "q";
+  my $funcname = $s_or_d . "vis" .$q;
+  my @pieces;  # list of [visfuncname or "", inputstring]
+  { local $_ = $input;
+    if (/\b((?:ARRAY|HASH)\(0x[a-fA-F0-9]+\))/) {
+      state $warned=0;
+      carp("Warning: String passed to ${s_or_d}vis may have been interpolated by Perl\n(use 'single quotes' to avoid this)\n") unless $warned++;
+    }
+    say "#Vis_Interp START «$_»" if $debug;
+    while (
+      /\G (
+           # Stuff without variable references (might include \n etc. escapes)
+           ( (?: [^\\\$\@\%] | \\[^\$\@\%] )++ )
+           |
+           # $#arrayvar $#$$...refvarname $#{aref expr} $#$$...{ref2ref expr}
+           #
+           (?: \$\#\$*+\K ${anyvname_or_refexpr_re} )
+           |
+           # $scalarvar $$$...refvarname ${sref expr} $$$...{ref2ref expr}
+           #  followed by [] {} ->[] ->{} ->method() ... «zero or more»
+           # EXCEPT $$<punctchar> is parsed as $$ followed by <punctchar>
+           #
+           (?:
+             (?: \$\$++ ${pkgname_re} \K | \$ ${anyvname_or_refexpr_re} \K )
+             (?:
+               (?: ->\K(?: ${$Vis::curliesorsquares_re} | ${userident_re}${Vis::parens_re}? ))
+               |
+               ${$Vis::curliesorsquares_re}
+             )*
+           )
+           |
+           # @arrayvar @$$...varname @{aref expr} @$$...{ref2ref expr}
+           #  followed by [] {} «zero or one»
+           #
+           (?: \@\$*+\K ${anyvname_or_refexpr_re} ${$Vis::curliesorsquares_re}? )
+           |
+           # %hash %$hrefvar %{href expr} %$$...sref2hrefvar «no follow-ons»
+           (?: \%\$*+\K ${anyvname_or_refexpr_re} )
+          ) /xsgc) 
+    {
+      local $_ = $1; oops unless length() > 0;
+      say "#Vis Interp: expr «$_»" if $debug;
+      if (/^[\$\@\%]/) {
+        my $sigl = substr($_,0,1);
+        if ($s_or_d eq 'd') {
+          # Inject a "plain text" fragment containing the dvis "expr=" prefix,
+          # omitting the '$' sigl if the expr is a plain '$name'.
+          push @pieces, ["", 
+                         "q(".(/^\$(?!_)(${userident_re})\z/ ? $1 : $_)."=)"];
+        }
+        if ($sigl eq '$') {
+          push @pieces, ["vis", $_];
+        }
+        elsif ($sigl eq '@') {
+          # FIXME verify that multi-value eval results work
+          push @pieces, ["avis", $_];
+        }
+        elsif ($sigl eq '%') {
+          push @pieces, ["hvis", $_];
+        }
+        else { confess "BUG:sigl='$sigl'"; }
+      } else {
+        if (/^.+?(?<!\\)([\$\@\%])/) { confess "Vis bug: Missed '$1' in «$_»" }
+        push @pieces, ["", "\"${1}\""];
+      }
+    }
+    if (!defined(pos) || pos() < length($_)) {
+      my $leftover = substr($_,pos()//0);
+      confess "Vis Bug:LEFTOVER «$leftover»";
+    }
+  }# local $_
+
+  my $result = "";
+  foreach my $p (@pieces) {
+    my ($methname, $arg) = @$p;
+    if ($methname eq "") {
+      my @aa = DB::DB_Vis_Eval($funcname, $arg);
+      $result .= DB::DB_Vis_Eval($funcname, $arg);
+    } else {
+      # Reduce indent before first wrap to account for stuff alrady there
+      my $leftwid = length($result) - rindex($result,"\n") - 1;
+      my $maxwidth = $self->{Maxwidth};
+      local $self->{Maxwidth1} = $self->{Maxwidth1} // $maxwidth;
+      if ($maxwidth) {
+        $self->{Maxwidth1} -= $leftwid if $leftwid < $self->{Maxwidth1}
+      }
+      say "${s_or_d}vis: leftwid=$leftwid, temp Maxwidth1=",u($Vis::Maxwidth1)," Useqq=",u($self->Useqq) if $debug;
+
+      $result .= $self->$methname( DB::DB_Vis_Eval($funcname, $arg) );
+    }    
+  }
+
+  &Vis::RestorePunct;
+  $result
+}#DB::DB_Vis_Interpolate
 
 1;
  __END__
 
-TODO: put updated =pod back
+=encoding UTF-8
+
+=head1 NAME
+
+Vis - Human-oriented debug utilities using Data::Dumper
+
+=head1 SYNOPSIS
+
+  use Vis;
+
+  @ARGV = ('-i', '/file/path');
+  my %hash = ( 'z'x20 => 42, 
+               complicated => ['lengthy', 'stuff', [1..35]], 'a'x25 => 43 );
+  my $ref = \%hash;
+
+  # Interpolate strings, replacing $scalar @array and %hash etc.
+  # with massaged Data::Dumper output.  
+  
+  say svis 'FYI ref is $ref\nThat hash is: %hash\nArgs are @ARGV'; 
+    -->FYI ref is { aaaaaa... => 43, ... }  
+       That hash is: (aaaaaa... => 43, ... )
+       Args are ("-i", "/file/path")
+
+  # dvis (d for debug) auto-labels values 
+  
+  say dvis '$ref\n%hash\n@ARGV';  
+    -->ref={ aaaaaa... => 43, ... }  
+       %hash=(aaaaaa... => 43, ... )
+       @argv=("-i", "/file/path")
+
+  # Format one item at a time.  Data::Dumper is called in Terse(1) mode
+  # and the result wrapped to fit the terminal width.
+  $Vis::Maxwidth = 40;  # overrides terminal width
+
+  say vis $hash{complicated};
+    -->["lengthy","stuff",[1,2,3,4,5,6,7,8,9,
+        10,11,12,13,14,15,16,17,18,19,20,21,
+        22,23,24,25,26,27,28,29,30,31,32,33,
+        34,35]]
+
+  say avis @ARGV;
+    -->("-i","/file/path")
+
+  say hvis %hash;
+    -->(aaaaaaaaaaaaaaaaaaaaaaaaa => 43,
+         complicated => ["lengthy","stuff",
+           [1,2,3,4,5,6,7,8,9,10,11,12,13,14,
+             15,16,17,18,19,20,21,22,23,24,25,
+             26,27,28,29,30,31,32,33,34,35]],
+         zzzzzzzzzzzzzzzzzzzz => 42)
+
+  # Prefer single-quoted strings
+  say svisq 'The path is $ARGV[1]';
+    -->The path is '/file/path'
+  say dvisq 'The path is $ARGV[1]';
+    -->The path is ARGV[1]='/file/path'
+  say visq $ARGV[1];
+    -->'/file/path'
+  say avisq @ARGV;
+    -->
+  say hvisq %hash;
+    -->(aaaaaaaaaaaaaaaaaaaaaaaaa => 43,
+         complicated => ['lengthy','stuff', ... )
+
+  # Math::BigInt etc. are shown in stringified form. prefixed by a tag
+  { use bigint;
+    my $struct = { debt => 999_999_999_999_999_999.02 }; 
+
+    say vis $struct;
+       --> {debt => (Math::BigFloat)999999999999999999.02}
+    
+    # disable stringifying objects
+    $Vis::Stringify = "";
+    say vis $struct;
+       --> {debt => bless({ ... }, 'Math::BigFloat')}
+  }
+
+  # Data::Dumper output is "unescaped" so printable wide characters
+  # appear as themselves instead of \x{ABCD}
+  use open IO => ':locale';  # Encode wide characters for your tty
+  use utf8;                  # This Perl source contains Unicode literals
+  my $h = {msg => "Just let me read my Unicode ☻ ☺ 😊 and \N{U+2757}!"};
+  say dvis '$h' ;
+    --> h={msg => "Just let me read my Unicode ☻ ☺ 😊 ❗"}
+
+  #-------- OO API --------
+  # The *same functions* can be called as methods on a pre-allocated
+  # object.  This lets you adjust configuration settings on a 
+  # case-by-case basis (rather than using the global config variables)
+  
+  say Vis->new()->MaxStringwidth(50)->Maxdepth($levels)->vis($datum);
+
+  #-------- UTILITIES --------
+  
+  say qsh($pathname);      # quote if needed for /bin/sh
+
+  # Change undef to "undef", but otherwise return the argument as-is
+  say u($might_be_undef);
+
+  # Quote arguments for the shell
+  system "ls -l ".join(" ", map{ qsh } 
+      ("My Documents", $ENV{HOME}, "Uck!", "Qu'ote", 'Qu"ote'));
+
+  # Quote arguments for the shell except leave ~ or ~username prefix
+  system "ls -l ".join(" ", map{ qshpath } ("~", "~sally/subdir"));
+
+  
+=head1 DESCRIPTION
+
+The C<Vis> package is a wrapper for C<Data::Dumper> with a more
+convenient/comfortable/human-oriented interface for causual debugging
+purposes (in the eyes of the beholder, of course).
+
+Or for any situation where structured data needs to be displayed 
+in a condensed, line-wrapped form.
+
+The output from C<Vis> is what comes from C<Data::Dumper> 
+modified as follows:
+
+=over 4
+
+=item *
+
+Entire structures are displayed on a single line if possible, otherwise 
+wrapped to the terminal width with indentation appropriate to the 
+structure level.
+
+A final newline is I<not> included.
+
+=item *
+
+"Safe" Unicode characters appear as themselves, instead of \x{ABCD} escapes.
+
+Note: Since the result may include 'wide characters', you must encode 
+the result before displaying it, as explained in C<perluniintro>.  
+For example with C<use IO ':utf8';> or C<use IO ':locale';>.
+
+=item *
+
+Objects are stringified if they provide a stringification operator.  
+For example, numbers declared within the scope of C<use bignum;> 
+will appear in readable form rather than showing the internals of
+the implementation.  
+
+Stingified objects are prefixed by "(classname)" to make clear what
+has happened.
+
+=item *
+
+Hash keys are sorted with numeric "components" sorted numerically,
+for example "A.20" sorts before "A.100".
+ 
+=back
+
+=head1 FUNTIONS
+
+=head2 svis 'string to be interpolated'
+
+Returns the argument with variable references and escapes interpolated
+as in in Perl double-quotish strings except that variable values are
+formatted using C<vis()> or C<avis()> for $ or @ expressions, respectively.
+
+In addition, C<%name> is interpolated using C<hvis()>.  
+
+Most complex
+reference expressions including slices and method calls are recognized, 
+for example C<< ${\@myarray}[42]->{$key}{$nextlevel}->method(...) >>.
+
+Strings are displayed in "double quoted" form. 
+Internally, Data::Dumper is called with C<Useqq(1)>.
+
+=head2 dvis 'string to be interpolated'
+
+The same as C<svis> but interpolated items are prefixed by a "label=".
+If the interpolated item is a simple scalar "$name" then the label will
+be "name=" without the '$' sigl; otherwise the complete item/expression
+is used as the label.
+
+=head2 vis
+
+=head2 vis SCALAREXPR
+
+Format a single single scalar (default $_).  
+The resulting string will not have a final newline.
+
+=head2 avis LIST
+
+Format an @array or other list as "(item, item, ...)";
+
+=head2 hvis LIST
+
+Format a %hash (or other list with an even 
+number of items) as "(key => value, ...)".
+
+=head2 svisq, dvisq, visq, avisq, hvisq
+
+Alternative forms which prefer to display strings in 'single quoted' form.
+
+Internally, Data::Dumper is called with C<Useqq(0)>, however if wide
+characters are present Data::Dumper may force "double quoted" form
+anyway, depending on the version of Data::Dumper.
+
+
+=head1 OBJECT-ORIENTED INTERFACES
+
+
+=head2 Vis->new()
+
+Creates a C<Vis> object with default initialization.  No arguments
+are permitted.
+
+All of the I<functions> described above can also be called as methods
+on a C<Vis> object (they examine the first argument to see if it is
+a C<Vis> object and act as a method if so).
+
+For example:
+
+   Vis->new()->Maxwidth(40)->avis(@ARGV);
+
+C<Vis> provides the following methods.
+Default values are given by global variables of the same name 
+(e.g. C<$Vis::Maxwidth>) which you can change at will.
+
+=head2 Vis->MaxStringwidth(INTEGER)
+
+=head2 Vis->Truncsuffix("...")
+
+Set the maximum length for displayed strings.  Longer strings are
+truncated and I<Truncsuffix> appended.
+
+=head2 Vis->Maxwidth(FOLDWIDTH)
+
+Set the fold width.  Default is the terminal width at time of first call.
+
+=head2 Vis->Stringify(BOOL)
+
+=head2 Vis->Stringify([list of class names])
+
+Control object stringification.  
+
+If a simple boolean (e.g. 0,1,undef,"")
+is given then stringification of all objects (which implement
+a stringification operator) is enabled/disabled.
+
+If a list of class names is given, only objects of those classes
+will be stringified.
+
+=head2 Vis->Debug(BOOL)
+
+True to enable internal debug tracing
+
+
+=head1 Data::Dumper pass-thru options
+
+The following Data::Dumper methods may be called.  Currently C<Vis>
+derives from C<Data::Dumper> and so these methods are inherited.  
+This may change in the future.
+
+
+=head2 Useqq(BOOL)
+
+True to prefer "double quoted" rather than 'single quoted' strings.
+C<Vis> defaults to true except for the 'q' variants.
+
+=head2 Sortkeys(subref)
+
+Control how hash keys are sorted.  See C<Data::Dumper> documentation.
+
+=head2 Quotekeys(subref)
+
+Control how hash keys are "quoted".
+
+
+You probably should not use any of the other C<Data::Dumper> methods
+on C<Vis> objects.
+
+=head1 UTILITY FUNCTIONS
+
+
+=head2 u
+
+=head2 u SCALAR
+
+Returns the argument ($_ by default) if it is defined, otherwise
+the string "undef".
+
+=head2 qsh
+
+=head2 qsh $string
+
+=head2 qshpath
+
+=head2 qshpath $path_with_tilde_prefix
+
+The string ($_ by default) is quoted if necessary for parsing
+by /bin/sh, which has different quoting rules than Perl.
+"Double quotes" are used when no escapes would be needed,
+otherwise 'single quotes'.
+
+An item which contains only "safe" characters is returned unchanged.
+
+References are formatted as with C<vis()> and the resulting string quoted.
+Undefined values appear as C<undef> without quotes.
+
+C<qshpath> is like C<qsh> except that an initial ~ or ~username is left
+unquoted.  Useful with shells such as bash or csh.
+
+
+=head1 SEE ALSO
+
+Data::Dumper
+
+=head1 CREDITS
+
+This module contains code snippets copied from perl5db.pl 
+Data::Dumper and JSON::PP.
+
+=head1 AUTHOR
+
+Jim Avera  (jim.avera AT gmail dot com)
+
+=cut
 
 #!/usr/bin/perl
 # Tester for module Vis.  TODO: Convert to CPAN module-test setup
 use strict; use warnings ; use feature qw(state say);
+srand(42);  # so reproducible
 say "FIXME: Test qr/.../ as values to be dumped.";
   #use Regexp::Common qw/RE_balanced/;
   #my $re = RE_balanced(-parens=>'(){}[]');
@@ -877,12 +1212,34 @@ sub timed_run(&$@) {
   if (wantarray) {return @result} else {return $result};
 }
 
+sub visMaxwidth() {
+  "Vis::Maxwidth=".u($Vis::Maxwidth)." Vis::Maxwidth1=".u($Vis::Maxwidth1)
+  .($Vis::Maxwidth ? ("\n".("." x $Vis::Maxwidth)) : "")
+}
+sub checkeq_literal($$$) {
+  my ($testdesc, $exp, $act) = @_;
+  $exp = show_white($exp); $act = show_white($act);
+  return unless $exp ne $act;
+  my $posn = 0;
+  for (0..length($exp)) {
+    my $c = substr($exp,$_,1);
+    last if $c ne substr($act,$_,1);
+    $posn = $c eq "\n" ? 0 : ($posn + 1);
+  }
+  @_ = ( "\n**************************************\n"
+        ."${testdesc}\n"
+        ."Expected:\n$exp«end»\n"
+        ."Actual  :\n$act«end»\n"
+        .(" " x $posn)."^\n"
+        .visMaxwidth()."\n" ) ;
+  goto &Carp::confess;
+}
+
 # check $code_display, qr/$exp/, $doeval->($code, $item) ;
 # { my $code="Vis->new->hvis(k=>'v');"; check $code, '(k => "v")',eval $code }
 sub check($$@) {
   my ($code, $expected_arg, @actual) = @_;
   local $_;  # preserve $1 etc. for caller
-  say "##TTcheck code=«$code»\n  expected_arg=«$expected_arg»\n  actual=(@actual)"; 
   my @expected = ref($expected_arg) eq "ARRAY" ? @$expected_arg : ($expected_arg);
   die "ARE WE USING THIS FEATURE?" if @actual > 1;
   die "ARE WE USING THIS FEATURE?" if @expected > 1;
@@ -899,16 +1256,10 @@ sub check($$@) {
       confess "\nTESTb FAILED: ",$code,"\n"
              ."Expected (Regexp):u\n".${expected}."«end»\n"
              ."Got:\n".u($actual)."«end»\n"
-             ."Vis::Maxwidth = $Vis::Maxwidth\n"
+             .visMaxwidth()
         unless $actual =~ ($expected // "Never Matched");
     } else {
-      confess "\nTESTc FAILED: $code\n"
-             ."Expected:\n".u($expected)."«end»\n"
-             ."Got:\n".u($actual)."«end»\n"
-             ."Vis::Maxwidth = $Vis::Maxwidth\n"
-             .Data::Dumper->new([$expected,$actual],['e','a'])->Dump
-        unless (!defined($actual) && !defined($expected))
-               || (defined($actual) && defined($expected) && $actual eq $expected);
+      checkeq_literal "TESTc FAILED: $code", $expected, $actual;
     }
   }
 }
@@ -1072,12 +1423,13 @@ foreach (
           ['Maxwidth',0,1,80,9999],
           ['MaxStringwidth',undef,0,1,80,9999],
           ['Truncsuffix',"","...","(trunc)"],
+          # FIXME: This will spew debug messages.  Trap them somehow??
           ['Debug',undef,0,1],
           # Now the 'q' interfaces force Useqq(0) internally
           # ['Useqq',0,1,'utf8'],
           ['Quotekeys',0,1],
           ['Sortkeys',0,1,sub{ [ sort keys %{shift @_} ] } ],
-          # Other than Indent(0) and Terse(1) are no longer supported
+          # Changing Indent and Terse are no longer allowed.
           # ['Terse',0,1],
           # ['Indent',0,1,2,3],
           ['Sparseseen',0,1,2,3],
@@ -1141,11 +1493,11 @@ our $maskedglobal_ar = \@maskedglobal_a;
 our $maskedglobal_hr = \%maskedglobal_h;
 our $maskedglobal_obj = bless {}, 'ShouldNeverBeUsedClass';
 
-our %localized_h = (key => "should never be seen");
-our @localized_a = ("should never be seen");
-our $localized_ar = \@localized_a;
-our $localized_hr = \%localized_h;
-our $localized_obj = \%localized_h;
+our %local_h = (key => "should never be seen");
+our @local_a = ("should never be seen");
+our $local_ar = \@local_a;
+our $local_hr = \%local_h;
+our $local_obj = \%local_h;
 
 our $a = "global-a";  # used specially used by sort()
 our $b = "global-b";
@@ -1319,8 +1671,8 @@ my $ratstr  = '1/9';
 # There was a bug for s/dvis called direct from outer scope, so don't use eval:
 check 
   'global divs %toplex_h',
-  '%toplex_h=("" => "Emp",A => 111,"B B" => 222,C => {d => 888,e => 999}, D => {},'."\n"
-    .' EEEEEEEEEEEEEEEEEEEEEEEEEE => \\42,F => \\\\\\43)',
+  '%toplex_h=("" => "Emp",A => 111, "B B" => 222, C => {d => 888, e => 999'."\n"
+    .'    }, D => {}, EEEEEEEEEEEEEEEEEEEEEEEEEE => \\42, F => \\\\\\43)',
   dvis('%toplex_h');
 check 'global divs @ARGV', q(@ARGV=("fake","argv")), dvis('@ARGV');
 check 'global divs $.', q($.=1234), dvis('$.');
@@ -1358,9 +1710,10 @@ sub doquoting($$) {
 
 sub show_white($) {
   local $_ = shift;
+  return "(Is undef)" unless defined;
   s/\t/<tab>/sg;
-  s/( +)$/"<space>" x length($1)/seg;
-  s/\n/<newline>/sg;
+  s/( +)$/"<space>" x length($1)/seg; # only trailing spaces
+  s/\n/<newline>\n/sg;
   $_
 }
 
@@ -1404,11 +1757,11 @@ sub get_closure(;$) {
   my $flex_ref = \$flex;
   my $ARGV_ref = \@ARGV;
   eval { die "FAKE DEATH\n" };  # set $@
-  my %sublex_h = %toplex_h;
-  my @sublex_a = @toplex_a;
-  my $sublex_ar = \@sublex_a;
-  my $sublex_hr = \%sublex_h;
-  my $sublex_obj = $toplex_obj;
+  my %sublexx_h = %toplex_h;
+  my @sublexx_a = @toplex_a;
+  my $sublexx_ar = \@sublexx_a;
+  my $sublexx_hr = \%sublexx_h;
+  my $sublexx_obj = $toplex_obj;
   our %subglobal_h = %toplex_h;
   our @subglobal_a = @toplex_a;
   our $subglobal_ar = \@subglobal_a;
@@ -1419,116 +1772,128 @@ sub get_closure(;$) {
   our $maskedglobal_ar = \@maskedglobal_a;
   our $maskedglobal_hr = \%maskedglobal_h;
   our $maskedglobal_obj = $toplex_obj;
-  local %localized_h = %toplex_h;
-  local @localized_a = @toplex_a;
-  local $localized_ar = \@toplex_a;
-  local $localized_hr = \%localized_h;
-  local $localized_obj = $toplex_obj;
+  local %local_h = %toplex_h;
+  local @local_a = @toplex_a;
+  local $local_ar = \@toplex_a;
+  local $local_hr = \%local_h;
+  local $local_obj = $toplex_obj;
 
   my @tests = (
-    [ q(aaa\\\\bbb), q(aaa\bbb) ],
+    [ __LINE__, q(aaa\\\\bbb), q(aaa\bbb) ],
 
     #[ q($unicode_str\n), qq(unicode_str=\" \\x{263a} \\x{263b} \\x{263c} \\x{263d} \\x{263e} \\x{263f} \\x{2640} \\x{2641} \\x{2642} \\x{2643} \\x{2644} \\x{2645} \\x{2646} \\x{2647} \\x{2648} \\x{2649} \\x{264a} \\x{264b} \\x{264c} \\x{264d} \\x{264e} \\x{264f} \\x{2650}\"\n) ],
-    [ q($unicode_str\n), qq(unicode_str="${unicode_str}"\n) ],
+    [__LINE__, q($unicode_str\n), qq(unicode_str="${unicode_str}"\n) ],
 
-    # Now Data::Dumper outputs \x{...} escapes instead of octal
-    #[ q($byte_str\n), qq(byte_str=\"\\n\\13\\f\\r\\16\\17\\20\\21\\22\\23\\24\\25\\26\\27\\30\\31\\32\\e\\34\\35\\36\"\n) ],
-    [ q($byte_str\n), qq(byte_str=\"\\n\\x{B}\\f\\r\\x{E}\\x{F}\\x{10}\\x{11}\\x{12}\\x{13}\\x{14}\\x{15}\\x{16}\\x{17}\\x{18}\\x{19}\\x{1A}\\e\\x{1C}\\x{1D}\\x{1E}\"\n) ],
+    [__LINE__, q(unicodehex_str=\"\\x{263a}\\x{263b}\\x{263c}\\x{263d}\\x{263e}\\x{263f}\\x{2640}\\x{2641}\\x{2642}\\x{2643}\\x{2644}\\x{2645}\\x{2646}\\x{2647}\\x{2648}\\x{2649}\\x{264a}\\x{264b}\\x{264c}\\x{264d}\\x{264e}\\x{264f}\\x{2650}\"\n), qq(unicodehex_str="${unicode_str}"\n) ],
 
-    [ q($flex\n), qq(flex=\"Lexical in sub f\"\n) ],
-    [ q($$flex_ref\n), qq(\$\$flex_ref=\"Lexical in sub f\"\n) ],
-    [ q($_ $ARG\n), qq(\$_=\"GroupA.GroupB\" ARG=\"GroupA.GroupB\"\n) ],
-    [ q($a\n), qq(a=\"global-a\"\n) ],
-    [ q($b\n), qq(b=\"global-b\"\n) ],
-    [ q($1\n), qq(\$1=\"GroupA\"\n) ],
-    [ q($2\n), qq(\$2=\"GroupB\"\n) ],
-    [ q($3\n), qq(\$3=undef\n) ],
-    [ q($&\n), qq(\$&=\"GroupA.GroupB\"\n) ],
-    [ q(${^MATCH}\n), qq(\${^MATCH}=\"GroupA.GroupB\"\n) ],
-    [ q($.\n), qq(\$.=1234\n) ],
-    [ q($NR\n), qq(NR=1234\n) ],
-    [ q($/\n), qq(\$/=\"\\n\"\n) ],
-    [ q($\\\n), qq(\$\\=undef\n) ],
-    [ q($"\n), qq(\$\"=\" \"\n) ],
-    [ q($~\n), qq(\$~=\"STDOUT\"\n) ],
-    [ q($^\n), qq(\$^=\"STDOUT_TOP\"\n) ],
-    [ q($:\n), qq(\$:=\" \\n-\"\n) ],
-    [ q($^L\n), qq(\$^L=\"\\f\"\n) ],
-    [ q($?\n), qq(\$?=0\n) ],
-    [ q($[\n), qq(\$[=0\n) ],
-    [ q($$\n), qq(\$\$=$$\n) ],
-    [ q($^N\n), qq(\$^N=\"GroupB\"\n) ],
-    [ q($+\n), qq(\$+=\"GroupB\"\n) ],
-    [ q(@+ $#+\n), qq(\@+=(13,6,13) \$#+=2\n) ],
-    [ q(@- $#-\n), qq(\@-=(0,0,7) \$#-=2\n) ],
-    #[ q($;\n), qq(\$;=\"\\34\"\n) ],
-    [ q($;\n), qq(\$;=\"\\x{1C}\"\n) ],
-    [ q(@ARGV\n), qq(\@ARGV=(\"fake\",\"argv\")\n) ],
-    [ q($ENV{EnvVar}\n), qq(ENV{EnvVar}=\"Test EnvVar Value\"\n) ],
-    [ q($ENV{$EnvVarName}\n), qq(ENV{\$EnvVarName}=\"Test EnvVar Value\"\n) ],
-    [ q(@_\n), <<'EOF' ],  # N.B. Maxwidth was set to 72
-@_=(42,
-    [0,1,"C",
-     {"" => "Emp", A => 111, "B B" => 222,
-      C => {d => 888, e => 999}, D => {},
-      EEEEEEEEEEEEEEEEEEEEEEEEEE => \42, F => \\\43
-     },
-     [],[0,1,2,3,4,5,6,7,8,9]
-    ]
-   )
+    [__LINE__, q($byte_str\n), qq(byte_str=\"\\n\\13\\f\\r\\16\\17\\20\\21\\22\\23\\24\\25\\26\\27\\30\\31\\32\\e\\34\\35\\36\"\n) ],
+    #[__LINE__, q($byte_str\n), qq(byte_str=\"\\n\\x{B}\\f\\r\\x{E}\\x{F}\\x{10}\\x{11}\\x{12}\\x{13}\\x{14}\\x{15}\\x{16}\\x{17}\\x{18}\\x{19}\\x{1A}\\e\\x{1C}\\x{1D}\\x{1E}\"\n) ],
+
+    [__LINE__, q($flex\n), qq(flex=\"Lexical in sub f\"\n) ],
+    [__LINE__, q($$flex_ref\n), qq(\$\$flex_ref=\"Lexical in sub f\"\n) ],
+
+    [__LINE__, q($_ $ARG\n), qq(\$_=\"GroupA.GroupB\" ARG=\"GroupA.GroupB\"\n) ],
+    [__LINE__, q($a\n), qq(a=\"global-a\"\n) ],
+    [__LINE__, q($b\n), qq(b=\"global-b\"\n) ],
+    [__LINE__, q($1\n), qq(\$1=\"GroupA\"\n) ],
+    [__LINE__, q($2\n), qq(\$2=\"GroupB\"\n) ],
+    [__LINE__, q($3\n), qq(\$3=undef\n) ],
+    [__LINE__, q($&\n), qq(\$&=\"GroupA.GroupB\"\n) ],
+    [__LINE__, q(${^MATCH}\n), qq(\${^MATCH}=\"GroupA.GroupB\"\n) ],
+    [__LINE__, q($.\n), qq(\$.=1234\n) ],
+    [__LINE__, q($NR\n), qq(NR=1234\n) ],
+    [__LINE__, q($/\n), qq(\$/=\"\\n\"\n) ],
+    [__LINE__, q($\\\n), qq(\$\\=undef\n) ],
+    [__LINE__, q($"\n), qq(\$\"=\" \"\n) ],
+    [__LINE__, q($~\n), qq(\$~=\"STDOUT\"\n) ],
+    #20 :
+    [__LINE__, q($^\n), qq(\$^=\"STDOUT_TOP\"\n) ],
+    [__LINE__, q($:\n), qq(\$:=\" \\n-\"\n) ],
+    [__LINE__, q($^L\n), qq(\$^L=\"\\f\"\n) ],
+    [__LINE__, q($?\n), qq(\$?=0\n) ],
+    [__LINE__, q($[\n), qq(\$[=0\n) ],
+    [__LINE__, q($$\n), qq(\$\$=$$\n) ],
+    [__LINE__, q($^N\n), qq(\$^N=\"GroupB\"\n) ],
+    [__LINE__, q($+\n), qq(\$+=\"GroupB\"\n) ],
+    [__LINE__, q(@+ $#+\n), qq(\@+=(13,6,13) \$#+=2\n) ],
+    [__LINE__, q(@- $#-\n), qq(\@-=(0,0,7) \$#-=2\n) ],
+    #30 :
+    [__LINE__, q($;\n), qq(\$;=\"\\34\"\n) ],
+    #[__LINE__, q($;\n), qq(\$;=\"\\x{1C}\"\n) ],
+    [__LINE__, q(@ARGV\n), qq(\@ARGV=(\"fake\",\"argv\")\n) ],
+    [__LINE__, q($ENV{EnvVar}\n), qq(\$ENV{EnvVar}=\"Test EnvVar Value\"\n) ],
+    [__LINE__, q($ENV{$EnvVarName}\n), qq(\$ENV{\$EnvVarName}=\"Test EnvVar Value\"\n) ],
+    [__LINE__, q(@_\n), <<'EOF' ],  # N.B. Maxwidth was set to 72
+@_=(42,[0,1,"C",{"" => "Emp",A => 111, "B B" => 222, C => {d => 888,
+        e => 999}, D => {}, EEEEEEEEEEEEEEEEEEEEEEEEEE => \42, F =>
+      \\\43}, [], [0,1,2,3,4,5,6,7,8,9]])
 EOF
-    [ q($#_\n), qq(\$#_=1\n) ],
-    [ q($@\n), qq(\$\@=\"FAKE DEATH\\n\"\n) ],
+    [__LINE__, q($#_\n), qq(\$#_=1\n) ],
+    [__LINE__, q($@\n), qq(\$\@=\"FAKE DEATH\\n\"\n) ],
+    #37 :
     map({
       my ($LQ,$RQ) = (/^(.)(.)$/) or die "bug";
       map({
         my $name = $_;
         map({
           my ($dollar, $r) = @$_;
-          my $dolname_scalar = ($dollar ? "\$$dollar" : "").$name;
-          my $p = " " x length("?${dollar}${name}_?${r}");
-          [ qq(%${dollar}${name}_h${r}\\n), <<EOF ],
-\%${dollar}${name}_h${r}=("" => "Emp", A => 111, "B B" => 222,
-${p}  C => {d => 888, e => 999}, D => {},
-${p}  EEEEEEEEEEEEEEEEEEEEEEEEEE => \\42, F => \\\\\\43
-${p} )
+          my $dolname_scalar = $dollar ? "\$$name" : $name;
+          # Make total prefix length constant to avoid wrap variations
+          my $maxnamelen = 12;
+          my $spfx = "x" x (
+            (1+1+$maxnamelen+1)  # {dollar}$name{r}
+            - (length($dollar)+length($dolname_scalar)+length($r)) );
+          my $pfx = substr($spfx,0,length($spfx)-1);
+          #state $depth=0;
+          #say "##($depth) spfx=<$spfx> pfx=<$pfx> dollar=<$dollar> r=<$r> dns=<$dolname_scalar> n=<$name>"; $depth++;
+          
+          #my $p = " " x length("?${dollar}${name}_?${r}");
+          my $p = "";
+
+          [__LINE__, qq(${pfx}%${dollar}${name}_h${r}\\n), <<EOF ],
+${pfx}\%${dollar}${name}_h${r}=("" => "Emp",A => 111, "B B" => 222, C => {d => 888,
+${p}    e => 999}, D => {}, EEEEEEEEEEEEEEEEEEEEEEEEEE => \\42, F => \\\\\\43)
 EOF
-          [ qq(\@${dollar}${name}_a${r}\\n), <<EOF ],
-\@${dollar}${name}_a${r}=(0,1,"C",
-${p}  {"" => "Emp", A => 111, "B B" => 222,
-${p}   C => {d => 888, e => 999}, D => {},
-${p}   EEEEEEEEEEEEEEEEEEEEEEEEEE => \\42, F => \\\\\\43
-${p}  },
-${p}  [],[0,1,2,3,4,5,6,7,8,9]
-${p} )
+
+
+          [__LINE__, qq(${pfx}\@${dollar}${name}_a${r}\\n), <<EOF ],
+${pfx}\@${dollar}${name}_a${r}=(0,1,"C",{"" => "Emp",A => 111, "B B" => 222, C => {
+${p}      d => 888, e => 999}, D => {}, EEEEEEEEEEEEEEEEEEEEEEEEEE => \\42,
+${p}    F => \\\\\\43}, [], [0,1,2,3,4,5,6,7,8,9])
 EOF
-          [ qq(\$#${dollar}${name}_a${r}),    qq(\$#${dollar}${name}_a${r}=5)   ],
-          [ qq(\$#${dollar}${name}_a${r}\\n), qq(\$#${dollar}${name}_a${r}=5\n) ],
-          [ qq(\$${dollar}${name}_a${r}[3]{C}{e}\\n),
-            qq(${dolname_scalar}_a${r}[3]{C}{e}=999\n)
+
+          [__LINE__, qq(${pfx}\$#${dollar}${name}_a${r}),    
+            qq(${pfx}\$#${dollar}${name}_a${r}=5)   
           ],
-          [ qq(\$${dollar}${name}_a${r}[3]{C}{e}\\n),
-            qq(${dolname_scalar}_a${r}[3]{C}{e}=999\n)
+          [__LINE__, qq(${pfx}\$#${dollar}${name}_a${r}\\n), 
+            qq(${pfx}\$#${dollar}${name}_a${r}=5\n) 
           ],
-          [ qq(\$${dollar}${name}_a${r}[3]->{A}\\n),
-            qq(${dolname_scalar}_a${r}[3]->{A}=111\n)
+
+          [__LINE__, qq(${spfx}\$${dollar}${name}_a${r}[3]{C}{e}\\n),
+            qq(${spfx}\$${dolname_scalar}_a${r}[3]{C}{e}=999\n)
           ],
-          [ qq(\$${dollar}${name}_a${r}[3]->{$LQ$RQ}\\n),
-            qq(${dolname_scalar}_a${r}[3]->{$LQ$RQ}="Emp"\n)
+
+          [__LINE__, qq(${spfx}\$${dollar}${name}_a${r}[3]->{A}\\n),
+            qq(${spfx}\$${dolname_scalar}_a${r}[3]->{A}=111\n)
           ],
-          [ qq(\$${dollar}${name}_a${r}[3]{C}->{e}\\n),
-            qq(${dolname_scalar}_a${r}[3]{C}->{e}=999\n)
+          [__LINE__, qq(${spfx}\$${dollar}${name}_a${r}[3]->{$LQ$RQ}\\n),
+            qq(${spfx}\$${dolname_scalar}_a${r}[3]->{$LQ$RQ}="Emp"\n)
           ],
-          [ qq(\$${dollar}${name}_a${r}[3]->{C}->{e}\\n),
-            qq(${dolname_scalar}_a${r}[3]->{C}->{e}=999\n)
+          [__LINE__, qq(${spfx}\$${dollar}${name}_a${r}[3]{C}->{e}\\n),
+            qq(${spfx}\$${dolname_scalar}_a${r}[3]{C}->{e}=999\n)
           ],
-          [ qq(\@${dollar}${name}_a${r}[\$zero,\$one]\\n),
-            qq(\@${dollar}${name}_a${r}[\$zero,\$one]=(0,1)\n)
+          [__LINE__, qq(${spfx}\$${dollar}${name}_a${r}[3]->{C}->{e}\\n),
+            qq(${spfx}\$${dolname_scalar}_a${r}[3]->{C}->{e}=999\n)
           ],
-          [ qq(\@${dollar}${name}_h${r}{${LQ}A${RQ},${LQ}B B${RQ}}\\n),
-            qq(\@${dollar}${name}_h${r}{${LQ}A${RQ},${LQ}B B${RQ}}=(111,222)\n)
+          [__LINE__, qq(${spfx}\@${dollar}${name}_a${r}[\$zero,\$one]\\n),
+            qq(${spfx}\@${dollar}${name}_a${r}[\$zero,\$one]=(0,1)\n)
           ],
-        } (['',''], ['$','r'])
+          [__LINE__, qq(${spfx}\@${dollar}${name}_h${r}{${LQ}A${RQ},${LQ}B B${RQ}}\\n),
+            qq(${spfx}\@${dollar}${name}_h${r}{${LQ}A${RQ},${LQ}B B${RQ}}=(111,222)\n)
+          ],
+        }
+          #(['',''], ['$','r'])
+          (['$','r'],['',''])
         ), #map [$dollar,$r]
 
         ( $] >= 5.022001 && $] <= 5.022001
@@ -1537,69 +1902,72 @@ EOF
                      unless $warned++; ()
                   },())
             : (
-               [ qq(\$${name}_obj->meth ()), qq(${name}_obj->meth="meth_with_noargs" ()) ],
-               [ qq(\$${name}_obj->meth(42)), qq(${name}_obj->meth(42)=["methargs:",42]) ],
+               [__LINE__, qq(\$${name}_obj->meth ()), qq(\$${name}_obj->meth="meth_with_noargs" ()) ],
+               [__LINE__, qq(\$${name}_obj->meth(42)), qq(\$${name}_obj->meth(42)=["methargs:",42]) ],
               )
         ),
 
         map({
           my ($dollar, $r, $arrow) = @$_;
-          my $dolname_scalar = ($dollar ? "\$$dollar" : "").$name;
-          [ qq(\$${dollar}${name}_h${r}${arrow}{\$${name}_a[\$two]}{e}\\n),
-            qq(${dolname_scalar}_h${r}${arrow}{\$${name}_a[\$two]}{e}=999\n)
+          my $dolname_scalar = $dollar ? "\$$name" : $name;
+          [__LINE__, qq(\$${dollar}${name}_h${r}${arrow}{\$${name}_a[\$two]}{e}\\n),
+            qq(\$${dolname_scalar}_h${r}${arrow}{\$${name}_a[\$two]}{e}=999\n)
           ],
-          [ qq(\$${dollar}${name}_a${r}${arrow}[3]{C}{e}\\n),
-            qq(${dolname_scalar}_a${r}${arrow}[3]{C}{e}=999\n)
+          [__LINE__, qq(\$${dollar}${name}_a${r}${arrow}[3]{C}{e}\\n),
+            qq(\$${dolname_scalar}_a${r}${arrow}[3]{C}{e}=999\n)
           ],
-          [ qq(\$${dollar}${name}_a${r}${arrow}[3]{C}->{e}\\n),
-            qq(${dolname_scalar}_a${r}${arrow}[3]{C}->{e}=999\n)
+          [__LINE__, qq(\$${dollar}${name}_a${r}${arrow}[3]{C}->{e}\\n),
+            qq(\$${dolname_scalar}_a${r}${arrow}[3]{C}->{e}=999\n)
           ],
-          [ qq(\$${dollar}${name}_h${r}${arrow}{A}\\n),
-            qq(${dolname_scalar}_h${r}${arrow}{A}=111\n)
+          [__LINE__, qq(\$${dollar}${name}_h${r}${arrow}{A}\\n),
+            qq(\$${dolname_scalar}_h${r}${arrow}{A}=111\n)
           ],
         } (['$','r',''], ['','r','->'])
         ), #map [$dollar,$r,$arrow]
         }
-        qw(closure sublex toplex global subglobal maskedglobal localized
-           A::B::C::ABC)
+        qw(closure sublexx toplex global subglobal 
+           maskedglobal local A::B::C::ABC)
       ), #map $name
       } ('""', "''")
     ), #map ($LQ,$RQ)
   );
-  for my $tx (0..$#tests) {
-    my $test = $tests[$tx];
-    my ($dvis_input, $expected) = @$test;
-    #warn "##^^^^^^^^^^^ dvis_input='$dvis_input' expected='$expected'\n";
+  for my $test (@tests) {
+    my ($lno, $dvis_input, $expected) = @$test;
+    #warn "##^^^^^^^^^^^ lno=$lno dvis_input='$dvis_input' expected='$expected'\n";
 
     { local $@;  # check for bad syntax first, to avoid uncontrolled die later
       # For some reason we can't catch exceptions from inside package DB.
       # undef is returned but $@ is not set
+      # 3/5/22: The above comment may not longer be true; there might have been
+      #  a bug where $@ was not saved properly.  BUT VERIFY b4 deleting this comment.
       my $ev = eval { "$dvis_input" };
-      die "Bad test string:$dvis_input\nPerl can't interpolate it"
+      die "Bad test string:$dvis_input\nPerl can't interpolate it (lno=$lno)"
          .($@ ? ":\n  $@" : "\n")
         if $@ or ! defined $ev;
     }
 
     my sub punctbug($$$) {
       my ($varname, $act, $exp) = @_;
-      confess "ERROR (testing '$dvis_input'): $varname was not preserved (expected $exp, got $act)\n"
+      confess "ERROR (testing '$dvis_input' lno $lno): $varname was not preserved (expected $exp, got $act)\n"
     }
     my sub checkspunct($$$) {
       my ($varname, $actual, $expecting) = @_;
-      check "dvis('$dvis_input') : $varname NOT PRESERVED : ",
+      check "dvis('$dvis_input') lno $lno : $varname NOT PRESERVED : ",
             $actual//"<undef>", $expecting//"<undef>" ;
     }
     my sub checknpunct($$$) {
       my ($varname, $actual, $expecting) = @_;
       # N.B. check() compaares as strings
-      check "dvis('$dvis_input') : $varname NOT PRESERVED : ",
+      check "dvis('$dvis_input') lno $lno : $varname NOT PRESERVED : ",
             defined($actual) ? $actual+0 : "<undef>",
             defined($expecting) ? $expecting+0 : "<undef>" ;
     }
 
     for my $use_oo (0,1) {
       my $actual;
-      { # Verify that special vars are preserved and don't affect Vis
+      my $dolatval = $@;
+      eval { $@ = $dolatval;
+        # Verify that special vars are preserved and don't affect Vis
         # (except if testing a punctuation var, then don't change it's value)
 
         my ($origAt, $origFs, $origBs, $origComma, $origBang, $origCarE, $origCarW)
@@ -1619,8 +1987,8 @@ EOF
                                           $fakeCarE, $fakeCarW);
 
         $actual = $use_oo
-          ? Vis->dnew($dvis_input)->Dump   # <<<<<<<<<<<<<<< HERE
-          : dvis($dvis_input);
+           ? Vis->new->dvis($dvis_input)
+           : dvis($dvis_input);
 
         checkspunct('$@',  $@,   $fakeAt);
         checkspunct('$/',  $/,   $fakeFs);
@@ -1633,13 +2001,16 @@ EOF
         # Restore
         ($@, $/, $\, $,, $!, $^E, $^W)
           = ($origAt, $origFs, $origBs, $origComma, $origBang, $origCarE, $origCarW);
-      }
-      unless ($expected eq $actual) {
-        confess "\ndvis (oo=$use_oo) test tx $tx failed: input «",
-                show_white($dvis_input),"»\n",
-                "Expected:\n",show_white($expected),"«end»\n",
-                "Got:\n",show_white($actual),"«end»\n"
-      }
+        $dolatval = $@;
+      }; #// do{ $actual  = $@ };
+      if ($@) { $actual = $@ }
+      $@ = $dolatval;
+
+      checkeq_literal(
+        "dvis (oo=$use_oo) lno $lno failed: input «"
+                                              . show_white($dvis_input)."»",
+        $expected,
+        $actual);
     }
 
     # Check Useqq
