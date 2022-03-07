@@ -14,7 +14,7 @@ sub DB_Vis_Evalwrapper { # Must appear before any variables are declared
 package Vis;
 # POD documentation follows __END__
 
-use version 0.77; our $VERSION = version->declare(sprintf "v%s", q$Revision: 2.7 $ =~ /(\d[.\d]+)/);
+use version 0.77; our $VERSION = version->declare(sprintf "v%s", q$Revision: 2.8 $ =~ /(\d[.\d]+)/);
 
 require Data::Dumper;
 use Carp;
@@ -803,101 +803,77 @@ Vis - Human-oriented debug utilities using Data::Dumper
 =head1 SYNOPSIS
 
   use Vis;
+  use open IO => ':locale';
 
   @ARGV = ('-i', '/file/path');
-  my %hash = ( 'z'x20 => 42, 
-               complicated => ['lengthy', 'stuff', [1..35]], 'a'x25 => 43 );
+  my %hash = (abc => [1,2,3,4,5], def => undef);
   my $ref = \%hash;
 
-  # Interpolate strings, replacing $scalar @array and %hash etc.
-  # with massaged Data::Dumper output.  
+  # Interpolate variables in strings, substituting massaged 
+  # Data::Dumper output
   
   say svis 'FYI ref is $ref\nThat hash is: %hash\nArgs are @ARGV'; 
-    -->FYI ref is { aaaaaa... => 43, ... }  
-       That hash is: (aaaaaa... => 43, ... )
-       Args are ("-i", "/file/path")
 
-  # dvis (d for debug) auto-labels values 
+    -->FYI ref is {abc => [1,2,3,4,5], def => undef}
+       That hash is: (abc => [1,2,3,4,5], def => undef)
+       Args are ("-i","/file/path")
+
+  # Auto-label interpolated values ('d' is for debugging dump):
   
-  say dvis '$ref\n%hash\n@ARGV';  
-    -->ref={ aaaaaa... => 43, ... }  
-       %hash=(aaaaaa... => 43, ... )
-       @argv=("-i", "/file/path")
+  say dvis '$ref @ARGV'; 
 
-  # Format one item at a time.  Data::Dumper is called in Terse(1) mode
-  # and the result wrapped to fit the terminal width.
-  $Vis::Maxwidth = 40;  # overrides terminal width
+    -->ref={abc => [1,2,3,4,5], def => undef} @ARGV=("-i","/file/path")
 
-  say vis $hash{complicated};
-    -->["lengthy","stuff",[1,2,3,4,5,6,7,8,9,
-        10,11,12,13,14,15,16,17,18,19,20,21,
-        22,23,24,25,26,27,28,29,30,31,32,33,
-        34,35]]
+  # Format one item at a time.
+  
+  say vis \@ARGV;   # any scalar
+    -->["-i","/file/path"]
 
-  say avis @ARGV;
+  say avis @ARGV;   # array or list displayed in parens
     -->("-i","/file/path")
 
-  say hvis %hash;
-    -->(aaaaaaaaaaaaaaaaaaaaaaaaa => 43,
-         complicated => ["lengthy","stuff",
-           [1,2,3,4,5,6,7,8,9,10,11,12,13,14,
-             15,16,17,18,19,20,21,22,23,24,25,
-             26,27,28,29,30,31,32,33,34,35]],
-         zzzzzzzzzzzzzzzzzzzz => 42)
+  say hvis %hash;   # key => value pairs displayed in parens
+    -->(abc => [1,2,3,4,5], def => undef)
 
-  # Prefer single-quoted strings
-  say svisq 'The path is $ARGV[1]';
-    -->The path is '/file/path'
-  say dvisq 'The path is $ARGV[1]';
-    -->The path is ARGV[1]='/file/path'
-  say visq $ARGV[1];
-    -->'/file/path'
-  say avisq @ARGV;
-    -->
-  say hvisq %hash;
-    -->(aaaaaaaaaaaaaaaaaaaaaaaaa => 43,
-         complicated => ['lengthy','stuff', ... )
-
-  # Math::BigInt etc. are shown in stringified form. prefixed by a tag
+  # Stringify objects, if they support the stringify operator
   { use bigint;
     my $struct = { debt => 999_999_999_999_999_999.02 }; 
 
     say vis $struct;
        --> {debt => (Math::BigFloat)999999999999999999.02}
     
-    # disable stringifying objects
-    $Vis::Stringify = "";
+    $Vis::Stringify = ""; # disable stringification
     say vis $struct;
-       --> {debt => bless({ ... }, 'Math::BigFloat')}
+       --> {debt => bless({ ...lots of stuff... }, 'Math::BigFloat')}
   }
 
-  # Data::Dumper output is "unescaped" so printable wide characters
-  # appear as themselves instead of \x{ABCD}
-  use open IO => ':locale';  # Encode wide characters for your tty
-  use utf8;                  # This Perl source contains Unicode literals
+  # Printable wide characters appear as themselves so you can read them
+  use open IO => ':locale';  # Encode wide chars for your tty
+  use utf8;                  # if your Perl source contains Unicode literals
   my $h = {msg => "Just let me read my Unicode ☻ ☺ 😊 and \N{U+2757}!"};
   say dvis '$h' ;
     --> h={msg => "Just let me read my Unicode ☻ ☺ 😊 ❗"}
 
+  # Change default configuration options
+  
+  $Vis::MaxStringwidth = 1000; # see DESCRIPTION
+  
   #-------- OO API --------
-  # The *same functions* can be called as methods on a pre-allocated
-  # object.  This lets you adjust configuration settings on a 
-  # case-by-case basis (rather than using the global config variables)
+  # The *same functions* can be called as methods on a pre-allocated  object.
+  # This lets you adjust config settings on a case-by-case basis.
   
   say Vis->new()->MaxStringwidth(50)->Maxdepth($levels)->vis($datum);
 
   #-------- UTILITIES --------
   
+  say u($might_be_undef);  # $_[0] // "undef"
+
   say qsh($pathname);      # quote if needed for /bin/sh
 
-  # Change undef to "undef", but otherwise return the argument as-is
-  say u($might_be_undef);
-
-  # Quote arguments for the shell
   system "ls -l ".join(" ", map{ qsh } 
       ("My Documents", $ENV{HOME}, "Uck!", "Qu'ote", 'Qu"ote'));
 
-  # Quote arguments for the shell except leave ~ or ~username prefix
+  # Quote pathnames for the shell except for any ~ or ~username prefix
   system "ls -l ".join(" ", map{ qshpath } ("~", "~sally/subdir"));
 
   
@@ -927,16 +903,15 @@ A final newline is I<not> included.
 
 "Safe" Unicode characters appear as themselves, instead of \x{ABCD} escapes.
 
-Note: Since the result may include 'wide characters', you must encode 
-the result before displaying it, as explained in C<perluniintro>.  
+Note: If the result might include 'wide characters', you must encode 
+the result before displaying it as explained in C<perluniintro>.  
 For example with C<use IO ':utf8';> or C<use IO ':locale';>.
 
 =item *
 
 Objects are stringified if they provide a stringification operator.  
 For example, numbers declared within the scope of C<use bignum;> 
-will appear in readable form rather than showing the internals of
-the implementation.  
+appear in readable form.
 
 Stingified objects are prefixed by "(classname)" to make clear what
 has happened.
@@ -948,45 +923,44 @@ for example "A.20" sorts before "A.100".
  
 =back
 
-=head1 FUNTIONS
+=head1 FUNCTIONS
 
 =head2 svis 'string to be interpolated'
 
-Returns the argument with variable references and escapes interpolated
-as in in Perl double-quotish strings except that variable values are
+Returns the arg with variable references and escapes interpolated
+as in in Perl double-quotish strings except that values are
 formatted using C<vis()> or C<avis()> for $ or @ expressions, respectively.
 
 In addition, C<%name> is interpolated using C<hvis()>.  
 
-Most complex
-reference expressions including slices and method calls are recognized, 
-for example C<< ${\@myarray}[42]->{$key}{$nextlevel}->method(...) >>.
+Complex reference expressions are recognized, including slices and 
+method calls.  
+For example C<< ${\@myarray}[42]->{$key}->method(...) >>.
 
 Strings are displayed in "double quoted" form. 
 Internally, Data::Dumper is called with C<Useqq(1)>.
 
 =head2 dvis 'string to be interpolated'
 
-The same as C<svis> but interpolated items are prefixed by a "label=".
-If the interpolated item is a simple scalar "$name" then the label will
-be "name=" without the '$' sigl; otherwise the complete item/expression
-is used as the label.
+Like C<svis> but prefix interpolated items with "expr=" labels.
+
+If an expression is a simple '$name' scalar variable, 
+the '$' sigl is omitted from the label.
 
 =head2 vis
 
 =head2 vis SCALAREXPR
 
-Format a single single scalar (default $_).  
-The resulting string will not have a final newline.
-
 =head2 avis LIST
-
-Format an @array or other list as "(item, item, ...)";
 
 =head2 hvis LIST
 
-Format a %hash (or other list with an even 
-number of items) as "(key => value, ...)".
+C<vis> formats a single single scalar ($_ argument is omitted);
+
+C<avis> formats a list as a comma-separated list in parens, i.e. an array
+constructor.
+
+C<hvis> is like C<avis> but separates pairs with "=>", forming a hash constructor.  There must be an even number of arguments.
 
 =head2 svisq, dvisq, visq, avisq, hvisq
 
@@ -998,7 +972,6 @@ anyway, depending on the version of Data::Dumper.
 
 
 =head1 OBJECT-ORIENTED INTERFACES
-
 
 =head2 Vis->new()
 
@@ -1017,61 +990,67 @@ C<Vis> provides the following methods.
 Default values are given by global variables of the same name 
 (e.g. C<$Vis::Maxwidth>) which you can change at will.
 
-=head2 Vis->MaxStringwidth(INTEGER)
+=head2 $Vis::MaxStringwidth or VisObJ->MaxStringwidth(INTEGER)
 
-=head2 Vis->Truncsuffix("...")
+=head2 $Vis::Truncsuffix or VisObJ->Truncsuffix("...")
 
-Set the maximum length for displayed strings.  Longer strings are
-truncated and I<Truncsuffix> appended.
+Sets the maximum length for displayed strings.  Longer strings are
+truncated and I<Truncsuffix> appended.  Set to 0 (the default) for no limit.
 
-=head2 Vis->Maxwidth(FOLDWIDTH)
+=head2 $Vis::Maxwidth or VisObJ->Maxwidth(INTEGER)
 
-Set the fold width.  Default is the terminal width at time of first call.
+Set the fold width.  Default is the terminal width at time of first use.
 
-=head2 Vis->Stringify(BOOL)
-
-=head2 Vis->Stringify([list of class names])
+=head2 $Vis::Stringify or VisObJ->Stringify(BOOL or [list of classnames])
 
 Control object stringification.  
 
 If a simple boolean (e.g. 0,1,undef,"")
-is given then stringification of all objects (which implement
-a stringification operator) is enabled/disabled.
+is given then stringification of all objects is enabled/disabled.
 
 If a list of class names is given, only objects of those classes
 will be stringified.
 
+Stringification is only attempted on objects which implement the
+stringification operator (overload::Method($class,'""') is true).
+
 =head2 Vis->Debug(BOOL)
 
-True to enable internal debug tracing
-
+Enable internal debug tracing
 
 =head1 Data::Dumper pass-thru options
 
-The following Data::Dumper methods may be called.  Currently C<Vis>
-derives from C<Data::Dumper> and so these methods are inherited.  
-This may change in the future.
+The following methods control Data::Dumper options you may set.  
 
+Currently these methods are inherited from C<Data::Dumper>, 
+from which C<Vis> derives.  Their default values are controlled by 
+global variables in the C<Data::Dumper> package and not C<Vis>.
+
+However this may change in the future, so please do not directly 
+access Data::Dumper global variables.
 
 =head2 Useqq(BOOL)
 
 True to prefer "double quoted" rather than 'single quoted' strings.
-C<Vis> defaults to true except for the 'q' variants.
+C<Vis> defaults to TRUE except for the 'q' variants.
 
 =head2 Sortkeys(subref)
 
 Control how hash keys are sorted.  See C<Data::Dumper> documentation.
 
+C<Vis> provides a default which sorts numeric substrings in keys 
+by numerical value (see example in SYNOPSIS).
+
 =head2 Quotekeys(subref)
 
 Control how hash keys are "quoted".
 
-
-You probably should not use any of the other C<Data::Dumper> methods
+=head1 You probably should not use any of the other C<Data::Dumper> methods
 on C<Vis> objects.
 
-=head1 UTILITY FUNCTIONS
+=head1 
 
+=head1 UTILITY FUNCTIONS
 
 =head2 u
 
