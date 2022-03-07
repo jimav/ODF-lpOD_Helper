@@ -14,7 +14,7 @@ sub DB_Vis_Evalwrapper { # Must appear before any variables are declared
 package Vis;
 # POD documentation follows __END__
 
-use version 0.77; our $VERSION = version->declare(sprintf "v%s", q$Revision: 2.6 $ =~ /(\d[.\d]+)/);
+use version 0.77; our $VERSION = version->declare(sprintf "v%s", q$Revision: 2.7 $ =~ /(\d[.\d]+)/);
 
 require Data::Dumper;
 use Carp;
@@ -161,26 +161,25 @@ sub dvisq(_){ @_=(&__getobj->Useqq(0),shift,'d');goto &DB::DB_Vis_Interpolate }
 # as a method to produce the output (those routines can also be called as
 # functions, in which case they create a new object internally).
 #
-# An earlier version of this package was designed to be a true drop-in
-# replacement for Data::Dumper and supported all of the same APIs (mostly 
-# by inheritance) including Data::Dumper's new([values],[names]) constructor.
+# An earlier version of this package was a true drop-in replacement for 
+# Data::Dumper and supported all of the same APIs (mostly by inheritance) 
+# including Data::Dumper's new([values],[names]) constructor.
 # Vis extensions were accessed via differently-named alternative constructors.
 #
-# Now Vis is no longer API compatible with Data::Dumper, but retains the same
-# option-setting paradyme with methods like Maxwidth() which set options
-# in an object if called with arguments and returns the object to allow
-# method chaining.
+# Now Vis is no longer API compatible with Data::Dumper, but uses the same
+# option-setting paradigm where methods like Maxwidth() modify the object
+# if called with arguments while returning the object to allow method chaining.
 #
 # However there remains a wart: Vis still derives from Data::Dumper and
-# a few Data::Dumper options may be called directly by users (Quotekeys, 
+# a few Data::Dumper options may reasonably be called by users (Quotekeys, 
 # Sortkeys, Useqq, and maybe Sparseseen).  This is fine as far as method
 # calls are concerned, but the default values for those options come from
 # globals in package Data::Dumper, not Vis.
 #
-# To fix this, we should just have a Data::Dumper object as an internal 
-# attribute ("has a" relationship) rather than deriving, and implement
-# all user-callable options directly ourself.
-# But that is a project for another day.
+# To fix this, we should implement all user-settable options ourself 
+# (with defaults coming from globals in package Vis).  In that case
+# a Data::Dumper object can be stored internally ("has a" relationship) 
+# rather than deriving.  But that is a project for another day.
 sub new {
   croak "No args allowed for Vis::new" if @_ > 1;
   my ($class) = @_;
