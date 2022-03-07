@@ -3,40 +3,36 @@
 # those extracts remain subject to the licenses of their respective sources.
 # Excepting those portions, this file has been dedicated to the Public Domain 
 # per Creative Commons CC0 (http://creativecommons.org/publicdomain/zero/1.0/)
-use strict; use warnings FATAL => 'all'; use 5.012;
+use strict; use warnings FATAL => 'all'; use utf8; use 5.012;
 use feature qw(switch state);
 
-# This must appear before any declarations which might alias user variables 
-# referenced in strings interpolated by svis or dvis.
 package DB;
-sub DB_Vis_Evalwrapper {   
-  # A separate sub so no lexicals are visible
+sub DB_Vis_Evalwrapper { # Must appear before any variables are declared
   eval $Vis::string_to_eval;
 }
 
 package Vis;
 # POD documentation follows __END__
 
-use utf8;
-# This file contains Unicode characters in debug-output strings (e.g. « and »).
-# To see them correctly when printed, your program must say
-#   use open ':std' => ':locale';
-# or equivalent to encode wide characters for your terminal.
+use version 0.77; our $VERSION = version->declare(sprintf "v%s", q$Revision: 2.6 $ =~ /(\d[.\d]+)/);
 
-use version 0.77; our $VERSION = version->declare(sprintf "v%s", q$Revision: 2.5 $ =~ /(\d[.\d]+)/);
-
-use Exporter;
+require Data::Dumper;
 use Carp;
 use POSIX qw(INT_MAX);
 use Encode ();
 use Scalar::Util qw(blessed reftype refaddr looks_like_number);
 use List::Util qw(min max first any);
 use Regexp::Common qw/RE_balanced/;
+use Term::ReadKey qw(GetTerminalSize);
 use overload ();
 
-use Terminalsize qw(get_terminal_columns);
-
-require Data::Dumper;
+sub debugvis(_) {  # for our internal debugging messages
+  my $s = Data::Dumper->new([shift])->Useqq(1)->Terse(1)->Indent(0)->Dump;
+  chomp $s;
+  $s
+}
+sub debugavis(@) { "(" . join(", ", map{debugvis} @_) . ")" }
+sub oops(@) { @_ = ("\noops:",@_,"\n  "); goto &Carp::confess }
 
 use Exporter 'import';
 our @EXPORT    = qw(vis  avis  lvis  svis  dvis  hvis  hlvis
@@ -49,7 +45,6 @@ our @EXPORT_OK = qw($Maxwidth $MaxStringwidth $Truncsuffix $Debug
 
 our @ISA       = ('Data::Dumper'); # see comments at new()
 
-# Used by non-oo functions, and initial settings by new()
 our ($Debug, $MaxStringwidth, $Truncsuffix, $Stringify,
      $Maxwidth, $Maxwidth1,
      $Useqq, $Quotekeys, $Sortkeys, $Terse, $Indent, $Sparseseen);
@@ -85,7 +80,7 @@ sub Maxwidth {
   $s->{Maxwidth1} = $v1 if @_==3;
   $s
 }
-sub Maxwidth1 {
+sub Maxwidth1 {  # experimental
   my($s, $v) = @_;
   @_ == 2 ? (($s->{Maxwidth1} = $v), return $s) : $s->{Maxwidth1};
 }
@@ -97,28 +92,19 @@ sub Stringify {
   my($s, $v) = @_;
   @_ == 2 ? (($s->{Stringify} = $v), return $s) : $s->{Stringify};
 }
-sub VisType {
+sub VisType { # NOT currently documented for direct use by users
   my($s, $v) = @_;
   @_ >= 2 ? (($s->{VisType} = $v), return $s) : $s->{VisType};
 }
 
-sub debugvis(_) {  # for our internal debug messages
-  my $s = Data::Dumper->new([shift])->Useqq(1)->Terse(1)->Indent(0)->Maxdepth(0)->Dump;
-  chomp $s;
-  $s
-}
-sub debugavis(@) { "(" . join(", ", map{debugvis} @_) . ")" }
-
-sub oops(@) { @_ = ("\noops:",@_,"\n  "); goto &Carp::confess }
-
 ############### Functional (non-oo) APIs #################
+
 sub u(_) { $_[0] // "undef" }
 sub forceqsh(_) {
-  # Unlike Perl, the bourne shell does not recognize backslash escapes
-  # inside '...', but quoting must be interrupted, e.g. 'foo\''bar'
+  # Unlike Perl, /bin/sh does not recognize any backslash escapes in '...'
   local $_ = shift;
-  return "undef" unless defined;
-  $_ = Vis::vis($_) if ref;
+  return "undef" if !defined;
+  $_ = vis($_) if ref; 
   # Prefer "double quoted" if no shell escapes would be needed
   if (/["\$`!\\\x{00}-\x{1F}\x{7F}]/) {
     s/'/'\\''/g; # foo'bar => foo'\''bar
@@ -131,7 +117,6 @@ sub qsh(_) {
   local $_ = shift;
   defined && !/[^-=\w_\/:\.,]/ && $_ ne "" && !ref ? $_ : forceqsh
 }
-
 sub qshpath(_) {  # like qsh but does not quote initial ~ or ~username
   local $_ = shift;
   return qsh if !defined or ref;
@@ -139,7 +124,8 @@ sub qshpath(_) {  # like qsh but does not quote initial ~ or ~username
   $rest eq "" ? $tilde_prefix : $tilde_prefix.qsh($rest)
 }
 
-########### FUNCTIONAL/OO APIs #############
+########### Functional/OO APIs #############
+
 sub __getobj {
   (blessed($_[0]) && $_[0]->isa(__PACKAGE__) ? shift : __PACKAGE__->new())
 }
@@ -151,8 +137,7 @@ sub __getobj_h {
   $o ->Values([{@_}])
 }
 
-# These can be called as *FUNCTIONS* or as *METHODS* of an
-# already-created Vis object.
+# These can be called as *FUNCTIONS* or as *METHODS* of a Vis object
 sub vis(_)    { &__getobj_s ->VisType('s' )->Dump; }
 sub visq(_)   { &__getobj_s ->VisType('s' )->Useqq(0)->Dump; }
 sub avis(@)   { &__getobj_a ->VisType('a' )->Dump; }
@@ -176,24 +161,26 @@ sub dvisq(_){ @_=(&__getobj->Useqq(0),shift,'d');goto &DB::DB_Vis_Interpolate }
 # as a method to produce the output (those routines can also be called as
 # functions, in which case they create a new object internally).
 #
-# We do have a Dump() method and theoretically users could call it
-# directly on a Vis object if they first call Values() to set the datum
-# and VisType() to set the format style.  This is not documented.
-#
 # An earlier version of this package was designed to be a true drop-in
-# replacement for Data::Dumper will all the same APIs (mostly by inheritance)
-# including Data::Dumper's new([values],[names]) interface.
-# New features were exposed via special constructors (snew, anew, hnew, etc.)
-# and vis, avis, etc. were just functions which called the approprieate
-# special constructor.  With unpleasantly lengthy documentation.
+# replacement for Data::Dumper and supported all of the same APIs (mostly 
+# by inheritance) including Data::Dumper's new([values],[names]) constructor.
+# Vis extensions were accessed via differently-named alternative constructors.
 #
-# The current design is not API compatible with Data::Dumper, but still
-# derives from Data::Dumper and users could call obscure Data::Dumper
-# config options to affect our output.  This is not supported or documented.
+# Now Vis is no longer API compatible with Data::Dumper, but retains the same
+# option-setting paradyme with methods like Maxwidth() which set options
+# in an object if called with arguments and returns the object to allow
+# method chaining.
 #
-# Arguably deriving from Data::Dumper no longer makes sense and we should
-# just use it internally ("has a" relationship).  But that is a project
-# for another day.
+# However there remains a wart: Vis still derives from Data::Dumper and
+# a few Data::Dumper options may be called directly by users (Quotekeys, 
+# Sortkeys, Useqq, and maybe Sparseseen).  This is fine as far as method
+# calls are concerned, but the default values for those options come from
+# globals in package Data::Dumper, not Vis.
+#
+# To fix this, we should just have a Data::Dumper object as an internal 
+# attribute ("has a" relationship) rather than deriving, and implement
+# all user-callable options directly ourself.
+# But that is a project for another day.
 sub new {
   croak "No args allowed for Vis::new" if @_ > 1;
   my ($class) = @_;
@@ -205,27 +192,41 @@ sub _config_defaults {
   my $self = shift;
 
   if (! defined $Maxwidth) {
-    local *_;
-    # perl bug: Localizing *_ does not deal with the special filehandle "_"
-    #  see https://github.com/Perl/perl5/issues/19142
-    $Maxwidth = get_terminal_columns(debug => $Debug)//80;
+    if (u($ENV{COLUMNS}) =~ /^[1-9]\d*$/) {
+      $Maxwidth = $ENV{COLUMNS}; # overrides actual terminal width
+      say "Default Maxwidth=$Maxwidth from ENV{COLUMNS}" if $Debug;
+    } else {
+      local *_; # Try to avoid clobbering special filehandle "_"
+      # Does not yet work, see https://github.com/Perl/perl5/issues/19142
+      my ($width, $height) = GetTerminalSize(
+        -t STDERR ? *STDERR : -t STDOUT ? *STDOUT 
+        : do{my $fh; for("/dev/tty",'CONOUT$') { last if open $fh, $_ } $fh}
+      );
+      if (($Maxwidth = $width)) {
+        say "Default Maxwidth=$Maxwidth from Term::ReadKey" if $Debug;
+      } else {
+        $Maxwidth = 80;
+        say "Maxwidth=$Maxwidth from hard-coded backup default" if $Debug;
+      }
+    }
   }
 
   $self
+    ->Debug($Debug)
+    ->MaxStringwidth($MaxStringwidth)
+    ->Maxwidth($Maxwidth, $Maxwidth1)
+    ->Stringify($Stringify)
+    ->Truncsuffix($Truncsuffix)
+    # The following are Data::Dumper methods callable by Vis users
     ->Quotekeys($Quotekeys)
     ->Sortkeys($Sortkeys)
+    ->Sparseseen($Sparseseen)
+    ->Useqq($Useqq)
+    # The following Data::Dumper options should never by changed by users 
     ->Terse($Terse)
     ->Indent($Indent)
-    ->Debug($Debug)
-    ->Stringify($Stringify)
-    ->Useqq($Useqq)
-    ->Sparseseen($Sparseseen)
-    ->Maxwidth($Maxwidth, $Maxwidth1)
-    ->MaxStringwidth($MaxStringwidth)
-    ->Truncsuffix($Truncsuffix)
 }
 
-#my $unique = join "", map { chr ord('A')+$_ } (split //,rand()^refaddr(\&new));
 my $unique = refaddr \&new;
 my $magic_num_prefix    = "<NUMMagic$unique>";
 my $magic_numstr_prefix = "<NUMSTRMagic$unique>";
@@ -248,17 +249,9 @@ sub __walk_worker($$$$$) {
   if (my $class = blessed($_[0])) {
     # Strinify objects which have the stringification operator
     if (overload::Method($class,'""')) { # implements operator stringify
-      # FIXME: use List::Util::any
-      my $shouldwe;
-      foreach my $mod (@$stringify) {
-        # Stringify may be class name, a Regexp matching class name,
-        # or the number 1 (to enable any class)
-        $shouldwe=1, last if
-          ref($mod) eq "Regexp"
-            ? $class =~ /$mod/
-            : ($class eq $mod || $mod eq "1")
-      }
-      if ($shouldwe) {
+      if (any { ref() eq "Regexp" ? $class =~ /$_/ 
+                                  : ($_ eq "1" || $_ eq $class) } @$stringify) 
+      {
         return \undef if $detection_pass;  # halt immediately
         # Make the change.  We are on a 2nd pass on a cloned copy
         my $prefix = show_as_number($_[0]) ? $magic_num_prefix : "";
@@ -266,15 +259,20 @@ sub __walk_worker($$$$$) {
       }
     }
   }
-  # Prepend a "magic prefix" to items which Data::Dumper is likely
-  # to represent wrongly or anyway not how we want.  The prefix will
-  # be removed from the result later.
+  # Prepend a "magic prefix" (later removed) to items which Data::Dumper is 
+  # likely to represent wrongly or anyway not how we want:
   #
-  # 1. Scalars is set to a string like "6" will come out as a number
-  #    instead of string (except with Useqq(0) and Useperl(0)).
-  #    This is a bug.
-  # 2. All floating point values come out as "strings" to avoid
-  #    some cross-platform issues.  We don't want that.
+  #  1. Scalars set to strings like "6" will come out as a number 6 rather
+  #     than "6" with Useqq(1) or Useperl(1) (string-ness is preserved
+  #     with other options).  IMO this is a Data::Dumper bug which the
+  #     maintainers won't fix it because the difference isn't functionally 
+  #     relevant to correctly-written Perl code.  However we want to help 
+  #     humans debug their software and so want to see the representation
+  #     most liklye to have been used by the programmer to store the value.
+  #
+  #  2. Floating point values come out as "strings" to avoid some
+  #     cross-platform problem I don't understand.  For our purposes
+  #     we want all numbers to appear as numbers.
   if (!reftype($_[0]) && looks_like_number($_[0])) {
     return \undef if $detection_pass;  # halt immediately
     my $prefix = show_as_number($_[0])
