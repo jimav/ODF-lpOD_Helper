@@ -14,7 +14,7 @@ sub DB_Vis_Evalwrapper { # Must appear before any variables are declared
 package Vis;
 # POD documentation follows __END__
 
-use version 0.77; our $VERSION = version->declare(sprintf "v%s", q$Revision: 2.12 $ =~ /(\d[.\d]+)/);
+use version 0.77; our $VERSION = version->declare(sprintf "v%s", q$Revision: 2.13 $ =~ /(\d[.\d]+)/);
 
 require Data::Dumper;
 use Carp;
@@ -39,7 +39,7 @@ our @EXPORT    = qw(vis  avis  lvis  svis  dvis  hvis  hlvis
                     visq avisq lvisq svisq dvisq hvisq hlvisq
                     u qsh forceqsh qshpath);
 
-our @EXPORT_OK = qw($Debug $MaxStringwidth $Truncsuffix $Stringify $Maxwidth
+our @EXPORT_OK = qw($Debug $MaxStringwidth $Truncsuffix $Stringify $Foldwidth
                     $Useqq $Quotekeys $Sortkeys $Sparseseen);
 
 our @ISA       = ('Data::Dumper'); # see comments at new()
@@ -74,15 +74,15 @@ sub qshpath(_) {  # like qsh but does not quote initial ~ or ~username
 #################### Configuration Globals #################
 
 our ($Debug, $MaxStringwidth, $Truncsuffix, $Stringify,
-     $Maxwidth, $Maxwidth1,
+     $Foldwidth, $Foldwidth1,
      $Useqq, $Quotekeys, $Sortkeys, $Sparseseen);
 
 $Debug          = 0            unless defined $Debug;
 $MaxStringwidth = 0            unless defined $MaxStringwidth;
 $Truncsuffix    = "..."        unless defined $Truncsuffix;
 $Stringify      = 1            unless defined $Stringify;
-$Maxwidth       = undef        unless defined $Maxwidth;  # undef to auto-detect
-$Maxwidth1      = undef        unless defined $Maxwidth1; # override for 1st
+$Foldwidth      = undef        unless defined $Foldwidth;  # undef auto-detects
+$Foldwidth1     = undef        unless defined $Foldwidth1; # override for 1st
 
 # The following Vis defaults override Data::Dumper defaults
 $Useqq          = 1            unless defined $Useqq;
@@ -108,17 +108,17 @@ sub Stringify {
   my($s, $v) = @_;
   @_ == 2 ? (($s->{Stringify} = $v), return $s) : $s->{Stringify};
 }
-sub Maxwidth {
+sub Foldwidth {
   my($s, $v, $v1) = @_;
-  return(wantarray ? ($s->{Maxwidth}, $s->{Maxwidth1}) : $s->{Maxwidth})
+  return(wantarray ? ($s->{Foldwidth}, $s->{Foldwidth1}) : $s->{Foldwidth})
     if @_ == 1;
-  $s->{Maxwidth} = $v; 
-  $s->{Maxwidth1} = $v1 if @_==3;
+  $s->{Foldwidth} = $v; 
+  $s->{Foldwidth1} = $v1 if @_==3;
   $s
 }
-sub Maxwidth1 {  # experimental
+sub Foldwidth1 {  # experimental
   my($s, $v) = @_;
-  @_ == 2 ? (($s->{Maxwidth1} = $v), return $s) : $s->{Maxwidth1};
+  @_ == 2 ? (($s->{Foldwidth1} = $v), return $s) : $s->{Foldwidth1};
 }
 sub Terse  { confess "Terse() may not be called on Vis objects" }
 sub Indent { confess "Indent() may not be called on Vis objects" }
@@ -139,7 +139,7 @@ sub _Vistype {
 # Vis extensions were accessed via differently-named alternative constructors.
 #
 # Now Vis is no longer API compatible with Data::Dumper, but uses the same
-# option-setting paradigm where methods like Maxwidth() modify the object
+# option-setting paradigm where methods like Foldwidth() modify the object
 # if called with arguments while returning the object to allow method chaining.
 #
 # Global variablse in Vis are provided for all config options, including
@@ -188,12 +188,12 @@ sub dvisq(_){ @_=(&__getobj->Useqq(0),shift,'d');goto &_Interpolate }
 sub _config_defaults {
   my $self = shift;
   
-  &__set_default_Maxwidth if ! defined $Maxwidth;
+  &__set_default_Foldwidth if ! defined $Foldwidth;
 
   $self
     ->Debug($Debug)
     ->MaxStringwidth($MaxStringwidth)
-    ->Maxwidth($Maxwidth, $Maxwidth1)
+    ->Foldwidth($Foldwidth, $Foldwidth1)
     ->Stringify($Stringify)
     ->Truncsuffix($Truncsuffix)
       # These Data::Dumper config methods are callable by Vis users
@@ -206,10 +206,10 @@ sub _config_defaults {
     ->SUPER::Indent(0)
 }
 
-sub __set_default_Maxwidth() {
+sub __set_default_Foldwidth() {
   if (u($ENV{COLUMNS}) =~ /^[1-9]\d*$/) {
-    $Maxwidth = $ENV{COLUMNS}; # overrides actual terminal width
-    say "Default Maxwidth=$Maxwidth from ENV{COLUMNS}" if $Debug;
+    $Foldwidth = $ENV{COLUMNS}; # overrides actual terminal width
+    say "Default Foldwidth=$Foldwidth from ENV{COLUMNS}" if $Debug;
   } else {
     local *_; # Try to avoid clobbering special filehandle "_"
     # Does not yet work, see https://github.com/Perl/perl5/issues/19142
@@ -217,11 +217,11 @@ sub __set_default_Maxwidth() {
       -t STDERR ? *STDERR : -t STDOUT ? *STDOUT 
       : do{my $fh; for("/dev/tty",'CONOUT$') { last if open $fh, $_ } $fh}
     );
-    if (($Maxwidth = $width)) {
-      say "Default Maxwidth=$Maxwidth from Term::ReadKey" if $Debug;
+    if (($Foldwidth = $width)) {
+      say "Default Foldwidth=$Foldwidth from Term::ReadKey" if $Debug;
     } else {
-      $Maxwidth = 80;
-      say "Maxwidth=$Maxwidth from hard-coded backup default" if $Debug;
+      $Foldwidth = 80;
+      say "Foldwidth=$Foldwidth from hard-coded backup default" if $Debug;
     }
   }
 }
@@ -313,7 +313,7 @@ sub Dump {
   }
 
   # We always call Data::Dumper with Indent(0) and Pad("") to get a single
-  # maximally-compact string, and then manually fold the result to Maxwidth,
+  # maximally-compact string, and then manually fold the result to Foldwidth,
   # and insert the user's Pad before each line.
   my $pad = $self->Pad();
   $self->Pad("");
@@ -484,7 +484,7 @@ my $foldunit_re = qr/${atom_re}(?: , | \s*=>)?+/x;
 sub _fold { # edits $_ in place
   my $self = shift;
   my ($debug, $maxwidth, $maxwidth1, $pad) = 
-       (@$self{qw/VisDebug Maxwidth Maxwidth1/}, $self->Pad);
+       (@$self{qw/VisDebug Foldwidth Foldwidth1/}, $self->Pad);
   return 
     if $maxwidth == 0;  # no folding
   my $maxwid = $maxwidth1 || $maxwidth;
@@ -565,7 +565,7 @@ sub _postprocess_DD_result {
   (my $self, local $_) = @_;
 
   my ($debug, $vistype, $maxwidth, $maxwidth1)
-    = @$self{qw/VisDebug _Vistype Maxwidth Maxwidth1/};
+    = @$self{qw/VisDebug _Vistype Foldwidth Foldwidth1/};
 
   croak "invalid _Vistype ", u($vistype)
     unless ($vistype//0) =~ /^(?:[salh]|hl)$/;
@@ -722,10 +722,10 @@ sub DB_Vis_Interpolate {
     } else {
       # Reduce indent before first wrap to account for stuff alrady there
       my $leftwid = length($result) - rindex($result,"\n") - 1;
-      my $maxwidth = $self->{Maxwidth};
-      local $self->{Maxwidth1} = $self->{Maxwidth1} // $maxwidth;
+      my $maxwidth = $self->{Foldwidth};
+      local $self->{Foldwidth1} = $self->{Foldwidth1} // $maxwidth;
       if ($maxwidth) {
-        $self->{Maxwidth1} -= $leftwid if $leftwid < $self->{Maxwidth1}
+        $self->{Foldwidth1} -= $leftwid if $leftwid < $self->{Foldwidth1}
       }
       $result .= $self->$methname( DB::DB_Vis_Eval($funcname, $arg) );
     }    
@@ -980,11 +980,11 @@ a C<Vis> object and act as a method if so).
 
 For example:
 
-   Vis->new()->Maxwidth(40)->avis(@ARGV);
+   Vis->new()->Foldwidth(40)->avis(@ARGV);
 
 C<Vis> provides the following methods.
 Default values are given by global variables of the same name 
-(e.g. C<$Vis::Maxwidth>) which you can change at will.
+(e.g. C<$Vis::Foldwidth>) which you can change at will.
 
 =head2 $Vis::MaxStringwidth or VisObJ->MaxStringwidth(INTEGER)
 
@@ -993,9 +993,9 @@ Default values are given by global variables of the same name
 Sets the maximum length for displayed strings.  Longer strings are
 truncated and I<Truncsuffix> appended.  Set to 0 (the default) for no limit.
 
-=head2 $Vis::Maxwidth or VisObJ->Maxwidth(INTEGER)
+=head2 $Vis::Foldwidth or VisObJ->Foldwidth(INTEGER)
 
-Set the fold width.  Default is the terminal width at time of first use.
+Default is the terminal width at the time of first use.
 
 =head2 $Vis::Stringify or VisObJ->Stringify(BOOL or [list of classnames])
 
@@ -1172,9 +1172,9 @@ sub timed_run(&$@) {
   if (wantarray) {return @result} else {return $result};
 }
 
-sub visMaxwidth() {
-  "Vis::Maxwidth=".u($Vis::Maxwidth)." Vis::Maxwidth1=".u($Vis::Maxwidth1)
-  .($Vis::Maxwidth ? ("\n".("." x $Vis::Maxwidth)) : "")
+sub visFoldwidth() {
+  "Vis::Foldwidth=".u($Vis::Foldwidth)." Vis::Foldwidth1=".u($Vis::Foldwidth1)
+  .($Vis::Foldwidth ? ("\n".("." x $Vis::Foldwidth)) : "")
 }
 sub checkeq_literal($$$) {
   my ($testdesc, $exp, $act) = @_;
@@ -1191,7 +1191,7 @@ sub checkeq_literal($$$) {
         ."Expected:\n$exp«end»\n"
         ."Actual  :\n$act«end»\n"
         .(" " x $posn)."^\n"
-        .visMaxwidth()."\n" ) ;
+        .visFoldwidth()."\n" ) ;
   goto &Carp::confess;
 }
 
@@ -1216,7 +1216,7 @@ sub check($$@) {
       confess "\nTESTb FAILED: ",$code,"\n"
              ."Expected (Regexp):u\n".${expected}."«end»\n"
              ."Got:\n".u($actual)."«end»\n"
-             .visMaxwidth()
+             .visFoldwidth()
         unless $actual =~ ($expected // "Never Matched");
     } else {
       checkeq_literal "TESTc FAILED: $code", $expected, $actual;
@@ -1256,7 +1256,7 @@ sub checkstringy(&$$) {
     $exp =~ s/_Q_/$expqq_re/g;
     $exp =~ s/_q_/$expq_re/g;
     my $code_display = $code . " with \$_[1]=«$item»";
-    local $Vis::Maxwidth = 0;  # disable wrapping
+    local $Vis::Foldwidth = 0;  # disable wrapping
     check $code_display, qr/$exp/, $doeval->($code, $item) ;
   }
 }
@@ -1295,7 +1295,7 @@ sub checklit(&$$) {
     $exp =~ s/_Q_/$dq_expected_re/g;
     $exp =~ s/_q_/$sq_expected_re/g;
     my $code_display = $code . " with \$_[1]=«$item»";
-    local $Vis::Maxwidth = 0;  # disable wrapping
+    local $Vis::Foldwidth = 0;  # disable wrapping
     check $code_display, qr/$exp/, $doeval->($code, $item) ;
   }
 }
@@ -1315,22 +1315,22 @@ for my $varname (qw(PREMATCH MATCH POSTMATCH)) {
 my $byte_str = join "",map { chr $_ } 10..30;
 
 ##################################################
-# Check default $Vis::Maxwidth
+# Check default $Vis::Foldwidth
 ##################################################
 { chomp( my $expected = `tput cols` );  # may default to 80 if no tty
-  die "Expected initial Vis::Maxwidth to be undef" if defined $Vis::Maxwidth;
+  die "Expected initial Vis::Foldwidth to be undef" if defined $Vis::Foldwidth;
   { local $ENV{COLUMNS} = $expected + 13;
     svis("abc");
-    die "Vis::Maxwidth does not honor ENV{COLUMNS}" 
-      unless $Vis::Maxwidth == $expected + 13;
+    die "Vis::Foldwidth does not honor ENV{COLUMNS}" 
+      unless u($Vis::Foldwidth) == $expected + 13;
   }
-  undef $Vis::Maxwidth;  # re-enable auto-detect
+  undef $Vis::Foldwidth;  # re-enable auto-detect
   if (unix_compatible_os()) {
     delete local $ENV{COLUMNS};
     svis("abc");
-    die "Vis::Maxwidth ",u($Vis::Maxwidth)," not defaulted correctly, expecting $expected" unless $Vis::Maxwidth == $expected;
+    die "Vis::Foldwidth ",u($Vis::Foldwidth)," not defaulted correctly, expecting $expected" unless $Vis::Foldwidth == $expected;
   }
-  undef $Vis::Maxwidth;  # re-enable auto-detect
+  undef $Vis::Foldwidth;  # re-enable auto-detect
   if (unix_compatible_os()) {
     delete local $ENV{COLUMNS};
     my $pid = fork();
@@ -1341,10 +1341,10 @@ my $byte_str = join "",map { chr $_ } 10..30;
       POSIX::close $_ for (0,1,2);
       $Vis::Debug = 0;
       svis("abc");
-      exit($Vis::Maxwidth // 253);
+      exit($Vis::Foldwidth // 253);
     }
     waitpid($pid,0);
-    die "Vis::Maxwidth defaulted to ", ($? >> 8)|($? & !0xFF), " (not 80 as expected)"
+    die "Vis::Foldwidth defaulted to ", ($? >> 8)|($? & !0xFF), " (not 80 as expected)"
       unless $? == (80 << 8);
     $? = 0;
   }
@@ -1379,7 +1379,7 @@ if (! ref Vis->new()->Useqq(undef)) {
 { my $code="Vis->new->svis('foo') ;"; check $code, 'foo',       eval $code }
 
 foreach (
-          ['Maxwidth',0,1,80,9999],
+          ['Foldwidth',0,1,80,9999],
           ['MaxStringwidth',undef,0,1,80,9999],
           ['Truncsuffix',"","...","(trunc)"],
           ## FIXME: This will spew debug messages.  Trap them somehow??
@@ -1426,7 +1426,7 @@ sub MyClass::meth {
 }
 
 # Many tests assume this
-$Vis::Maxwidth = 72;
+$Vis::Foldwidth = 72;
 
 @ARGV = ('fake','argv');
 $. = 1234;
@@ -1782,7 +1782,7 @@ sub get_closure(;$) {
     [__LINE__, q(@ARGV\n), qq(\@ARGV=(\"fake\",\"argv\")\n) ],
     [__LINE__, q($ENV{EnvVar}\n), qq(\$ENV{EnvVar}=\"Test EnvVar Value\"\n) ],
     [__LINE__, q($ENV{$EnvVarName}\n), qq(\$ENV{\$EnvVarName}=\"Test EnvVar Value\"\n) ],
-    [__LINE__, q(@_\n), <<'EOF' ],  # N.B. Maxwidth was set to 72
+    [__LINE__, q(@_\n), <<'EOF' ],  # N.B. Foldwidth was set to 72
 @_=(42,[0,1,"C",{"" => "Emp",A => 111, "B B" => 222, C => {d => 888,
         e => 999}, D => {}, EEEEEEEEEEEEEEEEEEEEEEEEEE => \42, F =>
       \\\43}, [], [0,1,2,3,4,5,6,7,8,9]])
