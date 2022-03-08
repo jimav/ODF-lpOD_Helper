@@ -14,7 +14,7 @@ sub DB_Vis_Evalwrapper { # Must appear before any variables are declared
 package Vis;
 # POD documentation follows __END__
 
-use version 0.77; our $VERSION = version->declare(sprintf "v%s", q$Revision: 2.8 $ =~ /(\d[.\d]+)/);
+use version 0.77; our $VERSION = version->declare(sprintf "v%s", q$Revision: 2.9 $ =~ /(\d[.\d]+)/);
 
 require Data::Dumper;
 use Carp;
@@ -43,26 +43,23 @@ our @EXPORT_OK = qw($Maxwidth $MaxStringwidth $Truncsuffix $Debug
                     $Stringify
                     $Useqq $Quotekeys $Sortkeys $Terse $Indent $Sparseseen);
 
-our @ISA       = ('Data::Dumper'); # see comments at new()
-
 our ($Debug, $MaxStringwidth, $Truncsuffix, $Stringify,
      $Maxwidth, $Maxwidth1,
      $Useqq, $Quotekeys, $Sortkeys, $Terse, $Indent, $Sparseseen);
 
+# Defaults for Vis-specific features
 $Debug          = 0            unless defined $Debug;
 $MaxStringwidth = 0            unless defined $MaxStringwidth;
 $Truncsuffix    = "..."        unless defined $Truncsuffix;
-$Stringify      = 1            unless defined $Stringify;
 $Maxwidth       = undef        unless defined $Maxwidth;  # undef to auto-detect
 $Maxwidth1      = undef        unless defined $Maxwidth1; # override for 1st
+$Stringify      = 1            unless defined $Stringify;
 
-# The following Vis defaults override Data::Dumper defaults
-$Useqq          = 1            unless defined $Useqq;
+# Defaults which override Data::Dumper defaults
 $Quotekeys      = 0            unless defined $Quotekeys;
 $Sortkeys       = \&__sortkeys unless defined $Sortkeys;
-$Terse          = 1            unless defined $Terse;
-$Indent         = 1            unless defined $Indent;
 $Sparseseen     = 1            unless defined $Sparseseen;
+$Useqq          = 1            unless defined $Useqq;
 
 sub Debug {
   my($s, $v) = @_;
@@ -71,6 +68,10 @@ sub Debug {
 sub MaxStringwidth {
   my($s, $v) = @_;
   @_ == 2 ? (($s->{MaxStringwidth} = $v), return $s) : $s->{MaxStringwidth};
+}
+sub Truncsuffix {
+  my($s, $v) = @_;
+  @_ == 2 ? (($s->{Truncsuffix} = $v), return $s) : $s->{Truncsuffix};
 }
 sub Maxwidth {
   my($s, $v, $v1) = @_;
@@ -84,18 +85,36 @@ sub Maxwidth1 {  # experimental
   my($s, $v) = @_;
   @_ == 2 ? (($s->{Maxwidth1} = $v), return $s) : $s->{Maxwidth1};
 }
-sub Truncsuffix {
-  my($s, $v) = @_;
-  @_ == 2 ? (($s->{Truncsuffix} = $v), return $s) : $s->{Truncsuffix};
-}
 sub Stringify {
   my($s, $v) = @_;
   @_ == 2 ? (($s->{Stringify} = $v), return $s) : $s->{Stringify};
 }
-sub VisType { # NOT currently documented for direct use by users
+sub _Vistype {
   my($s, $v) = @_;
-  @_ >= 2 ? (($s->{VisType} = $v), return $s) : $s->{VisType};
+  @_ >= 2 ? (($s->{_Vistype} = $v), return $s) : $s->{_Vistype};
 }
+
+# These are implemented entirely by Data::Dumper
+#  In a previous design Vis derived from Data::Dumper and simply inherited
+#  these methods.  However if the user wanted to set defaults via globals
+#  they had to know which were in package Vis and which in Data::Dumper.
+sub Quotekeys  {
+  my $self = shift;
+  @_ ? (($s->{dd}->Quotekeys(@_)), return $s) : $s->{dd}->Quotekeys;
+}
+sub Sortkeys  {
+  my $self = shift;
+  @_ ? (($s->{dd}->Sortkeys(@_)), return $s) : $s->{dd}->Sortkeys;
+}
+sub Sparseseen  {
+  my $self = shift;
+  @_ ? (($s->{dd}->Sparseseen(@_)), return $s) : $s->{dd}->Sparseseen;
+}
+sub Useqq  {
+  my $self = shift;
+  @_ ? (($s->{dd}->Useqq(@_)), return $s) : $s->{dd}->Useqq;
+}
+
 
 ############### Functional (non-oo) APIs #################
 
@@ -129,25 +148,25 @@ sub qshpath(_) {  # like qsh but does not quote initial ~ or ~username
 sub __getobj {
   (blessed($_[0]) && $_[0]->isa(__PACKAGE__) ? shift : __PACKAGE__->new())
 }
-sub __getobj_s { &__getobj->Values([$_[0]]) }
-sub __getobj_a { &__getobj->Values([\@_])   } #->Values([[@_]])
+sub __getobj_s { &__getobj->{dd}->Values([$_[0]]) }
+sub __getobj_a { &__getobj->{dd}->Values([\@_])   } #->Values([[@_]])
 sub __getobj_h {
   my $o = &__getobj;
   (scalar(@_) % 2)==0 or croak "Uneven number args for hash key => val pairs";
-  $o ->Values([{@_}])
+  $o ->{dd}->Values([{@_}])
 }
 
 # These can be called as *FUNCTIONS* or as *METHODS* of a Vis object
-sub vis(_)    { &__getobj_s ->VisType('s' )->Dump; }
-sub visq(_)   { &__getobj_s ->VisType('s' )->Useqq(0)->Dump; }
-sub avis(@)   { &__getobj_a ->VisType('a' )->Dump; }
-sub avisq(@)  { &__getobj_a ->VisType('a' )->Useqq(0)->Dump; }
-sub lvis(@)   { &__getobj_a ->VisType('l' )->Dump; }
-sub lvisq(@)  { &__getobj_a ->VisType('l' )->Useqq(0)->Dump; }
-sub hvis(@)   { &__getobj_h ->VisType('h' )->Dump; }
-sub hvisq(@)  { &__getobj_h ->VisType('h' )->Useqq(0)->Dump; }
-sub hlvis(@)  { &__getobj_h ->VisType('hl')->Dump; }
-sub hlvisq(@) { &__getobj_h ->VisType('hl')->Useqq(0)->Dump; }
+sub vis(_)    { &__getobj_s ->_Vistype('s' )->Dump; }
+sub visq(_)   { &__getobj_s ->_Vistype('s' )->Useqq(0)->Dump; }
+sub avis(@)   { &__getobj_a ->_Vistype('a' )->Dump; }
+sub avisq(@)  { &__getobj_a ->_Vistype('a' )->Useqq(0)->Dump; }
+sub lvis(@)   { &__getobj_a ->_Vistype('l' )->Dump; }
+sub lvisq(@)  { &__getobj_a ->_Vistype('l' )->Useqq(0)->Dump; }
+sub hvis(@)   { &__getobj_h ->_Vistype('h' )->Dump; }
+sub hvisq(@)  { &__getobj_h ->_Vistype('h' )->Useqq(0)->Dump; }
+sub hlvis(@)  { &__getobj_h ->_Vistype('hl')->Dump; }
+sub hlvisq(@) { &__getobj_h ->_Vistype('hl')->Useqq(0)->Dump; }
 
 # Trampolines which replace the call frame with a call directly to the
 # interpolation code which uses package DB to access the user's context.
@@ -161,29 +180,16 @@ sub dvisq(_){ @_=(&__getobj->Useqq(0),shift,'d');goto &DB::DB_Vis_Interpolate }
 # as a method to produce the output (those routines can also be called as
 # functions, in which case they create a new object internally).
 #
-# An earlier version of this package was a true drop-in replacement for 
-# Data::Dumper and supported all of the same APIs (mostly by inheritance) 
-# including Data::Dumper's new([values],[names]) constructor.
-# Vis extensions were accessed via differently-named alternative constructors.
+# A Data::Dumper object is held as a property of the Vis object and is not
+# directly accessible to the user.  The default values for all configuration 
+# values (including for things implemented entirely by Data::Dumper
+# such as Sortkeys), come from globals in package Vis.
 #
-# Now Vis is no longer API compatible with Data::Dumper, but uses the same
-# option-setting paradigm where methods like Maxwidth() modify the object
-# if called with arguments while returning the object to allow method chaining.
-#
-# However there remains a wart: Vis still derives from Data::Dumper and
-# a few Data::Dumper options may reasonably be called by users (Quotekeys, 
-# Sortkeys, Useqq, and maybe Sparseseen).  This is fine as far as method
-# calls are concerned, but the default values for those options come from
-# globals in package Data::Dumper, not Vis.
-#
-# To fix this, we should implement all user-settable options ourself 
-# (with defaults coming from globals in package Vis).  In that case
-# a Data::Dumper object can be stored internally ("has a" relationship) 
-# rather than deriving.  But that is a project for another day.
 sub new {
   croak "No args allowed for Vis::new" if @_ > 1;
   my ($class) = @_;
-  (bless $class->SUPER::new([],[]), $class)->_config_defaults()
+  (bless { dd => Data::Dumper->new([],[])->Terse(1)->Indent(0) }, $class)
+    ->_config_defaults()
 }
 
 ############# only internals follow ############
@@ -216,14 +222,11 @@ sub _config_defaults {
     ->Maxwidth($Maxwidth, $Maxwidth1)
     ->Stringify($Stringify)
     ->Truncsuffix($Truncsuffix)
-    # The following are Data::Dumper methods callable by Vis users
+    # The following actually modify the Data::Dumper object held as a property
     ->Quotekeys($Quotekeys)
     ->Sortkeys($Sortkeys)
     ->Sparseseen($Sparseseen)
     ->Useqq($Useqq)
-    # The following Data::Dumper options should never by changed by users 
-    ->Terse($Terse)
-    ->Indent($Indent)
 }
 
 my $unique = refaddr \&new;
@@ -565,9 +568,9 @@ sub _postprocess_DD_result {
   (my $self, local $_) = @_;
 
   my ($debug, $vistype, $maxwidth, $maxwidth1)
-    = @$self{qw/VisDebug VisType Maxwidth Maxwidth1/};
+    = @$self{qw/VisDebug _Vistype Maxwidth Maxwidth1/};
 
-  croak "invalid VisType ", u($vistype)
+  croak "invalid _Vistype ", u($vistype)
     unless ($vistype//0) =~ /^(?:[salh]|hl)$/;
 
   say "##RAW  :",$_ if $self->{VisDebug};
