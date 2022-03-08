@@ -14,7 +14,7 @@ sub DB_Vis_Evalwrapper { # Must appear before any variables are declared
 package Vis;
 # POD documentation follows __END__
 
-use version 0.77; our $VERSION = version->declare(sprintf "v%s", q$Revision: 2.9 $ =~ /(\d[.\d]+)/);
+use version 0.77; our $VERSION = version->declare(sprintf "v%s", q$Revision: 2.10 $ =~ /(\d[.\d]+)/);
 
 require Data::Dumper;
 use Carp;
@@ -23,7 +23,7 @@ use Encode ();
 use Scalar::Util qw(blessed reftype refaddr looks_like_number);
 use List::Util qw(min max first any);
 use Regexp::Common qw/RE_balanced/;
-use Term::ReadKey qw(GetTerminalSize);
+use Term::ReadKey ();
 use overload ();
 
 sub debugvis(_) {  # for our internal debugging messages
@@ -39,84 +39,12 @@ our @EXPORT    = qw(vis  avis  lvis  svis  dvis  hvis  hlvis
                     visq avisq lvisq svisq dvisq hvisq hlvisq
                     u qsh forceqsh qshpath);
 
-our @EXPORT_OK = qw($Maxwidth $MaxStringwidth $Truncsuffix $Debug
-                    $Stringify
-                    $Useqq $Quotekeys $Sortkeys $Terse $Indent $Sparseseen);
+our @EXPORT_OK = qw($Debug $MaxStringwidth $Truncsuffix $Stringify $Maxwidth
+                    $Useqq $Quotekeys $Sortkeys $Sparseseen);
 
-our ($Debug, $MaxStringwidth, $Truncsuffix, $Stringify,
-     $Maxwidth, $Maxwidth1,
-     $Useqq, $Quotekeys, $Sortkeys, $Terse, $Indent, $Sparseseen);
+our @ISA       = ('Data::Dumper'); # see comments at new()
 
-# Defaults for Vis-specific features
-$Debug          = 0            unless defined $Debug;
-$MaxStringwidth = 0            unless defined $MaxStringwidth;
-$Truncsuffix    = "..."        unless defined $Truncsuffix;
-$Maxwidth       = undef        unless defined $Maxwidth;  # undef to auto-detect
-$Maxwidth1      = undef        unless defined $Maxwidth1; # override for 1st
-$Stringify      = 1            unless defined $Stringify;
-
-# Defaults which override Data::Dumper defaults
-$Quotekeys      = 0            unless defined $Quotekeys;
-$Sortkeys       = \&__sortkeys unless defined $Sortkeys;
-$Sparseseen     = 1            unless defined $Sparseseen;
-$Useqq          = 1            unless defined $Useqq;
-
-sub Debug {
-  my($s, $v) = @_;
-  @_ == 2 ? (($s->{VisDebug} = $v), return $s) : $s->{VisDebug};
-}
-sub MaxStringwidth {
-  my($s, $v) = @_;
-  @_ == 2 ? (($s->{MaxStringwidth} = $v), return $s) : $s->{MaxStringwidth};
-}
-sub Truncsuffix {
-  my($s, $v) = @_;
-  @_ == 2 ? (($s->{Truncsuffix} = $v), return $s) : $s->{Truncsuffix};
-}
-sub Maxwidth {
-  my($s, $v, $v1) = @_;
-  return(wantarray ? ($s->{Maxwidth}, $s->{Maxwidth1}) : $s->{Maxwidth})
-    if @_ == 1;
-  $s->{Maxwidth} = $v; 
-  $s->{Maxwidth1} = $v1 if @_==3;
-  $s
-}
-sub Maxwidth1 {  # experimental
-  my($s, $v) = @_;
-  @_ == 2 ? (($s->{Maxwidth1} = $v), return $s) : $s->{Maxwidth1};
-}
-sub Stringify {
-  my($s, $v) = @_;
-  @_ == 2 ? (($s->{Stringify} = $v), return $s) : $s->{Stringify};
-}
-sub _Vistype {
-  my($s, $v) = @_;
-  @_ >= 2 ? (($s->{_Vistype} = $v), return $s) : $s->{_Vistype};
-}
-
-# These are implemented entirely by Data::Dumper
-#  In a previous design Vis derived from Data::Dumper and simply inherited
-#  these methods.  However if the user wanted to set defaults via globals
-#  they had to know which were in package Vis and which in Data::Dumper.
-sub Quotekeys  {
-  my $self = shift;
-  @_ ? (($s->{dd}->Quotekeys(@_)), return $s) : $s->{dd}->Quotekeys;
-}
-sub Sortkeys  {
-  my $self = shift;
-  @_ ? (($s->{dd}->Sortkeys(@_)), return $s) : $s->{dd}->Sortkeys;
-}
-sub Sparseseen  {
-  my $self = shift;
-  @_ ? (($s->{dd}->Sparseseen(@_)), return $s) : $s->{dd}->Sparseseen;
-}
-sub Useqq  {
-  my $self = shift;
-  @_ ? (($s->{dd}->Useqq(@_)), return $s) : $s->{dd}->Useqq;
-}
-
-
-############### Functional (non-oo) APIs #################
+############### Utility Functions #################
 
 sub u(_) { $_[0] // "undef" }
 sub forceqsh(_) {
@@ -143,17 +71,97 @@ sub qshpath(_) {  # like qsh but does not quote initial ~ or ~username
   $rest eq "" ? $tilde_prefix : $tilde_prefix.qsh($rest)
 }
 
-########### Functional/OO APIs #############
+#################### Configuration Globals #################
+
+our ($Debug, $MaxStringwidth, $Truncsuffix, $Stringify,
+     $Maxwidth, $Maxwidth1,
+     $Useqq, $Quotekeys, $Sortkeys, $Sparseseen);
+
+$Debug          = 0            unless defined $Debug;
+$MaxStringwidth = 0            unless defined $MaxStringwidth;
+$Truncsuffix    = "..."        unless defined $Truncsuffix;
+$Stringify      = 1            unless defined $Stringify;
+$Maxwidth       = undef        unless defined $Maxwidth;  # undef to auto-detect
+$Maxwidth1      = undef        unless defined $Maxwidth1; # override for 1st
+
+# The following Vis defaults override Data::Dumper defaults
+$Useqq          = 1            unless defined $Useqq;
+$Quotekeys      = 0            unless defined $Quotekeys;
+$Sortkeys       = \&__sortkeys unless defined $Sortkeys;
+$Sparseseen     = 1            unless defined $Sparseseen;
+
+#################### Vis Methods #################
+
+sub Debug {
+  my($s, $v) = @_;
+  @_ == 2 ? (($s->{VisDebug} = $v), return $s) : $s->{VisDebug};
+}
+sub MaxStringwidth {
+  my($s, $v) = @_;
+  @_ == 2 ? (($s->{MaxStringwidth} = $v), return $s) : $s->{MaxStringwidth};
+}
+sub Truncsuffix {
+  my($s, $v) = @_;
+  @_ == 2 ? (($s->{Truncsuffix} = $v), return $s) : $s->{Truncsuffix};
+}
+sub Stringify {
+  my($s, $v) = @_;
+  @_ == 2 ? (($s->{Stringify} = $v), return $s) : $s->{Stringify};
+}
+sub Maxwidth {
+  my($s, $v, $v1) = @_;
+  return(wantarray ? ($s->{Maxwidth}, $s->{Maxwidth1}) : $s->{Maxwidth})
+    if @_ == 1;
+  $s->{Maxwidth} = $v; 
+  $s->{Maxwidth1} = $v1 if @_==3;
+  $s
+}
+sub Maxwidth1 {  # experimental
+  my($s, $v) = @_;
+  @_ == 2 ? (($s->{Maxwidth1} = $v), return $s) : $s->{Maxwidth1};
+}
+sub Terse  { confess "Terse() may not be called on Vis objects" }
+sub Indent { confess "Indent() may not be called on Vis objects" }
+
+sub _Vistype {
+  my($s, $v) = @_;
+  @_ >= 2 ? (($s->{_Vistype} = $v), return $s) : $s->{_Vistype};
+}
+
+# Our new() takes no parameters and returns a default-initialized object,
+# on which option-setting methods may be called and finally "vis", "avis", etc.
+# as a method to produce the output (those routines can also be called as
+# functions, in which case they create a new object internally).
+#
+# An earlier version of this package was a true drop-in replacement for 
+# Data::Dumper and supported all of the same APIs (mostly by inheritance) 
+# including Data::Dumper's new([values],[names]) constructor.
+# Vis extensions were accessed via differently-named alternative constructors.
+#
+# Now Vis is no longer API compatible with Data::Dumper, but uses the same
+# option-setting paradigm where methods like Maxwidth() modify the object
+# if called with arguments while returning the object to allow method chaining.
+#
+# Global variablse in Vis are provided for all config options, including
+# those actually implemented by Data::Dumper.  These values are set
+# automatically by _config_defaults().
+sub new {
+  croak "No args allowed for Vis::new" if @_ > 1;
+  my ($class) = @_;
+  (bless $class->SUPER::new([],[]), $class)->_config_defaults()
+}
+
+########### Subs callable as either a Function or Method #############
 
 sub __getobj {
   (blessed($_[0]) && $_[0]->isa(__PACKAGE__) ? shift : __PACKAGE__->new())
 }
-sub __getobj_s { &__getobj->{dd}->Values([$_[0]]) }
-sub __getobj_a { &__getobj->{dd}->Values([\@_])   } #->Values([[@_]])
+sub __getobj_s { &__getobj->Values([$_[0]]) }
+sub __getobj_a { &__getobj->Values([\@_])   } #->Values([[@_]])
 sub __getobj_h {
   my $o = &__getobj;
   (scalar(@_) % 2)==0 or croak "Uneven number args for hash key => val pairs";
-  $o ->{dd}->Values([{@_}])
+  $o ->Values([{@_}])
 }
 
 # These can be called as *FUNCTIONS* or as *METHODS* of a Vis object
@@ -175,46 +183,12 @@ sub svisq(_){ @_=(&__getobj->Useqq(0),shift,'s');goto &DB::DB_Vis_Interpolate }
 sub dvis(_) { @_=(&__getobj,          shift,'d');goto &DB::DB_Vis_Interpolate }
 sub dvisq(_){ @_=(&__getobj->Useqq(0),shift,'d');goto &DB::DB_Vis_Interpolate }
 
-# Our new() takes no parameters and returns a default-initialized object,
-# on which option-setting methods may be called and finally "vis", "avis", etc.
-# as a method to produce the output (those routines can also be called as
-# functions, in which case they create a new object internally).
-#
-# A Data::Dumper object is held as a property of the Vis object and is not
-# directly accessible to the user.  The default values for all configuration 
-# values (including for things implemented entirely by Data::Dumper
-# such as Sortkeys), come from globals in package Vis.
-#
-sub new {
-  croak "No args allowed for Vis::new" if @_ > 1;
-  my ($class) = @_;
-  (bless { dd => Data::Dumper->new([],[])->Terse(1)->Indent(0) }, $class)
-    ->_config_defaults()
-}
-
 ############# only internals follow ############
+
 sub _config_defaults {
   my $self = shift;
-
-  if (! defined $Maxwidth) {
-    if (u($ENV{COLUMNS}) =~ /^[1-9]\d*$/) {
-      $Maxwidth = $ENV{COLUMNS}; # overrides actual terminal width
-      say "Default Maxwidth=$Maxwidth from ENV{COLUMNS}" if $Debug;
-    } else {
-      local *_; # Try to avoid clobbering special filehandle "_"
-      # Does not yet work, see https://github.com/Perl/perl5/issues/19142
-      my ($width, $height) = GetTerminalSize(
-        -t STDERR ? *STDERR : -t STDOUT ? *STDOUT 
-        : do{my $fh; for("/dev/tty",'CONOUT$') { last if open $fh, $_ } $fh}
-      );
-      if (($Maxwidth = $width)) {
-        say "Default Maxwidth=$Maxwidth from Term::ReadKey" if $Debug;
-      } else {
-        $Maxwidth = 80;
-        say "Maxwidth=$Maxwidth from hard-coded backup default" if $Debug;
-      }
-    }
-  }
+  
+  &__set_default_Maxwidth if ! defined $Maxwidth;
 
   $self
     ->Debug($Debug)
@@ -222,11 +196,34 @@ sub _config_defaults {
     ->Maxwidth($Maxwidth, $Maxwidth1)
     ->Stringify($Stringify)
     ->Truncsuffix($Truncsuffix)
-    # The following actually modify the Data::Dumper object held as a property
+      # These Data::Dumper config methods are callable by Vis users
     ->Quotekeys($Quotekeys)
     ->Sortkeys($Sortkeys)
     ->Sparseseen($Sparseseen)
     ->Useqq($Useqq)
+      # These Data::Dumper methods may not be called by Vis users
+    ->SUPER::Terse(1)
+    ->SUPER::Indent(0)
+}
+
+sub __set_default_Maxwidth() {
+  if (u($ENV{COLUMNS}) =~ /^[1-9]\d*$/) {
+    $Maxwidth = $ENV{COLUMNS}; # overrides actual terminal width
+    say "Default Maxwidth=$Maxwidth from ENV{COLUMNS}" if $Debug;
+  } else {
+    local *_; # Try to avoid clobbering special filehandle "_"
+    # Does not yet work, see https://github.com/Perl/perl5/issues/19142
+    my ($width, $height) = Term::ReadKey::GetTerminalSize(
+      -t STDERR ? *STDERR : -t STDOUT ? *STDOUT 
+      : do{my $fh; for("/dev/tty",'CONOUT$') { last if open $fh, $_ } $fh}
+    );
+    if (($Maxwidth = $width)) {
+      say "Default Maxwidth=$Maxwidth from Term::ReadKey" if $Debug;
+    } else {
+      $Maxwidth = 80;
+      say "Maxwidth=$Maxwidth from hard-coded backup default" if $Debug;
+    }
+  }
 }
 
 my $unique = refaddr \&new;
@@ -319,8 +316,8 @@ sub Dump {
   # maximally-compact string, and then manually fold the result to Maxwidth,
   # and insert the user's Pad before each line.
   my $pad = $self->Pad();
-  $self->Indent(0)->Pad("");
-  #say "##Vis b4 SUPER: Indent=",$self->Indent(), " Useqq=",u($self->Useqq), " Pad=",debugvis($self->Pad)," Values=(",join(",", map{u} $self->Values),")" if $debug;
+  $self->Pad("");
+  #say "##Vis b4 SUPER: Useqq=",u($self->Useqq), " Pad=",debugvis($self->Pad)," Values=(",join(",", map{u} $self->Values),")" if $debug;
   {
     my ($sAt, $sQ) = ($@, $?); # Data::Dumper corrupts these
     $_ = $self->SUPER::Dump;
@@ -1341,31 +1338,32 @@ my $byte_str = join "",map { chr $_ } 10..30;
 { chomp( my $expected = `tput cols` );  # may default to 80 if no tty
   die "Expected initial Vis::Maxwidth to be undef" if defined $Vis::Maxwidth;
   { local $ENV{COLUMNS} = $expected + 13;
-    vis(123);
-    die "Vis::Maxwidth does not honor ENV{COLUMNS}" unless $Vis::Maxwidth == $expected + 13;
-    undef $Vis::Maxwidth;  # re-enable auto-detect
+    svis("abc");
+    die "Vis::Maxwidth does not honor ENV{COLUMNS}" 
+      unless $Vis::Maxwidth == $expected + 13;
   }
-  die "bug: Vis::Maxwidth not undef" if defined($Vis::Maxwidth);
+  undef $Vis::Maxwidth;  # re-enable auto-detect
   if (unix_compatible_os()) {
     delete local $ENV{COLUMNS};
-    vis(123);
+    svis("abc");
     die "Vis::Maxwidth ",u($Vis::Maxwidth)," not defaulted correctly, expecting $expected" unless $Vis::Maxwidth == $expected;
-    undef $Vis::Maxwidth;  # re-enable auto-detect
   }
-  die "bug: Vis::Maxwidth not undef" if defined($Vis::Maxwidth);
+  undef $Vis::Maxwidth;  # re-enable auto-detect
   if (unix_compatible_os()) {
     delete local $ENV{COLUMNS};
     my $pid = fork();
     if ($pid==0) {
       require POSIX;
-      die "bug" unless POSIX::setsid()==$$;
+      die "bug" unless POSIX::setsid()==$$; # Loose controlling tty
+      #for (*STDIN,*STDOUT,*STDERR) { close $_ or die "Can not close $_:$!" }
       POSIX::close $_ for (0,1,2);
-      vis(123);
+      $Vis::Debug = 0;
+      svis("abc");
       exit($Vis::Maxwidth // 253);
     }
     waitpid($pid,0);
-    die "Vis::Maxwidth defaulted to ", ($? >> 8)|($? & !0xFF), " (not $expected as expected)"
-      unless $? == ($expected << 8);
+    die "Vis::Maxwidth defaulted to ", ($? >> 8)|($? & !0xFF), " (not 80 as expected)"
+      unless $? == (80 << 8);
     $? = 0;
   }
 }
