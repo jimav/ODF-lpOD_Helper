@@ -14,7 +14,7 @@ sub DB_Vis_Evalwrapper { # Must appear before any variables are declared
 package Vis;
 # POD documentation follows __END__
 
-use version 0.77; our $VERSION = version->declare(sprintf "v%s", q$Revision: 2.11 $ =~ /(\d[.\d]+)/);
+use version 0.77; our $VERSION = version->declare(sprintf "v%s", q$Revision: 2.12 $ =~ /(\d[.\d]+)/);
 
 require Data::Dumper;
 use Carp;
@@ -951,7 +951,7 @@ the '$' sigl is omitted from the label.
 
 =head2 hvis LIST
 
-C<vis> formats a single single scalar ($_ argument is omitted);
+C<vis> formats a single single scalar ($_ if no argument is given);
 
 C<avis> formats a list as a comma-separated list in parens, i.e. an array
 constructor.
@@ -1016,14 +1016,8 @@ Enable internal debug tracing
 
 =head1 Data::Dumper pass-thru options
 
-The following methods control Data::Dumper options you may set.  
-
-Currently these methods are inherited from C<Data::Dumper>, 
-from which C<Vis> derives.  Their default values are controlled by 
-global variables in the C<Data::Dumper> package and not C<Vis>.
-
-However this may change in the future, so please do not directly 
-access Data::Dumper global variables.
+The following methods control options which are passed through
+to Data::Dumper.
 
 =head2 Useqq(BOOL)
 
@@ -1041,8 +1035,8 @@ by numerical value (see example in SYNOPSIS).
 
 Control how hash keys are "quoted".
 
-=head1 You probably should not use any of the other C<Data::Dumper> methods
-on C<Vis> objects.
+The other options provided by C<Data::Dumper> may not be
+set for C<Vis> objects.
 
 =head1 
 
@@ -1076,15 +1070,9 @@ Undefined values appear as C<undef> without quotes.
 C<qshpath> is like C<qsh> except that an initial ~ or ~username is left
 unquoted.  Useful with shells such as bash or csh.
 
-
 =head1 SEE ALSO
 
 Data::Dumper
-
-=head1 CREDITS
-
-This module contains code snippets copied from perl5db.pl 
-Data::Dumper and JSON::PP.
 
 =head1 AUTHOR
 
@@ -1284,8 +1272,6 @@ sub checklit(&$$) {
   (my $sq_expected_re = $dq_expected_re) 
     =~ s{ ( [^\\"]++|(\\.) )*+ \K " }{'}xsg
        or do{ die "bug" if $dq_expected_re =~ /(?<![^\\])'/; }; #probably
-  say "dq_expected_re=$dq_expected_re";
-  say "sq_expected_re=$sq_expected_re";
   foreach (
     [ 'Vis->new()->vis($_[1])',  '_Q_' ],
     [ 'vis($_[1])',              '_Q_' ],
@@ -1396,8 +1382,8 @@ foreach (
           ['Maxwidth',0,1,80,9999],
           ['MaxStringwidth',undef,0,1,80,9999],
           ['Truncsuffix',"","...","(trunc)"],
-          # FIXME: This will spew debug messages.  Trap them somehow??
-          ['Debug',undef,0,1],
+          ## FIXME: This will spew debug messages.  Trap them somehow??
+          #['Debug',undef,0,1],
           # Now the 'q' interfaces force Useqq(0) internally
           # ['Useqq',0,1,'utf8'],
           ['Quotekeys',0,1],
