@@ -14,7 +14,7 @@ sub DB_Vis_Evalwrapper { # Must appear before any variables are declared
 package Vis;
 # POD documentation follows __END__
 
-use version 0.77; our $VERSION = version->declare(sprintf "v%s", q$Revision: 2.10 $ =~ /(\d[.\d]+)/);
+use version 0.77; our $VERSION = version->declare(sprintf "v%s", q$Revision: 2.11 $ =~ /(\d[.\d]+)/);
 
 require Data::Dumper;
 use Carp;
@@ -178,10 +178,10 @@ sub hlvisq(@) { &__getobj_h ->_Vistype('hl')->Useqq(0)->Dump; }
 
 # Trampolines which replace the call frame with a call directly to the
 # interpolation code which uses package DB to access the user's context.
-sub svis(_) { @_=(&__getobj,          shift,'s');goto &DB::DB_Vis_Interpolate }
-sub svisq(_){ @_=(&__getobj->Useqq(0),shift,'s');goto &DB::DB_Vis_Interpolate }
-sub dvis(_) { @_=(&__getobj,          shift,'d');goto &DB::DB_Vis_Interpolate }
-sub dvisq(_){ @_=(&__getobj->Useqq(0),shift,'d');goto &DB::DB_Vis_Interpolate }
+sub svis(_) { @_=(&__getobj,          shift,'s');goto &_Interpolate }
+sub svisq(_){ @_=(&__getobj->Useqq(0),shift,'s');goto &_Interpolate }
+sub dvis(_) { @_=(&__getobj,          shift,'d');goto &_Interpolate }
+sub dvisq(_){ @_=(&__getobj->Useqq(0),shift,'d');goto &_Interpolate }
 
 ############# only internals follow ############
 
@@ -613,71 +613,9 @@ sub RestorePunct() {
   ( $@, $!, $^E, $,, $/, $\, $^W ) = @{ pop @save_stack };
 }
 
-package DB;
-# eval a string in the user's context and return the result.  The nearest
-# non-DB frame must be the original user's call; this is accomplished by
-# using "goto &DB::DB_Vis_Interpolate" in the entry-point sub.
-sub DB_Vis_Eval($$) {
-  my ($label_for_errmsg, $evalarg) = @_;
-  Carp::confess("Vis bug:empty evalarg") if $evalarg eq "";
-  # Many ideas here taken from perl5db.pl
-
-  # Find the closest non-DB caller.  The eval will be done in that package.
-  # Find the next caller further up which has arguments (i.e. wasn't doing
-  # "&subname;"), and set our local @_ to be those arguments
-  my ($distance, $pkg, $fname, $lno);
-  for ($distance = 0 ; ; $distance++) {
-    ($pkg, $fname, $lno) = caller($distance); 
-    last if $pkg ne "DB";
-  }
-  while() {
-    $distance++;
-    my ($p, $hasargs) = (caller($distance))[0,4];
-    if (! defined $p){
-      @DB::args = ('<@_ is not defined in the outer block>');
-      last
-    }
-    last if $hasargs;
-  }
-  local *_ = [ @DB::args ];  # copy in case of recursion
-
-  # &SaveAndResetPunct was called in DB_Vis_Interpolate
-  &Vis::RestorePunct;
-  $Vis::user_dollarat = $@; # 'eval' will reset $@
-  my @result = do {
-    local @Vis::result;
-    local $Vis::string_to_eval = 
-      "package $pkg; "
-     .' $@ = $Vis::user_dollarat; '
-     .' @Vis::result = '.$evalarg.';'
-     .' $Vis::user_dollarat = $@; '  # possibly changed by a tie handler
-     ;
-     &DB_Vis_Evalwrapper;
-     #say "RAW errmsg:$@\nstring_to_eval=«$Vis::string_to_eval»" if $@;
-     @Vis::result
-  };
-  my $errmsg = $@;
-  &Vis::SaveAndResetPunct;
-  $Vis::save_stack[-1]->[0] = $Vis::user_dollarat;
-
-  if ($errmsg) {
-    #warn "##RAW ERRMSG:«$errmsg» evalarg=«$evalarg» at ${fname}:$lno\n";
-    $errmsg =~ s/ at \(eval \d+\) line \d+[^\n]*\n?\z//s;
-    #warn "##COOKED MSG:«$errmsg»\n";
-    Carp::confess("${label_for_errmsg}: Error interpolating '$evalarg' at $fname line $lno:\n$errmsg\n");
-  }
-
-  wantarray ? @result : (do{die "bug" if @result>1}, $result[0])
-}# DB_Vis_Eval
-
-sub DB_Vis_Interpolate {
+sub _Interpolate {
   my ($self, $input, $s_or_d) = @_;
   return "<undef arg>" if ! defined $input;
-
-  my sub u(_)       { &Vis::u  }
-  my sub oops(;@)   { goto &Vis::oops }
-  my sub confess(@) { goto &Carp::confess }
-  my sub carp(@)    { goto &Carp::carp }
 
   # cf man perldata
   state $userident_re = qr/ (?: (?=\p{Word})\p{XID_Start} | _ )
@@ -695,8 +633,7 @@ sub DB_Vis_Interpolate {
 
   my $debug = $self->Debug;
   my $useqq = $self->Useqq;
-  my $q = $useqq ? "" : "q";
-  my $funcname = $s_or_d . "vis" .$q;
+
   my @pieces;  # list of [visfuncname or "", inputstring]
   { local $_ = $input;
     if (/\b((?:ARRAY|HASH)\(0x[a-fA-F0-9]+\))/) {
@@ -767,11 +704,20 @@ sub DB_Vis_Interpolate {
     }
   }# local $_
 
+  my $q = $useqq ? "" : "q";
+  my $funcname = $s_or_d . "vis" .$q;
+  @_ = ($self, $funcname, \@pieces);
+  goto &DB::DB_Vis_Interpolate
+}
+
+package DB;
+
+sub DB_Vis_Interpolate {
+  my ($self, $funcname, $pieces) = @_;
   my $result = "";
-  foreach my $p (@pieces) {
+  foreach my $p (@$pieces) {
     my ($methname, $arg) = @$p;
     if ($methname eq "") {
-      my @aa = DB::DB_Vis_Eval($funcname, $arg);
       $result .= DB::DB_Vis_Eval($funcname, $arg);
     } else {
       # Reduce indent before first wrap to account for stuff alrady there
@@ -781,15 +727,65 @@ sub DB_Vis_Interpolate {
       if ($maxwidth) {
         $self->{Maxwidth1} -= $leftwid if $leftwid < $self->{Maxwidth1}
       }
-      say "${s_or_d}vis: leftwid=$leftwid, temp Maxwidth1=",u($Vis::Maxwidth1)," Useqq=",u($self->Useqq) if $debug;
-
       $result .= $self->$methname( DB::DB_Vis_Eval($funcname, $arg) );
     }    
   }
 
-  &Vis::RestorePunct;
+  &Vis::RestorePunct;  # saved in _Interpolate
   $result
-}#DB::DB_Vis_Interpolate
+}# DB_Vis_Interpolate
+
+# eval a string in the user's context and return the result.  The nearest
+# non-DB frame must be the original user's call; this is accomplished by
+# using "goto &DB::_Interpolate" in the entry-point sub.
+sub DB_Vis_Eval($$) {
+  my ($label_for_errmsg, $evalarg) = @_;
+  Carp::confess("Vis bug:empty evalarg") if $evalarg eq "";
+  # Many ideas here taken from perl5db.pl
+
+  # Find the closest non-DB caller.  The eval will be done in that package.
+  # Find the next caller further up which has arguments (i.e. wasn't doing
+  # "&subname;"), and make @_ contain those arguments.
+  my ($distance, $pkg, $fname, $lno);
+  for ($distance = 0 ; ; $distance++) {
+    ($pkg, $fname, $lno) = caller($distance); 
+    last if $pkg ne "DB";
+  }
+  while() {
+    $distance++;
+    my ($p, $hasargs) = (caller($distance))[0,4];
+    if (! defined $p){
+      @DB::args = ('<@_ is not defined in the outer block>');
+      last
+    }
+    last if $hasargs;
+  }
+  local *_ = [ @DB::args ];  # copy in case of recursion
+
+  &Vis::RestorePunct;  # saved in _Interpolate
+  $Vis::user_dollarat = $@; # 'eval' will reset $@
+  my @result = do {
+    local @Vis::result;
+    local $Vis::string_to_eval = 
+      "package $pkg; "
+     .' $@ = $Vis::user_dollarat; '
+     .' @Vis::result = '.$evalarg.';'
+     .' $Vis::user_dollarat = $@; '  # possibly changed by a tie handler
+     ;
+     &DB_Vis_Evalwrapper;
+     @Vis::result
+  };
+  my $errmsg = $@;
+  &Vis::SaveAndResetPunct;
+  $Vis::save_stack[-1]->[0] = $Vis::user_dollarat;
+
+  if ($errmsg) {
+    $errmsg =~ s/ at \(eval \d+\) line \d+[^\n]*\n?\z//s;
+    Carp::confess("${label_for_errmsg}: Error interpolating '$evalarg' at $fname line $lno:\n$errmsg\n");
+  }
+
+  wantarray ? @result : (do{die "bug" if @result>1}, $result[0])
+}# DB_Vis_Eval
 
 1;
  __END__
@@ -2015,6 +2011,7 @@ sub f($) {
   get_closure(1);
   get_closure(1);
   $code->(@_);
+  die "Punct save/restore imbalance" if @Vis::save_stack != 0;
 }
 sub g($) {
   local $_ = 'SHOULD NEVER SEE THIS';
