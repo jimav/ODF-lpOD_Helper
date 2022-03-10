@@ -11,10 +11,11 @@ sub DB_Vis_Evalwrapper { # Must appear before any variables are declared
   eval $Vis::string_to_eval;
 }
 
+# CHANGE NAME to Data::Dumper::Interpolate or something like that
 package Vis;
 # POD documentation follows __END__
 
-use version 0.77; our $VERSION = version->declare(sprintf "v%s", q$Revision: 2.14 $ =~ /(\d[.\d]+)/);
+use version 0.77; our $VERSION = version->declare(sprintf "v%s", q$Revision: 2.15 $ =~ /(\d[.\d]+)/);
 
 require Data::Dumper;
 use Carp;
@@ -794,7 +795,7 @@ sub DB_Vis_Eval($$) {
 
 =head1 NAME
 
-Vis - Human-oriented debug utilities using Data::Dumper
+Vis - Data::Dumper convenience tools optimized for humans
 
 =head1 SYNOPSIS
 
@@ -869,11 +870,14 @@ Vis - Human-oriented debug utilities using Data::Dumper
   
 =head1 DESCRIPTION
 
-The C<Vis> package is primarily a wrapper for C<Data::Dumper> with a more
-convenient/comfortable/human-oriented interface for causual debugging
-(in the eyes of the beholder, of course).
+Besides the namesake feature of interpolating Data::Dumper output into strings,
+this package provides simple functions to visualize a scalar, array, or hash.
 
-The output from C<Vis> is what comes from C<Data::Dumper> 
+Unicode characters appear as themselves, Math:BigInt and other objects are
+stringified, long strings can be truncated, 
+and data structures are displayed in a compact, line-wrapped form.
+
+Internally, data visualizations are created using C<Data::Dumper> and
 modified as follows:
 
 =over 4
@@ -911,27 +915,32 @@ For example "A.20" sorts before "A.100".
 
 =head2 svis 'string to be interpolated'
 
-Returns the arg with variable references and escapes interpolated
-as in in Perl double-quotish strings except that values are
-formatted using C<vis()> or C<avis()> for $ or @ expressions, respectively.
+Returns the argument with variable references and escapes interpolated
+as in in Perl double-quotish strings, except that Data::Dumper visualizations
+are substituted for variable references.
 
-In addition, "%name" is interpolated using C<hvis()>.  
+Besides "$var" and "@var" references, "%hash" is interpolated into
+"(key => value, ...)" visualizations.
 
-Complex reference expressions are recognized, including slices and 
-method calls.  
-For example C<< ${\@myarray}[42]->{$key}->method(...) >>.
+Expressions are evaluated in the caller's context using Perl's debugger
+hooks, and may refer to almost any lexical or global visible at 
+the point of call (but see "Limitations").
 
-Strings are displayed "double quoted" by default.
+Almost any expression starting with a sigl ('$', '@' or '%') is recognized, 
+including slices and method calls.  
+For example C<< ${\@myarray}[42]->{$key}->method(...) >> would be
+replaced by the (massaged) Data:Dumper output from the
+result of evaluating that expression.
 
-If the argument is a literal string it should not be coded with single
-quotes (or Q{} etc.) so Perl will not try to interpolate it.
+IMPORTANT: The argument string must be single-quoted to prevent Perl
+from interpolating it beforehand.
 
 =head2 dvis 'string to be interpolated'
 
-Like C<svis> but labels each interpolated item with "expr=".
+Like C<svis> but interpolated expressions are prefixed with a "exprtext=" label.
 
-If the expression is just simple scalar variable '$name'
-then the value is labeled with "name=" without the '$' sigl.
+The 'd' in 'dvis' stands for B<d>ebugging messages, a frequent use case where
+brevity of typing is more highly prized than beautiful output.
 
 =head2 vis
 
@@ -941,15 +950,28 @@ then the value is labeled with "name=" without the '$' sigl.
 
 =head2 hvis LIST
 
-C<vis> formats a scalar ($_ if no argument is given);
+These are the underlying functions used to visualize expressions when
+interpolating strings in C<svis> and C<dvis>.
+
+C<vis> formats a single scalar ($_ if no argument is given).
 
 C<avis> formats an array (or any list) as comma-separated values in parens.
 
-C<hvis> formats a hash with key => value pairs in parens.
+C<hvis> formats a hash as key => value pairs in parens.
 
-=head2 svisq, dvisq, visq, avisq, hvisq
+=head2 svisq 'string to be interpolated'
 
-Alternative forms which prefer to display strings in 'single quoted' form.
+=head2 dvisq 'string to be interpolated'
+
+=head2 visq
+
+=head2 visq SCALAREXPR
+
+=head2 avisq LIST
+
+=head2 hvisq LIST
+
+These 'q suffix' versions prefer to display strings in 'single quoted' form.
 
 Internally, Data::Dumper is called with C<Useqq(0)>, but depending on
 the version of Data::Dumper the result may be "double quoted" anyway
@@ -960,14 +982,19 @@ if wide characters are present.
 =head2 Vis->new()
 
 Creates a C<Vis> object initialized from the global configuration
-variables ($Vis::Foldwidth etc.)
+variables listed below.
 
-All of the I<functions> described above also function as I<methods>
+All of the functions described above also be used as I<methods>
 when called on a C<Vis> object (they check their first argument).
 
 For example:
 
-   Vis->new()->Foldwidth(40)->avis(@ARGV);
+   $msg = Vis->new()->Foldwidth(40)->avis(@ARGV);
+
+returns the same string as 
+   
+   $Vis::Foldwidth = 40;
+   $msg = avis(@ARGV);
 
 The following configuration variables/methods are available:
 
@@ -980,20 +1007,19 @@ MaxStringwidth=0 (the default) means no limit.
 
 =head2 $Vis::Foldwidth or VisObJ->Foldwidth(INTEGER)
 
-Default is the terminal width at the time of first use.
+Defaults to the terminal width at the time of first use.
 
-=head2 $Vis::Stringify or VisObJ->Stringify(BOOL or [list of classnames])
+=head2 $Vis::Stringify or VisObJ->Stringify(BOOL)
 
-Control object stringification.  
+=head2 $Vis::Stringify or VisObJ->Stringify(classname or [list of names])
 
-If a simple boolean (e.g. 0,1,undef,"")
-is given then stringification of all objects is enabled/disabled.
+A I<false> value disables object stringification.
 
-If a list of class names is given, only objects of those classes
-will be stringified.
+A "1" (the default) enables stringification of all objects which
+support it (i.e. they overload the "" operator).
 
-Stringification is only attempted on objects which implement the
-stringification operator (overload::Method($class,'""') is true).
+Otherwise stringification is enabled only for the specified
+class name(s).
 
 =head2 Vis->Debug(BOOL)
 
@@ -1005,7 +1031,7 @@ to Data::Dumper.
 =head2 $Vis::Useqq or VisObj->Useqq(BOOL)
 
 True to prefer "double quoted" rather than 'single quoted' strings.
-C<Vis> defaults to TRUE except for the 'q' variants.
+Defaults to TRUE except for the 'q' variants.
 
 =head2 $Vis::Sortkeys or VisObj->Sortkeys(subref)
 
@@ -1042,13 +1068,61 @@ by /bin/sh, which has different quoting rules than Perl.
 "Double quotes" are used when no escapes would be needed,
 otherwise 'single quotes'.
 
-An item which contains only "safe" characters is returned unchanged.
-
-References are formatted as with C<vis()> and the resulting string quoted.
-Undefined values appear as C<undef> without quotes.
+An item which contains only "shell-safe" ASCII characters is 
+returned unchanged.
 
 C<qshpath> is like C<qsh> except that an initial ~ or ~username is left
 unquoted.  Useful with shells such as bash or csh.
+
+If the argument is a ref it is formatted as with C<vis()> and the 
+resulting string quoted.
+Undefined values appear as C<undef> without quotes.
+
+=head1 Limitations
+
+=head1
+
+=over 2
+
+=item Interpolated Strings
+
+C<svis> and C<dvis> evaluate expressions in the user's context
+using 'eval' in package DB (see "String eval" in I<perlfunc>).
+This mechanism has some quirks and limitations:
+
+@_ will appear to have the original arguments to a sub even if "shift"
+has been executed.  However if @_ is entirely replaced, correct values
+will be shown.
+
+A lexical ("my") sub creates a closure, and variables in enclosing scopes
+which are not actually referenced by your code may not exist in the closure;
+an attempt to display them with C<svis> will fail.  For example:
+
+    our $global;
+    sub outerfunc {
+      my sub inner {
+        say dvis '$global'; # dies with "Error interpolating '$global'"
+        # my $x = $global;  # ... unless this is un-commented
+      }
+      &inner();
+    }
+    &outerfunc;
+
+
+=item Multiply-referenced items
+
+If a structure contains multiple refs to the same thing,
+the first ref will be visualized showing the contents of the referenced
+item. 
+
+However a subsequent ref will apepar something like C<< $VAR1->place >>
+where C<place> is the first ref in the overall structure; 
+this is how Data::Dumper indicates that the subsequent refs refer to 
+the same item as the first, rather than an identical copy
+(when used directly, Data::Dumper can output code to correctly re-create
+such complex structures).
+
+=back
 
 =head1 SEE ALSO
 
