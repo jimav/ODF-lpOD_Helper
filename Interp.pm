@@ -1,21 +1,20 @@
 # Copyright © Jim Avera 2012-2022.  This document contains code snippets
 # from perl5db.pl and Data::Dumper as noted in adjacent comments, and
 # those extracts remain subject to the licenses of their respective sources.
-# Excepting those portions, this file has been dedicated to the Public Domain 
+# Excepting those portions, this file has been dedicated to the Public Domain
 # per Creative Commons CC0 (http://creativecommons.org/publicdomain/zero/1.0/)
 use strict; use warnings FATAL => 'all'; use utf8; use 5.012;
 use feature qw(switch state);
 
 package DB;
 sub DB_Vis_Evalwrapper { # Must appear before any variables are declared
-  eval $Vis::string_to_eval;
+  eval $Data::Dumper::Interp::string_to_eval;
 }
 
-# CHANGE NAME to Data::Dumper::Interpolate or something like that
-package Vis;
+package Data::Dumper::Interp;
 # POD documentation follows __END__
 
-use version 0.77; our $VERSION = version->declare(sprintf "v%s", q$Revision: 2.15 $ =~ /(\d[.\d]+)/);
+use version 0.77; our $VERSION = version->declare(sprintf "v%s", q$Revision: 2.16 $ =~ /(\d[.\d]+)/);
 
 require Data::Dumper;
 use Carp;
@@ -52,7 +51,7 @@ sub forceqsh(_) {
   # Unlike Perl, /bin/sh does not recognize any backslash escapes in '...'
   local $_ = shift;
   return "undef" if !defined;
-  $_ = vis($_) if ref; 
+  $_ = vis($_) if ref;
   # Prefer "double quoted" if no shell escapes would be needed
   if (/["\$`!\\\x{00}-\x{1F}\x{7F}]/) {
     s/'/'\\''/g; # foo'bar => foo'\''bar
@@ -85,17 +84,17 @@ $Stringify      = 1            unless defined $Stringify;
 $Foldwidth      = undef        unless defined $Foldwidth;  # undef auto-detects
 $Foldwidth1     = undef        unless defined $Foldwidth1; # override for 1st
 
-# The following Vis defaults override Data::Dumper defaults
+# The following Data::Dumper::Interp defaults override Data::Dumper defaults
 $Useqq          = 1            unless defined $Useqq;
 $Quotekeys      = 0            unless defined $Quotekeys;
 $Sortkeys       = \&__sortkeys unless defined $Sortkeys;
 $Sparseseen     = 1            unless defined $Sparseseen;
 
-#################### Vis Methods #################
+#################### Methods #################
 
 sub Debug {
   my($s, $v) = @_;
-  @_ == 2 ? (($s->{VisDebug} = $v), return $s) : $s->{VisDebug};
+  @_ == 2 ? (($s->{Debug} = $v), return $s) : $s->{Debug};
 }
 sub MaxStringwidth {
   my($s, $v) = @_;
@@ -113,7 +112,7 @@ sub Foldwidth {
   my($s, $v, $v1) = @_;
   return(wantarray ? ($s->{Foldwidth}, $s->{Foldwidth1}) : $s->{Foldwidth})
     if @_ == 1;
-  $s->{Foldwidth} = $v; 
+  $s->{Foldwidth} = $v;
   $s->{Foldwidth1} = $v1 if @_==3;
   $s
 }
@@ -121,12 +120,12 @@ sub Foldwidth1 {  # experimental
   my($s, $v) = @_;
   @_ == 2 ? (($s->{Foldwidth1} = $v), return $s) : $s->{Foldwidth1};
 }
-sub Terse  { confess "Terse() may not be called on Vis objects" }
-sub Indent { confess "Indent() may not be called on Vis objects" }
+sub Terse  { confess "Terse() may not be called on ", __PACKAGE__, " objects" }
+sub Indent { confess "Indent() may not be called on ", __PACKAGE__, " objects" }
 
-sub _Vistype {
+sub _vistype {
   my($s, $v) = @_;
-  @_ >= 2 ? (($s->{_Vistype} = $v), return $s) : $s->{_Vistype};
+  @_ >= 2 ? (($s->{_vistype} = $v), return $s) : $s->{_vistype};
 }
 
 # Our new() takes no parameters and returns a default-initialized object,
@@ -134,20 +133,20 @@ sub _Vistype {
 # as a method to produce the output (those routines can also be called as
 # functions, in which case they create a new object internally).
 #
-# An earlier version of this package was a true drop-in replacement for 
-# Data::Dumper and supported all of the same APIs (mostly by inheritance) 
+# An earlier version of this package was a true drop-in replacement for
+# Data::Dumper and supported all of the same APIs (mostly by inheritance)
 # including Data::Dumper's new([values],[names]) constructor.
-# Vis extensions were accessed via differently-named alternative constructors.
+# Extensions were accessed via differently-named alternative constructors.
 #
-# Now Vis is no longer API compatible with Data::Dumper, but uses the same
-# option-setting paradigm where methods like Foldwidth() modify the object
-# if called with arguments while returning the object to allow method chaining.
+# Data::Dumper::Interp is no longer API compatible with Data::Dumper,
+# but uses the same option-setting paradigm where methods like Foldwidth()
+# modify the object if called with arguments while returning the object to
+# allow method chaining.
 #
-# Global variablse in Vis are provided for all config options, including
-# those actually implemented by Data::Dumper.  These values are set
-# automatically by _config_defaults().
+# Global variabls in Data::Dumper::Interp are provided for all config options
+# which users may change on Data::Dumper::Interp objects.
 sub new {
-  croak "No args allowed for Vis::new" if @_ > 1;
+  croak "No args allowed for Data::Dumper::Interp::new" if @_ > 1;
   my ($class) = @_;
   (bless $class->SUPER::new([],[]), $class)->_config_defaults()
 }
@@ -165,17 +164,17 @@ sub __getobj_h {
   $o ->Values([{@_}])
 }
 
-# These can be called as *FUNCTIONS* or as *METHODS* of a Vis object
-sub vis(_)    { &__getobj_s ->_Vistype('s' )->Dump; }
-sub visq(_)   { &__getobj_s ->_Vistype('s' )->Useqq(0)->Dump; }
-sub avis(@)   { &__getobj_a ->_Vistype('a' )->Dump; }
-sub avisq(@)  { &__getobj_a ->_Vistype('a' )->Useqq(0)->Dump; }
-sub lvis(@)   { &__getobj_a ->_Vistype('l' )->Dump; }
-sub lvisq(@)  { &__getobj_a ->_Vistype('l' )->Useqq(0)->Dump; }
-sub hvis(@)   { &__getobj_h ->_Vistype('h' )->Dump; }
-sub hvisq(@)  { &__getobj_h ->_Vistype('h' )->Useqq(0)->Dump; }
-sub hlvis(@)  { &__getobj_h ->_Vistype('hl')->Dump; }
-sub hlvisq(@) { &__getobj_h ->_Vistype('hl')->Useqq(0)->Dump; }
+# These can be called as *FUNCTIONS* or as *METHODS*
+sub vis(_)    { &__getobj_s ->_vistype('s' )->Dump; }
+sub visq(_)   { &__getobj_s ->_vistype('s' )->Useqq(0)->Dump; }
+sub avis(@)   { &__getobj_a ->_vistype('a' )->Dump; }
+sub avisq(@)  { &__getobj_a ->_vistype('a' )->Useqq(0)->Dump; }
+sub lvis(@)   { &__getobj_a ->_vistype('l' )->Dump; }
+sub lvisq(@)  { &__getobj_a ->_vistype('l' )->Useqq(0)->Dump; }
+sub hvis(@)   { &__getobj_h ->_vistype('h' )->Dump; }
+sub hvisq(@)  { &__getobj_h ->_vistype('h' )->Useqq(0)->Dump; }
+sub hlvis(@)  { &__getobj_h ->_vistype('hl')->Dump; }
+sub hlvisq(@) { &__getobj_h ->_vistype('hl')->Useqq(0)->Dump; }
 
 # Trampolines which replace the call frame with a call directly to the
 # interpolation code which uses package DB to access the user's context.
@@ -188,7 +187,7 @@ sub dvisq(_){ @_=(&__getobj->Useqq(0),shift,'d');goto &_Interpolate }
 
 sub _config_defaults {
   my $self = shift;
-  
+
   &__set_default_Foldwidth if ! defined $Foldwidth;
 
   $self
@@ -197,12 +196,10 @@ sub _config_defaults {
     ->Foldwidth($Foldwidth, $Foldwidth1)
     ->Stringify($Stringify)
     ->Truncsuffix($Truncsuffix)
-      # These Data::Dumper config methods are callable by Vis users
     ->Quotekeys($Quotekeys)
     ->Sortkeys($Sortkeys)
     ->Sparseseen($Sparseseen)
     ->Useqq($Useqq)
-      # These Data::Dumper methods may not be called by Vis users
     ->SUPER::Terse(1)
     ->SUPER::Indent(0)
 }
@@ -215,7 +212,7 @@ sub __set_default_Foldwidth() {
     local *_; # Try to avoid clobbering special filehandle "_"
     # Does not yet work, see https://github.com/Perl/perl5/issues/19142
     my ($width, $height) = Term::ReadKey::GetTerminalSize(
-      -t STDERR ? *STDERR : -t STDOUT ? *STDOUT 
+      -t STDERR ? *STDERR : -t STDOUT ? *STDOUT
       : do{my $fh; for("/dev/tty",'CONOUT$') { last if open $fh, $_ } $fh}
     );
     if (($Foldwidth = $width)) {
@@ -249,8 +246,8 @@ sub __walk_worker($$$$$) {
   if (my $class = blessed($_[0])) {
     # Strinify objects which have the stringification operator
     if (overload::Method($class,'""')) { # implements operator stringify
-      if (any { ref() eq "Regexp" ? $class =~ /$_/ 
-                                  : ($_ eq "1" || $_ eq $class) } @$stringify) 
+      if (any { ref() eq "Regexp" ? $class =~ /$_/
+                                  : ($_ eq "1" || $_ eq $class) } @$stringify)
       {
         return \undef if $detection_pass;  # halt immediately
         # Make the change.  We are on a 2nd pass on a cloned copy
@@ -259,14 +256,14 @@ sub __walk_worker($$$$$) {
       }
     }
   }
-  # Prepend a "magic prefix" (later removed) to items which Data::Dumper is 
+  # Prepend a "magic prefix" (later removed) to items which Data::Dumper is
   # likely to represent wrongly or anyway not how we want:
   #
   #  1. Scalars set to strings like "6" will come out as a number 6 rather
   #     than "6" with Useqq(1) or Useperl(1) (string-ness is preserved
   #     with other options).  IMO this is a Data::Dumper bug which the
-  #     maintainers won't fix it because the difference isn't functionally 
-  #     relevant to correctly-written Perl code.  However we want to help 
+  #     maintainers won't fix it because the difference isn't functionally
+  #     relevant to correctly-written Perl code.  However we want to help
   #     humans debug their software and so want to see the representation
   #     most liklye to have been used by the programmer to store the value.
   #
@@ -293,7 +290,7 @@ sub Dump {
   }
 
   my ($debug, $maxstringwidth, $stringify)
-    = @$self{qw/VisDebug MaxStringwidth Stringify/};
+    = @$self{qw/Debug MaxStringwidth Stringify/};
 
   # Do desired substitutions in the data (cloning first)
   if ($stringify || $maxstringwidth) {
@@ -318,13 +315,12 @@ sub Dump {
   # and insert the user's Pad before each line.
   my $pad = $self->Pad();
   $self->Pad("");
-  #say "##Vis b4 SUPER: Useqq=",u($self->Useqq), " Pad=",debugvis($self->Pad)," Values=(",join(",", map{u} $self->Values),")" if $debug;
   {
     my ($sAt, $sQ) = ($@, $?); # Data::Dumper corrupts these
     $_ = $self->SUPER::Dump;
     ($@, $?) = ($sAt, $sQ);
   }
-  #say "##Vis After SUPER ", Vis::debugvis($_);
+  #say "##Data::Dumper::Interp After SUPER ", Data::Dumper::Interp::debugvis($_);
   $self->Pad($pad);
   $_ = $self->_postprocess_DD_result($_);
 
@@ -417,7 +413,7 @@ sub show_as_number(_) { # Derived from JSON::PP version 4.02
   return -1; # inf/nan
 }
 
-# Split keys into "components" (e.g. 2_16.A has 3 components) and sort 
+# Split keys into "components" (e.g. 2_16.A has 3 components) and sort
 # components containing only digits numerically.
 sub __sortkeys {
   my $hash = shift;
@@ -448,20 +444,20 @@ my $squote_re = qr/'(?:[^'\\]++|\\.)*+'/;
 my $quote_re = qr/${qquote_re}|${squote_re}/;
 
 # These never match spaces (except as part of a quote)
-my $nonquote_atom_re 
-      = qr/ (?: [^,;\{\}\[\]"'\s]++ | \\["'] )++ | [,;\{\}\[\]] /xs; 
+my $nonquote_atom_re
+      = qr/ (?: [^,;\{\}\[\]"'\s]++ | \\["'] )++ | [,;\{\}\[\]] /xs;
 my $atom_re = qr/ $quote_re | $nonquote_atom_re /x;
 
 my $indent_unit = 2;
 
 sub __insert_spaces() { # edits $_ in place
   #FIXME BUG HERE might corrupt interior of quoted strings
-  
+
   ### TEMP? Verify that we can parse everything
   ### (probably redundant with 'unmatched tail' check in __fold)
   /\A(?: ${atom_re} | \s+ )+\z/xs or oops "regex problem($_)";
 
-  s( $quote_re ?+ \K 
+  s( $quote_re ?+ \K
      ( \bsub\s*${curlies_re} | (?: $nonquote_atom_re | \s+)*+ )
    )
    ( do {
@@ -484,15 +480,14 @@ my $foldunit_re = qr/${atom_re}(?: , | \s*=>)?+/x;
 
 sub _fold { # edits $_ in place
   my $self = shift;
-  my ($debug, $maxwidth, $maxwidth1, $pad) = 
-       (@$self{qw/VisDebug Foldwidth Foldwidth1/}, $self->Pad);
-  return 
+  my ($debug, $maxwidth, $maxwidth1, $pad) =
+       (@$self{qw/Debug Foldwidth Foldwidth1/}, $self->Pad);
+  return
     if $maxwidth == 0;  # no folding
   my $maxwid = $maxwidth1 || $maxwidth;
   #$maxwid = INT_MAX if $maxwid==0;  # no folding, but maybe space adjustments
   $maxwid = max(0, $maxwid - length($pad));
   my $smidgen = max(5, int($maxwid / 6));
-  #say "#VisFold WIDTHS: mw=$maxwid sm=$smidgen, iu=$indent_unit maxw=",u($maxwidth), " maxw1=",u($maxwidth1);
 
   pos = 0;
   my $curr_indent = 0;
@@ -530,7 +525,7 @@ sub _fold { # edits $_ in place
        my $indent = $curr_indent;
        $curr_indent = $next_indent;
        $maxwid = max(0, $maxwidth - length($pad)); # stop using maxwidth1
-       say "#VisFold: --folding-- after «$1» pos ${\pos} new mw=$maxwid" 
+       say "#VisFold: --folding-- after «$1» pos ${\pos} new mw=$maxwid"
          if $debug;
        $pad . (" " x $indent) . $1 ."\n"
      }
@@ -552,8 +547,8 @@ sub __unescape_printables() {
           s{ (?: [^\\]++ | \\(?!x) )*+ \K ( \\x\{ (?<hex>[a-fA-F0-9]+) \} )
            }{
               my $c;
-              length($+{hex}) <= 6 
-                && ($c = chr(hex($+{hex}))) !~ m<\P{XPosixGraph}|[\0-\377]> 
+              length($+{hex}) <= 6
+                && ($c = chr(hex($+{hex}))) !~ m<\P{XPosixGraph}|[\0-\377]>
               ? $c : $1
            }xesg;
         }
@@ -566,12 +561,12 @@ sub _postprocess_DD_result {
   (my $self, local $_) = @_;
 
   my ($debug, $vistype, $maxwidth, $maxwidth1)
-    = @$self{qw/VisDebug _Vistype Foldwidth Foldwidth1/};
+    = @$self{qw/Debug _vistype Foldwidth Foldwidth1/};
 
-  croak "invalid _Vistype ", u($vistype)
+  croak "invalid _vistype ", u($vistype)
     unless ($vistype//0) =~ /^(?:[salh]|hl)$/;
 
-  say "##RAW  :",$_ if $self->{VisDebug};
+  say "##RAW  :",$_ if $self->{Debug};
 
   s/(['"])\Q$magic_num_prefix\E(.*?)(\1)/$2/sg;
   s/\Q$magic_numstr_prefix\E//sg;
@@ -621,16 +616,16 @@ sub _Interpolate {
   # cf man perldata
   state $userident_re = qr/ (?: (?=\p{Word})\p{XID_Start} | _ )
                             (?: (?=\p{Word})\p{XID_Continue}  )* /x;
-  
+
   state $pkgname_re = qr/ ${userident_re} (?: :: ${userident_re} )* /x;
 
-  state $anyvname_re = 
-    qr/ ${pkgname_re} | [0-9]+ | \^[A-Z] 
+  state $anyvname_re =
+    qr/ ${pkgname_re} | [0-9]+ | \^[A-Z]
                       | [-+!\$\&\;i"'().,\@\/:<>?\[\]\~\^\\] /x;
-  
-  state $anyvname_or_refexpr_re = qr/ ${anyvname_re} | ${Vis::curlies_re} /x;
 
-  &Vis::SaveAndResetPunct;
+  state $anyvname_or_refexpr_re = qr/ ${anyvname_re} | ${curlies_re} /x;
+
+  &SaveAndResetPunct;
 
   my $debug = $self->Debug;
   my $useqq = $self->Useqq;
@@ -658,29 +653,29 @@ sub _Interpolate {
            (?:
              (?: \$\$++ ${pkgname_re} \K | \$ ${anyvname_or_refexpr_re} \K )
              (?:
-               (?: ->\K(?: ${$Vis::curliesorsquares_re} | ${userident_re}${Vis::parens_re}? ))
+               (?: ->\K(?: ${curliesorsquares_re} | ${userident_re}${Data::Dumper::Interp::parens_re}? ))
                |
-               ${$Vis::curliesorsquares_re}
+               ${curliesorsquares_re}
              )*
            )
            |
            # @arrayvar @$$...varname @{aref expr} @$$...{ref2ref expr}
            #  followed by [] {} «zero or one»
            #
-           (?: \@\$*+\K ${anyvname_or_refexpr_re} ${$Vis::curliesorsquares_re}? )
+           (?: \@\$*+\K ${anyvname_or_refexpr_re} ${$curliesorsquares_re}? )
            |
            # %hash %$hrefvar %{href expr} %$$...sref2hrefvar «no follow-ons»
            (?: \%\$*+\K ${anyvname_or_refexpr_re} )
-          ) /xsgc) 
+          ) /xsgc)
     {
       local $_ = $1; oops unless length() > 0;
-      say "#Vis Interp: expr «$_»" if $debug;
+      say "#Vis expr «$_»" if $debug;
       if (/^[\$\@\%]/) {
         my $sigl = substr($_,0,1);
         if ($s_or_d eq 'd') {
           # Inject a "plain text" fragment containing the dvis "expr=" prefix,
           # omitting the '$' sigl if the expr is a plain '$name'.
-          push @pieces, ["", 
+          push @pieces, ["",
                          "q(".(/^\$(?!_)(${userident_re})\z/ ? $1 : $_)."=)"];
         }
         if ($sigl eq '$') {
@@ -695,13 +690,13 @@ sub _Interpolate {
         }
         else { confess "BUG:sigl='$sigl'"; }
       } else {
-        if (/^.+?(?<!\\)([\$\@\%])/) { confess "Vis bug: Missed '$1' in «$_»" }
+        if (/^.+?(?<!\\)([\$\@\%])/) { confess "Data::Dumper::Interp bug: Missed '$1' in «$_»" }
         push @pieces, ["", "\"${1}\""];
       }
     }
     if (!defined(pos) || pos() < length($_)) {
       my $leftover = substr($_,pos()//0);
-      confess "Vis Bug:LEFTOVER «$leftover»";
+      confess "Data::Dumper::Interp Bug:LEFTOVER «$leftover»";
     }
   }# local $_
 
@@ -729,19 +724,19 @@ sub DB_Vis_Interpolate {
         $self->{Foldwidth1} -= $leftwid if $leftwid < $self->{Foldwidth1}
       }
       $result .= $self->$methname( DB::DB_Vis_Eval($funcname, $arg) );
-    }    
+    }
   }
 
-  &Vis::RestorePunct;  # saved in _Interpolate
+  &Data::Dumper::Interp::RestorePunct;  # saved in _Interpolate
   $result
 }# DB_Vis_Interpolate
 
 # eval a string in the user's context and return the result.  The nearest
 # non-DB frame must be the original user's call; this is accomplished by
-# using "goto &DB::_Interpolate" in the entry-point sub.
+# using "goto &_Interpolate" in the entry-point sub.
 sub DB_Vis_Eval($$) {
   my ($label_for_errmsg, $evalarg) = @_;
-  Carp::confess("Vis bug:empty evalarg") if $evalarg eq "";
+  Carp::confess("Data::Dumper::Interp bug:empty evalarg") if $evalarg eq "";
   # Many ideas here taken from perl5db.pl
 
   # Find the closest non-DB caller.  The eval will be done in that package.
@@ -749,7 +744,7 @@ sub DB_Vis_Eval($$) {
   # "&subname;"), and make @_ contain those arguments.
   my ($distance, $pkg, $fname, $lno);
   for ($distance = 0 ; ; $distance++) {
-    ($pkg, $fname, $lno) = caller($distance); 
+    ($pkg, $fname, $lno) = caller($distance);
     last if $pkg ne "DB";
   }
   while() {
@@ -763,22 +758,22 @@ sub DB_Vis_Eval($$) {
   }
   local *_ = [ @DB::args ];  # copy in case of recursion
 
-  &Vis::RestorePunct;  # saved in _Interpolate
-  $Vis::user_dollarat = $@; # 'eval' will reset $@
+  &Data::Dumper::Interp::RestorePunct;  # saved in _Interpolate
+  $Data::Dumper::Interp::user_dollarat = $@; # 'eval' will reset $@
   my @result = do {
-    local @Vis::result;
-    local $Vis::string_to_eval = 
+    local @Data::Dumper::Interp::result;
+    local $Data::Dumper::Interp::string_to_eval =
       "package $pkg; "
-     .' $@ = $Vis::user_dollarat; '
-     .' @Vis::result = '.$evalarg.';'
-     .' $Vis::user_dollarat = $@; '  # possibly changed by a tie handler
+     .' $@ = $Data::Dumper::Interp::user_dollarat; '
+     .' @Data::Dumper::Interp::result = '.$evalarg.';'
+     .' $Data::Dumper::Interp::user_dollarat = $@; '  # possibly changed by a tie handler
      ;
      &DB_Vis_Evalwrapper;
-     @Vis::result
+     @Data::Dumper::Interp::result
   };
   my $errmsg = $@;
-  &Vis::SaveAndResetPunct;
-  $Vis::save_stack[-1]->[0] = $Vis::user_dollarat;
+  &Data::Dumper::Interp::SaveAndResetPunct;
+  $Data::Dumper::Interp::save_stack[-1]->[0] = $Data::Dumper::Interp::user_dollarat;
 
   if ($errmsg) {
     $errmsg =~ s/ at \(eval \d+\) line \d+[^\n]*\n?\z//s;
@@ -795,149 +790,103 @@ sub DB_Vis_Eval($$) {
 
 =head1 NAME
 
-Vis - Data::Dumper convenience tools optimized for humans
+Data::Dumper::Interp - Data::Dumper strings for humans, with interpolation
 
 =head1 SYNOPSIS
 
   use open IO => ':locale';
-  use Vis;
+  use Data::Dumper::Interp;
 
   @ARGV = ('-i', '/file/path');
   my %hash = (abc => [1,2,3,4,5], def => undef);
   my $ref = \%hash;
 
-  # Interpolate variables in strings, substituting massaged 
-  # Data::Dumper output
-  
-  say svis 'FYI ref is $ref\nThat hash is: %hash\nArgs are @ARGV'; 
+  # Interpolate variables in strings, substituting Data::Dumper output
+  #
+  say svis 'FYI ref is $ref\nThat hash is: %hash\nArgs are @ARGV';
 
     -->FYI ref is {abc => [1,2,3,4,5], def => undef}
        That hash is: (abc => [1,2,3,4,5], def => undef)
        Args are ("-i","/file/path")
 
-  # Auto-label interpolated values ('d' is for debugging dump):
-  
-  say dvis '$ref @ARGV'; 
-
-    -->ref={abc => [1,2,3,4,5], def => undef} @ARGV=("-i","/file/path")
+  # Prefix interpolated values with labels:
+  say dvis '@ARGV'; -->@ARGV=("-i","/file/path")
 
   # Format one item at a time.
-  
   say vis \@ARGV;   #any scalar   -->["-i","/file/path"]
-
   say avis @ARGV;   -->("-i","/file/path")
-
   say hvis %hash;   -->(abc => [1,2,3,4,5], def => undef)
 
-  # Object stringification
+  # Stringify objects
   { use bigint;
-
-    my $struct = { debt => 999_999_999_999_999_999.02 }; 
-
-    say vis $struct;  --> {debt => (Math::BigFloat)999999999999999999.02}
-    
-    $Vis::Stringify = ""; # disable stringification
+    my $struct = { debt => 999_999_999_999_999_999.02 };
     say vis $struct;
-       --> {debt => bless({ ...lots of stuff... }, 'Math::BigFloat')}
+      --> {debt => (Math::BigFloat)999999999999999999.02}
   }
 
-  # Show printable wide characters as themselves so you an read them
-  use open IO => ':locale';  # Encode wide chars for your tty
-  use utf8;                  # if your script contains Unicode
-
-  my $h = {msg => "Please let me read my language ☻ ☺ 😊 and \N{U+2757}!"};
+  # Wide characters are readable
+  use utf8;
+  my $h = {msg => "My language is not ASCII ☻ ☺ 😊 and \N{U+2757}!"};
   say dvis '$h' ;
-    --> h={msg => "Please let me read my language ☻ ☺ 😊 ❗"}
+    --> h={msg => "My language is not ASCII ☻ ☺ 😊 ❗"}
 
   #-------- OO API --------
-  # The *same functions* can be called as methods on a pre-allocated object
-  # which lets you adjust config settings on a case-by-case basis:
-  
-  say Vis->new()->MaxStringwidth(50)->Maxdepth($levels)->vis($datum);
+
+  say Data::Dumper::Interp->new()
+      ->MaxStringwidth(50)->Maxdepth($levels)->vis($datum);
 
   #-------- UTILITY FUNCTIONS --------
-  
   say u($might_be_undef);  # $_[0] // "undef"
+  say qsh($string);        # quote if needed for /bin/sh
+  say qshpath($pathname);  # quote except for ~ or ~username prefix
 
-  say qsh($pathname);      # quote if needed for /bin/sh
+    system "ls -ld ".join(" ",map{ qshpath } ("/tmp", "~", "~sally/subdir"));
 
-    system "ls -l ".join(" ", map{ qsh } 
-        ("My Documents", $ENV{HOME}, "Uck!", "Qu'ote", 'Qu"ote'));
 
-  say qshpath($pathname);  # quote path except for ~ or ~username prefix
-
-    system "ls -ld ".join(" ", map{ qshpath } ("~", "~sally/subdir"));
-  
 =head1 DESCRIPTION
 
-Besides the namesake feature of interpolating Data::Dumper output into strings,
-this package provides simple functions to visualize a scalar, array, or hash.
+The namesake feature is interpolating Data::Dumper output into strings.
+In addition, simple functions are provided to visualize a scalar, array, or hash.
+And finally a few utilities to quote strings for /bin/sh.
 
-Unicode characters appear as themselves, Math:BigInt and other objects are
-stringified, long strings can be truncated, 
-and data structures are displayed in a compact, line-wrapped form.
-
-Internally, data visualizations are created using C<Data::Dumper> and
-modified as follows:
-
-=over 4
-
-=item *
-
-Everything is on one line if possible, otherwise wrapped to
-the terminal width with indentation appropriate to structure levels.
-
-A final newline is I<not> included.
-
-=item *
-
-"Safe" Unicode characters appear as themselves instead of \x{ABCD}.
-
-Note: If the data contains 'wide characters', you must encode 
-the result before displaying it as explained in C<perluniintro>.  
-For example with C<use IO ':locale';> or C<use qw/IO :utf8 :std/;> 
-
-=item *
-
-Objects are stringified, so (for example) C<bignum> numbers are readable.
-
-Stingified objects are prefixed with "(classname)" to make clear what
-happened.
-
-=item *
-
-Hash keys are sorted treating numeric "components" numerically.
-For example "A.20" sorts before "A.100".
- 
-=back
+Data::Dumper is used internally to create data visualizations, using options
+and postprocessing to produce compact (1 line if possibe) output
+without a trailing newline.  Unicode characters appear as themselves,
+objects like Math:BigInt are stringified, and some
+Data::Dumper bugs^H^H^H^Hquirks are circumvented.
+See "DIFFERENCES FROM Data::Dumper".
 
 =head1 FUNCTIONS
 
 =head2 svis 'string to be interpolated'
 
 Returns the argument with variable references and escapes interpolated
-as in in Perl double-quotish strings, except that Data::Dumper visualizations
-are substituted for variable references.
+as in in Perl double-quotish strings except Data::Dumper is used to
+format variable values.
 
-Besides "$var" and "@var" references, "%hash" is interpolated into
-"(key => value, ...)" visualizations.
+C<$var> is replaced by its value,
+C<@var> is replaced by "(comma, sparated, list)",
+and C<%hash> by "(key => value, ...)" visualizations.
+
+Most Perl expressions are recognized including slices and method calls.
+For example
+
+  say svis 'The value is ${\@myarray}[42]->{$key}->method(...)'
+
+would print "The value is " followed by the Data:Dumper visualization of
+the value of that expression.
 
 Expressions are evaluated in the caller's context using Perl's debugger
-hooks, and may refer to almost any lexical or global visible at 
-the point of call (but see "Limitations").
-
-Almost any expression starting with a sigl ('$', '@' or '%') is recognized, 
-including slices and method calls.  
-For example C<< ${\@myarray}[42]->{$key}->method(...) >> would be
-replaced by the (massaged) Data:Dumper output from the
-result of evaluating that expression.
+hooks, and may refer to almost any lexical or global visible at
+the point of call (but see "LIMITATIONS").
 
 IMPORTANT: The argument string must be single-quoted to prevent Perl
 from interpolating it beforehand.
 
 =head2 dvis 'string to be interpolated'
 
-Like C<svis> but interpolated expressions are prefixed with a "exprtext=" label.
+Like C<svis> with the addition that interpolated expressions
+are prefixed with a "exprtext=" label.
 
 The 'd' in 'dvis' stands for B<d>ebugging messages, a frequent use case where
 brevity of typing is more highly prized than beautiful output.
@@ -948,16 +897,21 @@ brevity of typing is more highly prized than beautiful output.
 
 =head2 avis LIST
 
-=head2 hvis LIST
+=head2 hvis EVENLIST
 
-These are the underlying functions used to visualize expressions when
-interpolating strings in C<svis> and C<dvis>.
+These are the underlying functions used by C<svis> to visualize expressions.
 
 C<vis> formats a single scalar ($_ if no argument is given).
 
-C<avis> formats an array (or any list) as comma-separated values in parens.
+C<avis> formats an array (or any list) as comma-separated values in parenthesis.
 
 C<hvis> formats a hash as key => value pairs in parens.
+
+=head2 lvis LIST
+
+=head2 hlvis EVENLIST
+
+These produce a bare list without enclosing parenthesis
 
 =head2 svisq 'string to be interpolated'
 
@@ -971,7 +925,8 @@ C<hvis> formats a hash as key => value pairs in parens.
 
 =head2 hvisq LIST
 
-These 'q suffix' versions prefer to display strings in 'single quoted' form.
+Alternatives with a 'q' suffix display strings in 'single quoted' form
+if possible.
 
 Internally, Data::Dumper is called with C<Useqq(0)>, but depending on
 the version of Data::Dumper the result may be "double quoted" anyway
@@ -979,39 +934,52 @@ if wide characters are present.
 
 =head1 OBJECT-ORIENTED INTERFACES
 
-=head2 Vis->new()
+=head2 Data::Dumper::Interp->new()
 
-Creates a C<Vis> object initialized from the global configuration
+Creates an object initialized from the global configuration
 variables listed below.
 
-All of the functions described above also be used as I<methods>
-when called on a C<Vis> object (they check their first argument).
+The functions described above may also be used as I<methods>
+when called on a C<Data::Dumper::Interp> object
+(when not called as a method they create a new object internally).
 
 For example:
 
-   $msg = Vis->new()->Foldwidth(40)->avis(@ARGV);
+   $msg = Data::Dumper::Interp->new()->Foldwidth(40)->avis(@ARGV);
 
-returns the same string as 
-   
-   $Vis::Foldwidth = 40;
+returns the same string as
+
+   local $Data::Dumper::Interp::Foldwidth = 40;
    $msg = avis(@ARGV);
 
-The following configuration variables/methods are available:
+=head1 Configuration Variables / Methods
 
-=head2 $Vis::MaxStringwidth or VisObJ->MaxStringwidth(INTEGER)
+These work in the same way as similar variables/methods in Data::Dumper.
 
-=head2 $Vis::Truncsuffix or VisObJ->Truncsuffix("...")
+Global variables determine the initial state of objects created by C<new>,
+and the state of an object can be quieried or changed with corresponding
+methods.  When a method is called with arguments to set a value,
+the method returns the object itself to facilitate chained calls.
 
-Longer strings are truncated and I<Truncsuffix> appended.  
+Although C<Data::Dumper::Interp> derives from C<Data::Dumper>, it
+can be configured only using the following:
+
+=head2 $Data::Dumper::Interp::MaxStringwidth or $obj->MaxStringwidth(INTEGER)
+
+=head2 $Data::Dumper::Interp::Truncsuffix or $obj->Truncsuffix("...")
+
+Longer strings are truncated and I<Truncsuffix> appended.
 MaxStringwidth=0 (the default) means no limit.
 
-=head2 $Vis::Foldwidth or VisObJ->Foldwidth(INTEGER)
+=head2 $Data::Dumper::Interp::Foldwidth or $obj->Foldwidth(INTEGER)
 
 Defaults to the terminal width at the time of first use.
 
-=head2 $Vis::Stringify or VisObJ->Stringify(BOOL)
+=head2 $Data::Dumper::Interp::Stringify or $obj->Stringify(BOOL);
 
-=head2 $Vis::Stringify or VisObJ->Stringify(classname or [list of names])
+=head2                        or (classname);
+
+=head2                        or ([list of names]);
 
 A I<false> value disables object stringification.
 
@@ -1021,30 +989,19 @@ support it (i.e. they overload the "" operator).
 Otherwise stringification is enabled only for the specified
 class name(s).
 
-=head2 Vis->Debug(BOOL)
-
-Enable internal debug tracing
-
-The following variables/methods control options Vis will pass through
-to Data::Dumper.
-
-=head2 $Vis::Useqq or VisObj->Useqq(BOOL)
-
-True to prefer "double quoted" rather than 'single quoted' strings.
-Defaults to TRUE except for the 'q' variants.
-
-=head2 $Vis::Sortkeys or VisObj->Sortkeys(subref)
+=head2 $Data::Dumper::Interp::Sortkeys or $obj->Sortkeys(subref)
 
 Control how hash keys are sorted.  See C<Data::Dumper> documentation.
 
-C<Vis> provides a default which sorts numeric substrings in keys 
-by numerical value (see example in SYNOPSIS).
+C<Data::Dumper::Interp> provides a default which sorts
+numeric substrings in keys by numerical
+value (see "DIFFERENCES FROM Data::Dumper").
 
-=head2 $Vis::Quotekeys or VisObj->Quotekeys(subref)
+=head2 $Data::Dumper::Interp::Quotekeys or $obj->Quotekeys(subref)
 
 Control how hash keys are "quoted".  See C<Data::Dumper> documentation.
 
-=head1 
+=head1
 
 =head1 UTILITY FUNCTIONS
 
@@ -1068,17 +1025,17 @@ by /bin/sh, which has different quoting rules than Perl.
 "Double quotes" are used when no escapes would be needed,
 otherwise 'single quotes'.
 
-An item which contains only "shell-safe" ASCII characters is 
+A string containing only "shell-safe" ASCII characters is
 returned unchanged.
 
 C<qshpath> is like C<qsh> except that an initial ~ or ~username is left
 unquoted.  Useful with shells such as bash or csh.
 
-If the argument is a ref it is formatted as with C<vis()> and the 
+If the argument is a ref it is formatted as with C<vis()> and the
 resulting string quoted.
 Undefined values appear as C<undef> without quotes.
 
-=head1 Limitations
+=head1 LIMITATIONS
 
 =head1
 
@@ -1087,21 +1044,21 @@ Undefined values appear as C<undef> without quotes.
 =item Interpolated Strings
 
 C<svis> and C<dvis> evaluate expressions in the user's context
-using 'eval' in package DB (see "String eval" in I<perlfunc>).
-This mechanism has some quirks and limitations:
+using Perl's debugger support ('eval' in package DB -- see I<perlfunc>).
+This mechanism has some limitations:
 
 @_ will appear to have the original arguments to a sub even if "shift"
 has been executed.  However if @_ is entirely replaced, correct values
-will be shown.
+will be displayed.
 
-A lexical ("my") sub creates a closure, and variables in enclosing scopes
+A lexical ("my") sub creates a closure, and variables in visible scopes
 which are not actually referenced by your code may not exist in the closure;
 an attempt to display them with C<svis> will fail.  For example:
 
     our $global;
     sub outerfunc {
       my sub inner {
-        say dvis '$global'; # dies with "Error interpolating '$global'"
+        say dvis '$global'; # croaks with "Error interpolating '$global'"
         # my $x = $global;  # ... unless this is un-commented
       }
       &inner();
@@ -1111,18 +1068,83 @@ an attempt to display them with C<svis> will fail.  For example:
 
 =item Multiply-referenced items
 
-If a structure contains multiple refs to the same thing,
-the first ref will be visualized showing the contents of the referenced
-item. 
+If a structure contains several refs to the same item,
+the first ref will be visualized by showing the contents of the item
+as you might expect.
 
-However a subsequent ref will apepar something like C<< $VAR1->place >>
-where C<place> is the first ref in the overall structure; 
-this is how Data::Dumper indicates that the subsequent refs refer to 
-the same item as the first, rather than an identical copy
-(when used directly, Data::Dumper can output code to correctly re-create
-such complex structures).
+However subsequent refs will look something like C<< $VAR1->place >>
+where C<place> is the first ref in the overall structure;
+this is how Data::Dumper indicates that the ref points to
+the same data as the first ref, rather than to an identical copy.
+Data::Dumper with the "Purity" option can generate code to correctly
+re-create such complex structures. However Data::Dumper::Interp
+does nothing special and simply passes through these notations,
+which might be confusing the first time you see them.
 
 =back
+
+=head1 DIFFERENCES FROM Data::Dumper
+
+This module works by first cloning the data (when necessary) and
+replacing certain items with substitutions;
+then C<Data::Dumper> is called; finally the result is post-processed.
+
+The net result differs from plain C<Data::Dumper> output as follows:
+
+=over 2
+
+=item *
+
+The result is a single line if possible, otherwise wrapped to
+the terminal width with indentation appropriate to structure levels.
+
+A final newline is I<not> included.
+
+=item *
+
+Printable Unicode characters appear as themselves instead of \x{ABCD}.
+
+Note: If your data contains 'wide characters', you must encode
+the result before displaying it as explained in C<perluniintro>.
+For example with C<use IO ':locale';>
+
+Undecoded binary octets (internally: strings with the 'utf8 flag' off)
+will still be escaped as individual bytes when necessary.
+
+=item *
+
+Object refs are replaced by the object's stringified representation.
+For example, C<bignum> and C<bigrat> numbers are shown as readable values.
+
+Stingified objects are prefixed with "(classname)" to make clear what
+happened.
+
+=item *
+
+Hash keys are sorted treating numeric "components" numerically.
+For example "A.20" sorts before "A.100".
+
+=item *
+
+Punctuation variables, including $@ and $?, are preserved over calls.
+
+=item *
+
+Representation of numbers and strings are made predictable and obvious:
+Floating-point values always appear as numbers (not 'quoted strings'),
+and strings containing digits like "42" appear as quoted strings
+and not numbers (string vs. number detection is ala JSON::PP).
+
+Such differences might not matter to Perl when executing code,
+but likely do matter when communicating from the programmer to a human.
+
+=back
+
+These choices reflect the author's accumulated experience debugging
+Perl applications.
+Other people, especially if working on perl internals or XS code,
+might prefer to use Data::Dumper directly.
+
 
 =head1 SEE ALSO
 
@@ -1135,8 +1157,8 @@ Jim Avera  (jim.avera AT gmail dot com)
 =cut
 
 #!/usr/bin/perl
-# Tester for module Vis.  TODO: Convert to CPAN module-test setup
-use strict; use warnings ; use feature qw(state say);
+# Tester for module Data::Dumper::Interp.  TODO: Convert to CPAN module-test setup
+use strict; use warnings  FATAL => 'all'; use feature qw(state say);
 srand(42);  # so reproducible
 say "FIXME: Test qr/.../ as values to be dumped.";
   #use Regexp::Common qw/RE_balanced/;
@@ -1162,17 +1184,19 @@ my $unicode_str;
 
 # We want to test the original version of the internal function
 # Data::Dumper::qquote to see if the useqq="utf8" feature has been fixed, and
-# if not allow Vis to over-ride it.  But perl nowadays seems to cache the sub
-# lookup immediately in Data::Dumper, making the override ineffective.
+# if not allow Data::Dumper::Interp to over-ride it.  But perl nowadays 
+# seems to cache the sub lookup immediately in Data::Dumper, making 
+# the override ineffective.
 #
-# As of Vis v1.146 Vis no longer overrides that internal function,
+# As of v1.146 Data::Dumper::Interp no longer overrides that internal function,
 # but instead parses hex escape sequences in output strings.
-# So this test is just to detect if Useqq('utf8') is made to work in the future.
+# So this test is just to detect if Data::Dumper fixes Useqq('utf8') 
+# to work in the future.
 #
 BEGIN{
   # [Obsolete comment:]
-  #   This test must be done before loading Vis, which over-rides an internal
-  #   function to fix the bug
+  #   This test must be done before loading Data::Dumper::Interp, 
+  #   which over-rides an internal function to fix the bug
   $unicode_str = join "", map { chr($_) } (0x263A .. 0x2650);
   require Data::Dumper;
   print "Loaded ", $INC{"Data/Dumper.pm"}, " qquote=", \&Data::Dumper::qquote,"\n";
@@ -1184,13 +1208,13 @@ BEGIN{
       warn "Note: Useqq('utf8') is broken in your Data::Dumper.\n"
     } else {
       print "Useqq('utf8') seems to have been fixed in Data::Dumper !!! \n";
-      die "Consider changing Vis to not bother parsing hex escapes?";
+      die "Consider changing Data::Dumper::Interp to not bother parsing hex escapes?";
     }
   }
 }
 
-use Vis;
-print "Loaded ", $INC{"Vis.pm"}, "\n";
+use Data::Dumper::Interp;
+print "Loaded ", $INC{"Data::Dumper::Interp.pm" =~ s/::/\//gr}, "\n";
 
 # Do an initial read of $[ so arybase will be autoloaded
 # (prevents corrupting $!/ERRNO in subsequent tests)
@@ -1227,8 +1251,8 @@ sub timed_run(&$@) {
 }
 
 sub visFoldwidth() {
-  "Vis::Foldwidth=".u($Vis::Foldwidth)." Vis::Foldwidth1=".u($Vis::Foldwidth1)
-  .($Vis::Foldwidth ? ("\n".("." x $Vis::Foldwidth)) : "")
+  "Data::Dumper::Interp::Foldwidth=".u($Data::Dumper::Interp::Foldwidth)." Data::Dumper::Interp::Foldwidth1=".u($Data::Dumper::Interp::Foldwidth1)
+  .($Data::Dumper::Interp::Foldwidth ? ("\n".("." x $Data::Dumper::Interp::Foldwidth)) : "")
 }
 sub checkeq_literal($$$) {
   my ($testdesc, $exp, $act) = @_;
@@ -1250,7 +1274,7 @@ sub checkeq_literal($$$) {
 }
 
 # check $code_display, qr/$exp/, $doeval->($code, $item) ;
-# { my $code="Vis->new->hvis(k=>'v');"; check $code, '(k => "v")',eval $code }
+# { my $code="Data::Dumper::Interp->new->hvis(k=>'v');"; check $code, '(k => "v")',eval $code }
 sub check($$@) {
   my ($code, $expected_arg, @actual) = @_;
   local $_;  # preserve $1 etc. for caller
@@ -1288,7 +1312,7 @@ sub checkstringy(&$$) {
   my $expqq_re = "\"${expected_re}\"";
   my $expq_re  = "'${expected_re}'";
   foreach (
-    [ 'Vis->new()->vis($_[1])',  '_Q_' ],
+    [ 'Data::Dumper::Interp->new()->vis($_[1])',  '_Q_' ],
     [ 'vis($_[1])',              '_Q_' ],
     [ 'visq($_[1])',             '_q_' ],
     [ 'avis($_[1])',             '(_Q_)' ],
@@ -1310,7 +1334,7 @@ sub checkstringy(&$$) {
     $exp =~ s/_Q_/$expqq_re/g;
     $exp =~ s/_q_/$expq_re/g;
     my $code_display = $code . " with \$_[1]=«$item»";
-    local $Vis::Foldwidth = 0;  # disable wrapping
+    local $Data::Dumper::Interp::Foldwidth = 0;  # disable wrapping
     check $code_display, qr/$exp/, $doeval->($code, $item) ;
   }
 }
@@ -1327,7 +1351,7 @@ sub checklit(&$$) {
     =~ s{ ( [^\\"]++|(\\.) )*+ \K " }{'}xsg
        or do{ die "bug" if $dq_expected_re =~ /(?<![^\\])'/; }; #probably
   foreach (
-    [ 'Vis->new()->vis($_[1])',  '_Q_' ],
+    [ 'Data::Dumper::Interp->new()->vis($_[1])',  '_Q_' ],
     [ 'vis($_[1])',              '_Q_' ],
     [ 'visq($_[1])',             '_q_' ],
     [ 'avis($_[1])',             '(_Q_)' ],
@@ -1349,42 +1373,42 @@ sub checklit(&$$) {
     $exp =~ s/_Q_/$dq_expected_re/g;
     $exp =~ s/_q_/$sq_expected_re/g;
     my $code_display = $code . " with \$_[1]=«$item»";
-    local $Vis::Foldwidth = 0;  # disable wrapping
+    local $Data::Dumper::Interp::Foldwidth = 0;  # disable wrapping
     check $code_display, qr/$exp/, $doeval->($code, $item) ;
   }
 }
 
 # ---------- Check stuff other than formatting or interpolation --------
 
-print "Vis::VERSION = $Vis::VERSION\n";
+print "Data::Dumper::Interp::VERSION = $Data::Dumper::Interp::VERSION\n";
 
 for my $varname (qw(PREMATCH MATCH POSTMATCH)) {
   $_ = "test"; /(\w+)/;
   no strict 'vars';
-  die "Vis imports high-overhead English ($varname)"
-    if eval "defined \$Vis::$varname";
+  die "Data::Dumper::Interp imports high-overhead English ($varname)"
+    if eval "defined \$Data::Dumper::Interp::$varname";
   die "EVAL ERR: $@ " if $@;
 }
 
 my $byte_str = join "",map { chr $_ } 10..30;
 
 ##################################################
-# Check default $Vis::Foldwidth
+# Check default $Data::Dumper::Interp::Foldwidth
 ##################################################
 { chomp( my $expected = `tput cols` );  # may default to 80 if no tty
-  die "Expected initial Vis::Foldwidth to be undef" if defined $Vis::Foldwidth;
+  die "Expected initial Data::Dumper::Interp::Foldwidth to be undef" if defined $Data::Dumper::Interp::Foldwidth;
   { local $ENV{COLUMNS} = $expected + 13;
     svis("abc");
-    die "Vis::Foldwidth does not honor ENV{COLUMNS}" 
-      unless u($Vis::Foldwidth) == $expected + 13;
+    die "Data::Dumper::Interp::Foldwidth does not honor ENV{COLUMNS}" 
+      unless u($Data::Dumper::Interp::Foldwidth) == $expected + 13;
   }
-  undef $Vis::Foldwidth;  # re-enable auto-detect
+  undef $Data::Dumper::Interp::Foldwidth;  # re-enable auto-detect
   if (unix_compatible_os()) {
     delete local $ENV{COLUMNS};
     svis("abc");
-    die "Vis::Foldwidth ",u($Vis::Foldwidth)," not defaulted correctly, expecting $expected" unless $Vis::Foldwidth == $expected;
+    die "Data::Dumper::Interp::Foldwidth ",u($Data::Dumper::Interp::Foldwidth)," not defaulted correctly, expecting $expected" unless $Data::Dumper::Interp::Foldwidth == $expected;
   }
-  undef $Vis::Foldwidth;  # re-enable auto-detect
+  undef $Data::Dumper::Interp::Foldwidth;  # re-enable auto-detect
   if (unix_compatible_os()) {
     delete local $ENV{COLUMNS};
     my $pid = fork();
@@ -1393,12 +1417,12 @@ my $byte_str = join "",map { chr $_ } 10..30;
       die "bug" unless POSIX::setsid()==$$; # Loose controlling tty
       #for (*STDIN,*STDOUT,*STDERR) { close $_ or die "Can not close $_:$!" }
       POSIX::close $_ for (0,1,2);
-      $Vis::Debug = 0;
+      $Data::Dumper::Interp::Debug = 0;
       svis("abc");
-      exit($Vis::Foldwidth // 253);
+      exit($Data::Dumper::Interp::Foldwidth // 253);
     }
     waitpid($pid,0);
-    die "Vis::Foldwidth defaulted to ", ($? >> 8)|($? & !0xFF), " (not 80 as expected)"
+    die "Data::Dumper::Interp::Foldwidth defaulted to ", ($? >> 8)|($? & !0xFF), " (not 80 as expected)"
       unless $? == (80 << 8);
     $? = 0;
   }
@@ -1412,25 +1436,25 @@ my $byte_str = join "",map { chr $_ } 10..30;
   chomp $vis_outstr;
   my $dd_outstr = Data::Dumper->new([$unicode_str],['unicode_str'])->Terse(1)->Useqq('utf8')->Dump;
   print "   unicode_str=\"$unicode_str\"\n";
-  print "    Vis output=$vis_outstr\n";
+  print "    Data::Dumper::Interp output=$vis_outstr\n";
   if (substr($vis_outstr,1,length($vis_outstr)-2) ne $unicode_str) {
     die "Unicode does not come through unmolested!";
   }
-  print "   D::D output=$dd_outstr\n";
+  print "    Data::Dumper output=$dd_outstr\n";
 }
 
 my $undef_as_false = undef;
-if (! ref Vis->new()->Useqq(undef)) {
+if (! ref Data::Dumper::Interp->new()->Useqq(undef)) {
   warn "WARNING: Data::Dumper methods do not recognize undef boolean args as 'false'.\n";
   $undef_as_false = 0;
 }
 
 # Basic test of OO interfaces
-{ my $code="Vis->new->vis('foo')  ;"; check $code, '"foo"',     eval $code }
-{ my $code="Vis->new->avis('foo') ;"; check $code, '("foo")',   eval $code }
-{ my $code="Vis->new->hvis(k=>'v');"; check $code, '(k => "v")',eval $code }
-{ my $code="Vis->new->dvis('foo') ;"; check $code, 'foo',       eval $code }
-{ my $code="Vis->new->svis('foo') ;"; check $code, 'foo',       eval $code }
+{ my $code="Data::Dumper::Interp->new->vis('foo')  ;"; check $code, '"foo"',     eval $code }
+{ my $code="Data::Dumper::Interp->new->avis('foo') ;"; check $code, '("foo")',   eval $code }
+{ my $code="Data::Dumper::Interp->new->hvis(k=>'v');"; check $code, '(k => "v")',eval $code }
+{ my $code="Data::Dumper::Interp->new->dvis('foo') ;"; check $code, 'foo',       eval $code }
+{ my $code="Data::Dumper::Interp->new->svis('foo') ;"; check $code, 'foo',       eval $code }
 
 foreach (
           ['Foldwidth',0,1,80,9999],
@@ -1457,14 +1481,14 @@ foreach (
          $dumper .= ", 43" if $base =~ /^[ahl]/;
          $dumper .= ")";
         {
-          my $v = eval "{ local \$Vis::$confname = \$value;
-                          my \$obj = Vis->new();
+          my $v = eval "{ local \$Data::Dumper::Interp::$confname = \$value;
+                          my \$obj = Data::Dumper::Interp->new();
                           \$obj->$dumper ;   # discard dump result
                           \$obj->$confname() # fetch effective setting
                         }";
         confess "bug:$@ " if $@;
-        confess "\$Vis::$confname value is not preserved by $dumper\n",
-            "(Set \$Vis::$confname=",u($value)," but $confname() returned ",u($v),")\n"
+        confess "\$Data::Dumper::Interp::$confname value is not preserved by $dumper\n",
+            "(Set \$Data::Dumper::Interp::$confname=",u($value)," but $confname() returned ",u($v),")\n"
          unless (! defined $v and ! defined $value) || ($v eq $value);
         }
       }
@@ -1480,7 +1504,7 @@ sub MyClass::meth {
 }
 
 # Many tests assume this
-$Vis::Foldwidth = 72;
+$Data::Dumper::Interp::Foldwidth = 72;
 
 @ARGV = ('fake','argv');
 $. = 1234;
@@ -1567,7 +1591,7 @@ $_ = "GroupA.GroupB";
   check $code, '2 3 a=3 b=2', eval $code;
 }
 
-# Vis v1.147ish+ : Check corner cases of re-parsing code 
+# Data::Dumper::Interp v1.147ish+ : Check corner cases of re-parsing code 
 { my $code = q(my $v = undef; dvis('$v')); check $code, "v=undef", eval $code; }
 { my $code = q(my $v = \undef; dvis('$v')); check $code, "v=\\undef", eval $code; }
 { my $code = q(my $v = \"abc"; dvis('$v')); check $code, 'v=\\"abc"', eval $code; }
@@ -1606,7 +1630,7 @@ $_ = "GroupA.GroupB";
 
 # bigint, bignum, bigrat support
 #
-# Recently Vis was changed to prepend (objtype) to stringified values,
+# Recently Data::Dumper::Interp was changed to prepend (objtype) to stringified values,
 # e.g. "(Math::BigFloat)3.14159265358979323846264338327950288419"
 # but we might later change this back, or make the prefix optional;
 # therefore we accept the result with or without with (type) prefix.
@@ -1619,7 +1643,7 @@ my $ratstr  = '1/9';
   use bignum;  # BigInt and BigFloat together
 
   # stringify everything possible
-  local $Vis::Stringify = 1;  # NOTE: the '1' will be a BigInt !
+  local $Data::Dumper::Interp::Stringify = 1;  # NOTE: the '1' will be a BigInt !
 
   my $bigf = eval $bigfstr // die;
   die unless blessed($bigf) =~ /^Math::BigFloat/;
@@ -1631,7 +1655,7 @@ my $ratstr  = '1/9';
 
   # Confirm that various Stringify values disable
   foreach my $Sval (0, undef, "", [], [0], [""]) {
-    local $Vis::Stringify = $Sval;
+    local $Data::Dumper::Interp::Stringify = $Sval;
     my $s = vis($bigf);
     die "bug(",u($Sval),")($s)" unless $s =~ /^\(?bless.*BigFloat/s;
   }
@@ -1653,11 +1677,11 @@ my $ratstr  = '1/9';
   die unless blessed($rat) =~ /^Math::BigRat/;
 
   # Without stringification
-  { local $Vis::Stringify = 0;
+  { local $Data::Dumper::Interp::Stringify = 0;
     my $s = vis($bigf); die "bug($s)" unless $s =~ /^bless.*BigFloat/s;
   }
   # With explicit stringification of BigFloat only
-  { local $Vis::Stringify = [qr/^Math::BigFloat/];
+  { local $Data::Dumper::Interp::Stringify = [qr/^Math::BigFloat/];
     checklit(sub{eval $_[0]}, $bigf, qr/(?:\(Math::BigFloat[^\)]*\))?${bigfstr}/);
     # But not other classes
     my $s = vis($rat); die "bug($s)" unless $s =~ /^bless.*BigRat/s;
@@ -1674,7 +1698,7 @@ my $ratstr  = '1/9';
                                     $1 . (length($2) > 3 && $1.$2 ne "longkey"
                                            ? "..." : $2)
                                   /seg;
-    local $Vis::MaxStringwidth = $MSw;
+    local $Data::Dumper::Interp::MaxStringwidth = $MSw;
     check "with MaxStringwidth=$MSw", $exp_str, eval 'vis($orig_data)';
     die "MaxStringwidth=$MSw : Original data corrupted"
       unless Compare($orig_data, $check_data);
@@ -1980,7 +2004,7 @@ EOF
       my $actual;
       my $dolatval = $@;
       eval { $@ = $dolatval;
-        # Verify that special vars are preserved and don't affect Vis
+        # Verify that special vars are preserved and don't affect Data::Dumper::Interp
         # (except if testing a punctuation var, then don't change it's value)
 
         my ($origAt, $origFs, $origBs, $origComma, $origBang, $origCarE, $origCarW)
@@ -2000,7 +2024,7 @@ EOF
                                           $fakeCarE, $fakeCarW);
 
         $actual = $use_oo
-           ? Vis->new->dvis($dvis_input)
+           ? Data::Dumper::Interp->new->dvis($dvis_input)
            : dvis($dvis_input);
 
         checkspunct('$@',  $@,   $fakeAt);
@@ -2035,7 +2059,7 @@ EOF
       next
         if $input =~ tr/0-\377//c; #
       my $exp = doquoting($input, $useqq);
-      my $act = Vis->new->Useqq($useqq)->dvis($input);
+      my $act = Data::Dumper::Interp->new->Useqq($useqq)->dvis($input);
       die "\n\nUseqq ",u($useqq)," bug:\n"
          ."   Input   «${input}»\n"
          ."  Expected «${exp}»\n"
@@ -2051,7 +2075,7 @@ sub f($) {
   get_closure(1);
   get_closure(1);
   $code->(@_);
-  die "Punct save/restore imbalance" if @Vis::save_stack != 0;
+  die "Punct save/restore imbalance" if @Data::Dumper::Interp::save_stack != 0;
 }
 sub g($) {
   local $_ = 'SHOULD NEVER SEE THIS';
