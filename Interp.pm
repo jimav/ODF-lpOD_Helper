@@ -14,7 +14,7 @@ sub DB_Vis_Evalwrapper { # Must appear before any variables are declared
 package Data::Dumper::Interp;
 # POD documentation follows __END__
 
-use version 0.77; our $VERSION = version->declare(sprintf "v%s", q$Revision: 2.16 $ =~ /(\d[.\d]+)/);
+use version 0.77; our $VERSION = version->declare(sprintf "v%s", q$Revision: 2.17 $ =~ /(\d[.\d]+)/);
 
 require Data::Dumper;
 use Carp;
@@ -790,7 +790,7 @@ sub DB_Vis_Eval($$) {
 
 =head1 NAME
 
-Data::Dumper::Interp - Data::Dumper strings for humans, with interpolation
+Data::Dumper::Interp - Data::Dumper optimized for humans, with interpolation
 
 =head1 SYNOPSIS
 
@@ -802,19 +802,18 @@ Data::Dumper::Interp - Data::Dumper strings for humans, with interpolation
   my $ref = \%hash;
 
   # Interpolate variables in strings, substituting Data::Dumper output
-  #
   say svis 'FYI ref is $ref\nThat hash is: %hash\nArgs are @ARGV';
 
     -->FYI ref is {abc => [1,2,3,4,5], def => undef}
        That hash is: (abc => [1,2,3,4,5], def => undef)
        Args are ("-i","/file/path")
 
-  # Prefix interpolated values with labels:
+  # Label interpolated values with "expr=" 
   say dvis '@ARGV'; -->@ARGV=("-i","/file/path")
 
-  # Format one item at a time.
-  say vis \@ARGV;   #any scalar   -->["-i","/file/path"]
-  say avis @ARGV;   -->("-i","/file/path")
+  # Functions to format things
+  say vis \@ARGV;   #any scalar   -->["-i", "/file/path"]
+  say avis @ARGV;   -->("-i", "/file/path")
   say hvis %hash;   -->(abc => [1,2,3,4,5], def => undef)
 
   # Stringify objects
@@ -826,7 +825,7 @@ Data::Dumper::Interp - Data::Dumper strings for humans, with interpolation
 
   # Wide characters are readable
   use utf8;
-  my $h = {msg => "My language is not ASCII ☻ ☺ 😊 and \N{U+2757}!"};
+  my $h = {msg => "My language is not ASCII ☻ ☺ 😊 \N{U+2757}!"};
   say dvis '$h' ;
     --> h={msg => "My language is not ASCII ☻ ☺ 😊 ❗"}
 
@@ -861,7 +860,7 @@ See "DIFFERENCES FROM Data::Dumper".
 =head2 svis 'string to be interpolated'
 
 Returns the argument with variable references and escapes interpolated
-as in in Perl double-quotish strings except Data::Dumper is used to
+as in in Perl double-quotish strings, using Data::Dumper to
 format variable values.
 
 C<$var> is replaced by its value,
@@ -893,7 +892,7 @@ brevity of typing is more highly prized than beautiful output.
 
 =head2 vis
 
-=head2 vis SCALAREXPR
+=head2 vis SCALAR
 
 =head2 avis LIST
 
@@ -911,7 +910,7 @@ C<hvis> formats a hash as key => value pairs in parens.
 
 =head2 hlvis EVENLIST
 
-These produce a bare list without enclosing parenthesis
+These variants produce a bare list without the enclosing parenthesis
 
 =head2 svisq 'string to be interpolated'
 
@@ -961,8 +960,7 @@ and the state of an object can be quieried or changed with corresponding
 methods.  When a method is called with arguments to set a value,
 the method returns the object itself to facilitate chained calls.
 
-Although C<Data::Dumper::Interp> derives from C<Data::Dumper>, it
-can be configured only using the following:
+The following configuration methods may be used:
 
 =head2 $Data::Dumper::Interp::MaxStringwidth or $obj->MaxStringwidth(INTEGER)
 
@@ -979,7 +977,7 @@ Defaults to the terminal width at the time of first use.
 
 =head2                        or (classname);
 
-=head2                        or ([list of names]);
+=head2                        or ([list of classnames]);
 
 A I<false> value disables object stringification.
 
@@ -991,7 +989,8 @@ class name(s).
 
 =head2 $Data::Dumper::Interp::Sortkeys or $obj->Sortkeys(subref)
 
-Control how hash keys are sorted.  See C<Data::Dumper> documentation.
+Controls sorting and optionally filtering of hash keys.  
+See C<Data::Dumper> documentation.
 
 C<Data::Dumper::Interp> provides a default which sorts
 numeric substrings in keys by numerical
@@ -999,7 +998,7 @@ value (see "DIFFERENCES FROM Data::Dumper").
 
 =head2 $Data::Dumper::Interp::Quotekeys or $obj->Quotekeys(subref)
 
-Control how hash keys are "quoted".  See C<Data::Dumper> documentation.
+See C<Data::Dumper> documentation.
 
 =head1
 
@@ -1018,26 +1017,24 @@ the string "undef".
 
 =head2 qshpath
 
-=head2 qshpath $path_with_tilde_prefix
+=head2 qshpath $might_have_tilde_prefix
 
 The string ($_ by default) is quoted if necessary for parsing
 by /bin/sh, which has different quoting rules than Perl.
 "Double quotes" are used when no escapes would be needed,
 otherwise 'single quotes'.
 
-A string containing only "shell-safe" ASCII characters is
-returned unchanged.
+If the string contains only "shell-safe" ASCII characters
+it is returned as-is, without quotes.
 
 C<qshpath> is like C<qsh> except that an initial ~ or ~username is left
-unquoted.  Useful with shells such as bash or csh.
+unquoted.  Useful for paths given to bash or csh.
 
-If the argument is a ref it is formatted as with C<vis()> and the
+If the argument is a ref it is first formatted as with C<vis()> and the
 resulting string quoted.
 Undefined values appear as C<undef> without quotes.
 
 =head1 LIMITATIONS
-
-=head1
 
 =over 2
 
@@ -1048,7 +1045,7 @@ using Perl's debugger support ('eval' in package DB -- see I<perlfunc>).
 This mechanism has some limitations:
 
 @_ will appear to have the original arguments to a sub even if "shift"
-has been executed.  However if @_ is entirely replaced, correct values
+has been executed.  However if @_ is entirely replaced, the correct values
 will be displayed.
 
 A lexical ("my") sub creates a closure, and variables in visible scopes
@@ -1069,17 +1066,26 @@ an attempt to display them with C<svis> will fail.  For example:
 =item Multiply-referenced items
 
 If a structure contains several refs to the same item,
-the first ref will be visualized by showing the contents of the item
+the first ref will be visualized by showing the referenced item
 as you might expect.
 
-However subsequent refs will look something like C<< $VAR1->place >>
-where C<place> is the first ref in the overall structure;
-this is how Data::Dumper indicates that the ref points to
-the same data as the first ref, rather than to an identical copy.
-Data::Dumper with the "Purity" option can generate code to correctly
-re-create such complex structures. However Data::Dumper::Interp
-does nothing special and simply passes through these notations,
-which might be confusing the first time you see them.
+However subsequent refs will look like C<< $VAR1->place >>
+where C<place> is the location of the first ref in the overall structure.
+This is how Data::Dumper indicates that the ref is a copy of the first
+ref and thus points to the same datum.
+"$VAR1" is an artifact of how Data::Dumper would generate code
+using its "Purity" feature.  Data::Dumper::Interp does nothing
+special and simply passes through these annotations.
+
+=item The special "_" stat filehandle may not be preserved
+
+Perl does not currently allow the state of the special "_" filehandle
+to be localized or restored.  
+On the first call, Data::Dumper::Interp queries the operating
+system to obtain the window size to initialize C<$Foldwidth>, and
+this may change the "_" filehandle.  After the first
+call (or if you pre-set C<$Foldwidth>),
+the "_" filehandle will not change across calls.
 
 =back
 
@@ -1089,13 +1095,14 @@ This module works by first cloning the data (when necessary) and
 replacing certain items with substitutions;
 then C<Data::Dumper> is called; finally the result is post-processed.
 
-The net result differs from plain C<Data::Dumper> output as follows:
+The net result, by default, 
+differs from plain C<Data::Dumper> output as follows:
 
 =over 2
 
 =item *
 
-The result is a single line if possible, otherwise wrapped to
+Everything is shown on a single line if possible, otherwise wrapped to
 the terminal width with indentation appropriate to structure levels.
 
 A final newline is I<not> included.
@@ -1108,13 +1115,14 @@ Note: If your data contains 'wide characters', you must encode
 the result before displaying it as explained in C<perluniintro>.
 For example with C<use IO ':locale';>
 
-Undecoded binary octets (internally: strings with the 'utf8 flag' off)
-will still be escaped as individual bytes when necessary.
+Undecoded binary octets (e.g. data read from a 'binmode' file)
+will be escaped as individual bytes when necessary.
 
 =item *
 
 Object refs are replaced by the object's stringified representation.
-For example, C<bignum> and C<bigrat> numbers are shown as readable values.
+For example, C<bignum> and C<bigrat> numbers are shown as easily
+readable values rather than "bless( {...}, 'Math::BigInt')".
 
 Stingified objects are prefixed with "(classname)" to make clear what
 happened.
@@ -1136,15 +1144,9 @@ and strings containing digits like "42" appear as quoted strings
 and not numbers (string vs. number detection is ala JSON::PP).
 
 Such differences might not matter to Perl when executing code,
-but likely do matter when communicating from the programmer to a human.
+but may be important when communicating to a human.
 
 =back
-
-These choices reflect the author's accumulated experience debugging
-Perl applications.
-Other people, especially if working on perl internals or XS code,
-might prefer to use Data::Dumper directly.
-
 
 =head1 SEE ALSO
 
