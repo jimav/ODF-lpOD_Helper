@@ -1,0 +1,4 @@
+This is maintained using Dist::Zilla
+
+dzil build
+dzil test
