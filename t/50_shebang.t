@@ -158,11 +158,11 @@ sub checkstringy(&$$) {
     [ 'avis($_[1])',             '(_Q_)' ],
     [ 'avisq($_[1])',            '(_q_)' ],
     #currently broken due to $VAR problem: [ 'avisq($_[1], $_[1])',     '(_q_, _q_)' ],
-    [ 'lvis($_[1])',             '_Q_' ],
-    [ 'lvisq($_[1])',            '_q_' ],
-    [ 'svis(\'$_[1]\')',         '_Q_' ],
-    [ 'svis(\'foo$_[1]\')',      'foo_Q_' ],
-    [ 'svis(\'foo$\'."_[1]")',   'foo_Q_' ],
+    [ 'alvis($_[1])',             '_Q_' ],
+    [ 'alvisq($_[1])',            '_q_' ],
+    [ 'ivis(\'$_[1]\')',         '_Q_' ],
+    [ 'ivis(\'foo$_[1]\')',      'foo_Q_' ],
+    [ 'ivis(\'foo$\'."_[1]")',   'foo_Q_' ],
     [ 'dvis(\'$_[1]\')',         '$_[1]=_Q_' ],
     [ 'dvis(\'foo$_[1]bar\')',   'foo$_[1]=_Q_bar' ],
     [ 'dvisq(\'foo$_[1]\')',     'foo$_[1]=_q_' ],
@@ -197,11 +197,11 @@ sub checklit(&$$) {
     [ 'avis($_[1])',             '(_Q_)' ],
     [ 'avisq($_[1])',            '(_q_)' ],
     #currently broken due to $VAR problem: [ 'avisq($_[1], $_[1])',     '(_q_, _q_)' ],
-    [ 'lvis($_[1])',             '_Q_' ],
-    [ 'lvisq($_[1])',            '_q_' ],
-    [ 'svis(\'$_[1]\')',         '_Q_' ],
-    [ 'svis(\'foo$_[1]\')',      'foo_Q_' ],
-    [ 'svis(\'foo$\'."_[1]")',   'foo_Q_' ],
+    [ 'alvis($_[1])',             '_Q_' ],
+    [ 'alvisq($_[1])',            '_q_' ],
+    [ 'ivis(\'$_[1]\')',         '_Q_' ],
+    [ 'ivis(\'foo$_[1]\')',      'foo_Q_' ],
+    [ 'ivis(\'foo$\'."_[1]")',   'foo_Q_' ],
     [ 'dvis(\'$_[1]\')',         '$_[1]=_Q_' ],
     [ 'dvis(\'foo$_[1]bar\')',   'foo$_[1]=_Q_bar' ],
     [ 'dvisq(\'foo$_[1]\')',     'foo$_[1]=_q_' ],
@@ -238,14 +238,14 @@ my $byte_str = join "",map { chr $_ } 10..30;
 { chomp( my $expected = `tput cols` );  # may default to 80 if no tty
   die "Expected initial Data::Dumper::Interp::Foldwidth to be undef" if defined $Data::Dumper::Interp::Foldwidth;
   { local $ENV{COLUMNS} = $expected + 13;
-    svis("abc");
+    ivis("abc");
     die "Data::Dumper::Interp::Foldwidth does not honor ENV{COLUMNS}" 
       unless u($Data::Dumper::Interp::Foldwidth) == $expected + 13;
   }
   undef $Data::Dumper::Interp::Foldwidth;  # re-enable auto-detect
   if (unix_compatible_os()) {
     delete local $ENV{COLUMNS};
-    svis("abc");
+    ivis("abc");
     die "Data::Dumper::Interp::Foldwidth ",u($Data::Dumper::Interp::Foldwidth)," not defaulted correctly, expecting $expected" unless $Data::Dumper::Interp::Foldwidth == $expected;
   }
   undef $Data::Dumper::Interp::Foldwidth;  # re-enable auto-detect
@@ -258,7 +258,7 @@ my $byte_str = join "",map { chr $_ } 10..30;
       #for (*STDIN,*STDOUT,*STDERR) { close $_ or die "Can not close $_:$!" }
       POSIX::close $_ for (0,1,2);
       $Data::Dumper::Interp::Debug = 0;
-      svis("abc");
+      ivis("abc");
       exit($Data::Dumper::Interp::Foldwidth // 253);
     }
     waitpid($pid,0);
@@ -294,7 +294,7 @@ if (! ref Data::Dumper::Interp->new()->Useqq(undef)) {
 { my $code="Data::Dumper::Interp->new->avis('foo') ;"; check $code, '("foo")',   eval $code }
 { my $code="Data::Dumper::Interp->new->hvis(k=>'v');"; check $code, '(k => "v")',eval $code }
 { my $code="Data::Dumper::Interp->new->dvis('foo') ;"; check $code, 'foo',       eval $code }
-{ my $code="Data::Dumper::Interp->new->svis('foo') ;"; check $code, 'foo',       eval $code }
+{ my $code="Data::Dumper::Interp->new->ivis('foo') ;"; check $code, 'foo',       eval $code }
 
 foreach (
           ['Foldwidth',0,1,80,9999],
@@ -315,7 +315,7 @@ foreach (
   my ($confname, @values) = @$_;
   my $testval = [123];
   foreach my $value (@values) {
-    foreach my $base (qw(vis avis hvis lvis hlvis dvis svis)) {
+    foreach my $base (qw(vis avis hvis alvis hlvis dvis ivis)) {
       foreach my $q ("", "q") {
         my $dumper = $base . $q . "(42";
          $dumper .= ", 43" if $base =~ /^[ahl]/;
@@ -423,7 +423,7 @@ $_ = "GroupA.GroupB";
 { my $code = 'hvis("foo",undef)'; check $code, "(foo => undef)", eval $code; }
 { my $code = 'vis(undef)'; check $code, "undef", eval $code; }
 { my $code = 'vis(\undef)'; check $code, "\\undef", eval $code; }
-{ my $code = 'svis(undef)'; check $code, "<undef arg>", eval $code; }
+{ my $code = 'ivis(undef)'; check $code, "<undef arg>", eval $code; }
 { my $code = 'dvis(undef)'; check $code, "<undef arg>", eval $code; }
 { my $code = 'dvisq(undef)'; check $code, "<undef arg>", eval $code; }
 
@@ -553,7 +553,7 @@ check
   dvis('%toplex_h');
 check 'global divs @ARGV', q(@ARGV=("fake","argv")), dvis('@ARGV');
 check 'global divs $.', q($.=1234), dvis('$.');
-check 'global divs $ENV{EnvVar}', q("Test EnvVar Value"), svis('$ENV{EnvVar}');
+check 'global divs $ENV{EnvVar}', q("Test EnvVar Value"), ivis('$ENV{EnvVar}');
 sub func {
   check 'func args', q(@_=(1,2,3)), dvis('@_');
 }
