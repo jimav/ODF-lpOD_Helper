@@ -14,17 +14,17 @@
 
 use strict; use warnings FATAL => 'all'; use utf8; use 5.012;
 use feature qw(state);
-package Data::Dumper::Interp;
+package  Data::Dumper::Interp;
 
-package DB;
+
+package  # newline prevents Dist::Zilla::Plugin::PkgVersion from adding $VERSION
+  DB;
 sub DB_Vis_Evalwrapper { # Must appear before any variables are declared
   eval $Data::Dumper::Interp::string_to_eval; ## no critic
 }
 
 package Data::Dumper::Interp;
 # POD documentation follows __END__
-
-use version 0.77; our $VERSION = version->declare(sprintf "v%s", q$Revision: 2.18 $ =~ /(\d[.\d]+)/);
 
 use Data::Dumper v2.174 ();
 use Carp;
@@ -183,7 +183,7 @@ sub hlvis(@)  { &__getobj_h ->_vistype('hl')->Dump; }
 sub hlvisq(@) { &__getobj_h ->_vistype('hl')->Useqq(0)->Dump; }
 
 # Trampolines which replace the call frame with a call directly to the
-# interpolation code which uses package DB to access the user's context.
+# interpolation code which uses $package DB to access the user's context.
 sub ivis(_) { @_=(&__getobj,          shift,'s');goto &_Interpolate }
 sub ivisq(_){ @_=(&__getobj->Useqq(0),shift,'s');goto &_Interpolate }
 sub dvis(_) { @_=(&__getobj,          shift,'d');goto &_Interpolate }
@@ -712,7 +712,8 @@ sub _Interpolate {
   goto &DB::DB_Vis_Interpolate
 }
 
-package DB;
+package 
+  DB;
 
 sub DB_Vis_Interpolate {
   my ($self, $funcname, $pieces) = @_;
