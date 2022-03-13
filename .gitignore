@@ -29,3 +29,5 @@ cover_db/
 MYMETA.*
 
 /Data-Dumper-Interp-*
+
+.gitnxtver_cache
