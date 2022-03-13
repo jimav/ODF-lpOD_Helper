@@ -1,4 +1,12 @@
 This is maintained using Dist::Zilla
 
+dzil clean
 dzil build
 dzil test
+etc.
+----------------
+
+Git book: https://git-scm.com/book/en/v2
+
+----------------
+
