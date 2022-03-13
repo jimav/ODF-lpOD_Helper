@@ -24,7 +24,7 @@ sub DB_Vis_Evalwrapper { # Must appear before any variables are declared
 package Data::Dumper::Interp;
 # POD documentation follows __END__
 
-use version 0.77; our $VERSION = version->declare(sprintf "v%s", q$Revision: 2.17 $ =~ /(\d[.\d]+)/);
+use version 0.77; our $VERSION = version->declare(sprintf "v%s", q$Revision: 2.18 $ =~ /(\d[.\d]+)/);
 
 use Data::Dumper v2.174 ();
 use Carp;
