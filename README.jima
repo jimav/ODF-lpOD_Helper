@@ -1,9 +1,11 @@
 This is maintained using Dist::Zilla
+----------------
 
 dzil clean
 dzil build
 dzil test
-etc.
+dzil release  # now auto-updates version, commits, pushes, and uploads
+
 ----------------
 
 Git book: https://git-scm.com/book/en/v2
