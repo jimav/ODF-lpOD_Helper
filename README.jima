@@ -1,9 +1,8 @@
 This is maintained using Dist::Zilla
 ----------------
 
-dzil clean
-dzil build
-dzil test
+dzil clean; dzil build && dzil test
+
 dzil release  # now auto-updates version, commits, pushes, and uploads
 
 ----------------

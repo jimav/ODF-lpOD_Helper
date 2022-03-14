@@ -1118,7 +1118,7 @@ Printable Unicode characters appear as themselves instead of \x{ABCD}.
 
 Note: If your data contains 'wide characters', you must encode
 the result before displaying it as explained in C<perluniintro>.
-For example with C<use open IO => ':locale';>
+For example with C<< use open IO => ':locale'; >>
 
 Undecoded binary octets (e.g. data read from a 'binmode' file)
 will be escaped as individual bytes when necessary.
