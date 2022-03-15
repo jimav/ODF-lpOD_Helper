@@ -1,12 +1,10 @@
 #!/usr/bin/perl
-# Tester for module Data::Dumper::Interp. 
-use strict; use warnings  FATAL => 'all'; use feature qw(state say);
+use strict; use warnings  FATAL => 'all'; use feature qw(state say); use utf8;
 srand(42);  # so reproducible
 say "FIXME: Test qr/.../ as values to be dumped.";
   #use Regexp::Common qw/RE_balanced/;
   #my $re = RE_balanced(-parens=>'(){}[]');
-use utf8;
-use open IO => 'utf8', ':std';
+use open IO => ':locale';
 select STDERR; $|=1; select STDOUT; $|=1;
 use Scalar::Util qw(blessed reftype looks_like_number);
 use Carp;
@@ -18,57 +16,34 @@ use Data::Compare qw(Compare);
 # Meanwhile, some baby steps...
 use Test::More;
 
-my $unicode_str;
-
-# [Obsolete comment:] We want to test the original version of the internal function
-# Data::Dumper::qquote to see if the useqq="utf8" feature has been fixed, and
-# if not allow Data::Dumper::Interp to over-ride it.  But perl nowadays 
-# seems to cache the sub lookup immediately in Data::Dumper, making 
-# the override ineffective.
-
-# Data::Dumper::Interp no longer overrides that internal function,
-# but instead parses hex escape sequences in output strings and  "unescapes"
-# appropriate chacters.  So this test is just to detect if Data::Dumper fixes 
-# Useqq('utf8') to work in the future, in which case we could stop doing that.
-#
-BEGIN{
-  # [Obsolete comment:]
-  #   This test must be done before loading Data::Dumper::Interp, 
-  #   which over-rides an internal function to fix the bug
-  $unicode_str = join "", map { chr($_) } (0x263A .. 0x2650);
-  require Data::Dumper;
-  print "Loaded ", $INC{"Data/Dumper.pm"}, " qquote=", \&Data::Dumper::qquote,"\n";
-  { my $s = Data::Dumper->new([$unicode_str],['unicode_str'])->Terse(1)->Useqq('utf8')->Dump;
-    chomp $s;
-    $s =~ s/^"(.*)"$/$1/s or die "bug";
-    if ($s ne $unicode_str) {
-      #warn "Data::Dumper with Useqq('utf8'):$s\n";
-      diag "Note: Useqq('utf8') is broken in your Data::Dumper.\n"
-    } else {
-      diag "Useqq('utf8') seems to have been fixed in Data::Dumper !!! \n";
-      diag "Consider changing Data::Dumper::Interp to not bother parsing hex escapes?";
-    }
+my $pkgname;
+BEGIN {
+  use Data::Dumper::Interp;
+  $pkgname = "Data::Dumper::Interp";
+  sub getPkgVar($) {
+    my ($varname) = @_;
+    no strict 'refs'; my $r = eval "\$${pkgname}::$varname"; die $@ if $@;
+    $r
+  }
+  sub setPkgVar($$) {
+    my ($varname, $value) = @_;
+    no strict 'refs'; eval "\$${pkgname}::$varname = \$value"; die $@ if $@;
+  }
+  sub callPkgNew(@) {
+    no strict 'refs'; my $r; eval "\$r = ${pkgname}->new(\@_)"; die $@ if $@;
+    $r
   }
 }
-
-use Data::Dumper::Interp;
-print "Loaded ", $INC{"Data::Dumper::Interp.pm" =~ s/::/\//gr}, "\n";
+diag "Loaded ", $INC{"${pkgname}.pm" =~ s/::/\//gr}, 
+     " VERSION=", (getPkgVar("VERSION") // "undef"),"\n"; 
 
 # Do an initial read of $[ so arybase will be autoloaded
 # (prevents corrupting $!/ERRNO in subsequent tests)
 eval '$[' // die;
 
-sub unix_compatible_os() {
-  state $result //=
-    # There must be a better way...
-    (($^O !~ /win|dos/i && $^O =~ /ix$|ux$|bsd|svr|uni|osf|sv$/)
-     || $^O eq 'darwin'
-     || $^O eq 'cygwin'
-    )
-    && -w "/dev/null";
-  $result;
-}
-sub tf($) { $_[0] ? "true" : "false" }
+#sub _dbvis(_) { goto &Data::Dumper::Interp::_dbvis }
+#sub _dbvisq(_) { goto &Data::Dumper::Interp::_dbvisq }
+#sub _dbavis(_) { goto &Data::Dumper::Interp::_dbavis }
 
 sub fmt_codestring($;$) { # returns list of lines
   my ($str, $prefix) = @_;
@@ -147,37 +122,37 @@ sub check($$@) {
 # for example with "use bignum".
 # The expected_re matches the item without surrounding quotes.
 # **CURRENTLY NO LONGER USED** (3/12/2022)
-sub checkstringy(&$$) {
-  my ($doeval, $item, $expected_re) = @_;
-  my $expqq_re = "\"${expected_re}\"";
-  my $expq_re  = "'${expected_re}'";
-  foreach (
-    [ 'Data::Dumper::Interp->new()->vis($_[1])',  '_Q_' ],
-    [ 'vis($_[1])',              '_Q_' ],
-    [ 'visq($_[1])',             '_q_' ],
-    [ 'avis($_[1])',             '(_Q_)' ],
-    [ 'avisq($_[1])',            '(_q_)' ],
-    #currently broken due to $VAR problem: [ 'avisq($_[1], $_[1])',     '(_q_, _q_)' ],
-    [ 'alvis($_[1])',             '_Q_' ],
-    [ 'alvisq($_[1])',            '_q_' ],
-    [ 'ivis(\'$_[1]\')',         '_Q_' ],
-    [ 'ivis(\'foo$_[1]\')',      'foo_Q_' ],
-    [ 'ivis(\'foo$\'."_[1]")',   'foo_Q_' ],
-    [ 'dvis(\'$_[1]\')',         '$_[1]=_Q_' ],
-    [ 'dvis(\'foo$_[1]bar\')',   'foo$_[1]=_Q_bar' ],
-    [ 'dvisq(\'foo$_[1]\')',     'foo$_[1]=_q_' ],
-    [ 'dvisq(\'foo$_[1]bar\')',  'foo$_[1]=_q_bar' ],
-    [ 'vis({ aaa => $_[1], bbb => "abc" })', '{aaa => _Q_,bbb => "abc"}' ],
-  ) {
-    my ($code, $exp) = @$_;
-    $exp = quotemeta $exp;
-    $exp =~ s/_Q_/$expqq_re/g;
-    $exp =~ s/_q_/$expq_re/g;
-    my $code_display = $code . " with \$_[1]=«$item»";
-    local $Data::Dumper::Interp::Foldwidth = 0;  # disable wrapping
-    check $code_display, qr/$exp/, $doeval->($code, $item) ;
-  }
-}
+#sub checkstringy(&$$) {
+#  my ($doeval, $item, $expected_re) = @_;
+#  my $expqq_re = "\"${expected_re}\"";
+#  my $expq_re  = "'${expected_re}'";
+#  foreach (
+#    [ 'Data::Dumper::Interp->new()->vis($_[1])',  '_Q_' ],
+#    [ 'vis($_[1])',              '_Q_' ],
+#    [ 'visq($_[1])',             '_q_' ],
+#    [ 'avis($_[1])',             '(_Q_)' ],
+#    [ 'avisq($_[1])',            '(_q_)' ],
+#    #currently broken due to $VAR problem: [ 'avisq($_[1], $_[1])',     '(_q_, _q_)' ],
+#    [ 'alvis($_[1])',             '_Q_' ],
+#    [ 'alvisq($_[1])',            '_q_' ],
+#    [ 'ivis(\'$_[1]\')',         '_Q_' ],
+#    [ 'ivis(\'foo$_[1]\')',      'foo_Q_' ],
+#    [ 'ivis(\'foo$\'."_[1]")',   'foo_Q_' ],
+#    [ 'dvis(\'$_[1]\')',         '$_[1]=_Q_' ],
+#    [ 'dvis(\'foo$_[1]bar\')',   'foo$_[1]=_Q_bar' ],
+#    [ 'dvisq(\'foo$_[1]\')',     'foo$_[1]=_q_' ],
+#    [ 'dvisq(\'foo$_[1]bar\')',  'foo$_[1]=_q_bar' ],
+#    [ 'vis({ aaa => $_[1], bbb => "abc" })', '{aaa => _Q_,bbb => "abc"}' ],
+#  ) {
+#    my ($code, $exp) = @$_;
+#    $exp = quotemeta $exp;
+#    $exp =~ s/_Q_/$expqq_re/g;
+#    $exp =~ s/_q_/$expq_re/g;
+#    my $code_display = $code . " with \$_[1]=«$item»";
+#    local $Data::Dumper::Interp::Foldwidth = 0;  # disable wrapping
+#    check $code_display, qr/$exp/, $doeval->($code, $item) ;
+#  }
+#}#checkstringy()
 
 # Run a variety of tests on non-string item, i.e. something which is a
 # number or structured object (which might contains strings within, e.g.
@@ -216,78 +191,7 @@ sub checklit(&$$) {
     local $Data::Dumper::Interp::Foldwidth = 0;  # disable wrapping
     check $code_display, qr/$exp/, $doeval->($code, $item) ;
   }
-}
-
-# ---------- Check stuff other than formatting or interpolation --------
-
-diag "Data::Dumper::Interp::VERSION = $Data::Dumper::Interp::VERSION\n";
-
-for my $varname (qw(PREMATCH MATCH POSTMATCH)) {
-  $_ = "test"; /(\w+)/;
-  no strict 'vars';
-  die "Data::Dumper::Interp imports high-overhead English ($varname)"
-    if eval "defined \$Data::Dumper::Interp::$varname";
-  die "EVAL ERR: $@ " if $@;
-}
-
-my $byte_str = join "",map { chr $_ } 10..30;
-
-##################################################
-# Check default $Data::Dumper::Interp::Foldwidth
-##################################################
-{ chomp( my $expected = `tput cols` );  # may default to 80 if no tty
-  die "Expected initial Data::Dumper::Interp::Foldwidth to be undef" if defined $Data::Dumper::Interp::Foldwidth;
-  { local $ENV{COLUMNS} = $expected + 13;
-    ivis("abc");
-    die "Data::Dumper::Interp::Foldwidth does not honor ENV{COLUMNS}" 
-      unless u($Data::Dumper::Interp::Foldwidth) == $expected + 13;
-  }
-  undef $Data::Dumper::Interp::Foldwidth;  # re-enable auto-detect
-  if (unix_compatible_os()) {
-    delete local $ENV{COLUMNS};
-    ivis("abc");
-    die "Data::Dumper::Interp::Foldwidth ",u($Data::Dumper::Interp::Foldwidth)," not defaulted correctly, expecting $expected" unless $Data::Dumper::Interp::Foldwidth == $expected;
-  }
-  undef $Data::Dumper::Interp::Foldwidth;  # re-enable auto-detect
-  if (unix_compatible_os()) {
-    delete local $ENV{COLUMNS};
-    my $pid = fork();
-    if ($pid==0) {
-      require POSIX;
-      die "bug" unless POSIX::setsid()==$$; # Loose controlling tty
-      #for (*STDIN,*STDOUT,*STDERR) { close $_ or die "Can not close $_:$!" }
-      POSIX::close $_ for (0,1,2);
-      $Data::Dumper::Interp::Debug = 0;
-      ivis("abc");
-      exit($Data::Dumper::Interp::Foldwidth // 253);
-    }
-    waitpid($pid,0);
-    die "Data::Dumper::Interp::Foldwidth defaulted to ", ($? >> 8)|($? & !0xFF), " (not 80 as expected)"
-      unless $? == (80 << 8);
-    $? = 0;
-  }
-}
-
-##################################################
-# Check Useqq('utf8') support
-##################################################
-{
-  my $vis_outstr = vis($unicode_str);
-  chomp $vis_outstr;
-  my $dd_outstr = Data::Dumper->new([$unicode_str],['unicode_str'])->Terse(1)->Useqq('utf8')->Dump;
-  print "                   unicode_str=\"$unicode_str\"\n";
-  print "   Data::Dumper::Interp output=$vis_outstr\n";
-  if (substr($vis_outstr,1,length($vis_outstr)-2) ne $unicode_str) {
-    die "Unicode does not come through unmolested!";
-  }
-  print "   Data::Dumper output=$dd_outstr\n";
-}
-
-my $undef_as_false = undef;
-if (! ref Data::Dumper::Interp->new()->Useqq(undef)) {
-  warn "WARNING: Data::Dumper methods do not recognize undef boolean args as 'false'.\n";
-  $undef_as_false = 0;
-}
+}#checklit()
 
 # Basic test of OO interfaces
 { my $code="Data::Dumper::Interp->new->vis('foo')  ;"; check $code, '"foo"',     eval $code }
@@ -442,6 +346,11 @@ $_ = "GroupA.GroupB";
 { my $code = q(open my $fh, "</dev/null" or die; dvisq('$fh')); 
   check $code, "fh=\\*{'::\$fh'}", eval $code; }
 
+# Data::Dumper::Interp 2.12 : hex escapes including illegal code points:
+#   10FFFF is the highest legal Unicode code point which will ever be assigned.
+{ my $code = q(my $v = "beyondmax:\x{110000}\x{FFFFFF}\x{FFFFFFFF}"; dvis('$v')); 
+  check $code, 'v="beyondmax:\x{110000}\x{ffffff}\x{ffffffff}"', eval $code; }
+
 # Check that $1 etc. can be passed (this was once a bug...)
 # The duplicated calls are to check that $1 is preserved
 { my $code = '" a~b" =~ / (.*)()/ && qsh($1); die unless $1 eq "a~b";qsh($1)'; 
@@ -594,6 +503,9 @@ sub show_white($) {
   $_
 }
 
+my $unicode_str = join "", map { chr($_) } (0x263A .. 0x2650);
+my $byte_str = join "",map { chr $_ } 10..30;
+
 sub get_closure(;$) {
  my ($clobber) = @_;
 
@@ -656,6 +568,8 @@ sub get_closure(;$) {
   local $local_obj = $toplex_obj;
 
   my @tests = (
+    [ __LINE__, q(\x{263a}), qq(\N{U+263A}) ],   # \x{...} in dvis input
+    [ __LINE__, q(\N{U+263a}), qq(\N{U+263A}) ], # \N{U+...} in dvis input
     [ __LINE__, q(aaa\\\\bbb), q(aaa\bbb) ],
 
     #[ q($unicode_str\n), qq(unicode_str=\" \\x{263a} \\x{263b} \\x{263c} \\x{263d} \\x{263e} \\x{263f} \\x{2640} \\x{2641} \\x{2642} \\x{2643} \\x{2644} \\x{2645} \\x{2646} \\x{2647} \\x{2648} \\x{2649} \\x{264a} \\x{264b} \\x{264c} \\x{264d} \\x{264e} \\x{264f} \\x{2650}\"\n) ],
@@ -816,17 +730,14 @@ EOF
       # For some reason we can't catch exceptions from inside package DB.
       # undef is returned but $@ is not set
       # 3/5/22: The above comment may not longer be true; there might have been
-      #  a bug where $@ was not saved properly.  BUT VERIFY b4 deleting this comment.
+      #  a bug where $@ was not saved properly.  
+      #  BUT VERIFY b4 deleting this comment.
       my $ev = eval { "$dvis_input" };
       die "Bad test string:$dvis_input\nPerl can't interpolate it (lno=$lno)"
          .($@ ? ":\n  $@" : "\n")
         if $@ or ! defined $ev;
     }
 
-    my sub punctbug($$$) {
-      my ($varname, $act, $exp) = @_;
-      confess "ERROR (testing '$dvis_input' lno $lno): $varname was not preserved (expected $exp, got $act)\n"
-    }
     my sub checkspunct($$$) {
       my ($varname, $actual, $expecting) = @_;
       check "dvis('$dvis_input') lno $lno : $varname NOT PRESERVED : ",
@@ -834,7 +745,7 @@ EOF
     }
     my sub checknpunct($$$) {
       my ($varname, $actual, $expecting) = @_;
-      # N.B. check() compaares as strings
+      # N.B. check() compares as strings
       check "dvis('$dvis_input') lno $lno : $varname NOT PRESERVED : ",
             defined($actual) ? $actual+0 : "<undef>",
             defined($expecting) ? $expecting+0 : "<undef>" ;
@@ -847,11 +758,11 @@ EOF
         # Verify that special vars are preserved and don't affect Data::Dumper::Interp
         # (except if testing a punctuation var, then don't change it's value)
 
-        my ($origAt, $origFs, $origBs, $origComma, $origBang, $origCarE, $origCarW)
+        my ($origAt,$origFs,$origBs,$origComma,$origBang,$origCarE,$origCarW)
           = ($@, $/, $\, $,, $!, $^E, $^W);
 
         # Don't change a value if being tested in $dvis_input
-        my ($fakeAt, $fakeFs, $fakeBs, $fakeComma, $fakeBang, $fakeCarE, $fakeCarW)
+        my ($fakeAt,$fakeFs,$fakeBs,$fakeCom,$fakeBang,$fake_cE,$fake_cW)
           = ($dvis_input =~ /(?<!\\)\$@/    ? $origAt : "FakeAt",
              $dvis_input =~ /(?<!\\)\$\//   ? $origFs : "FakeFs",
              $dvis_input =~ /(?<!\\)\$\\\\/ ? $origBs : "FakeBs",
@@ -860,8 +771,8 @@ EOF
              $dvis_input =~ /(?<!\\)\$^E/   ? $origCarE : 6,  # $^E aliases $! on most OSs
              $dvis_input =~ /(?<!\\)\$^W/   ? $origCarW : 0); # $^W can only be 0 or 1
 
-        ($@, $/, $\, $,, $!, $^E, $^W) = ($fakeAt, $fakeFs, $fakeBs, $fakeComma, $fakeBang,
-                                          $fakeCarE, $fakeCarW);
+        ($@, $/, $\, $,, $!, $^E, $^W) 
+          = ($fakeAt,$fakeFs,$fakeBs,$fakeCom,$fakeBang,$fake_cE,$fake_cW);
 
         $actual = $use_oo
            ? Data::Dumper::Interp->new->dvis($dvis_input)
@@ -870,17 +781,17 @@ EOF
         checkspunct('$@',  $@,   $fakeAt);
         checkspunct('$/',  $/,   $fakeFs);
         checkspunct('$\\', $\,   $fakeBs);
-        checkspunct('$,',  $,,   $fakeComma);
+        checkspunct('$,',  $,,   $fakeCom);
         checknpunct('$!',  $!+0, $fakeBang);
-        checknpunct('$^E', $^E+0,$fakeCarE);
-        checknpunct('$^W', $^W+0,$fakeCarW);
+        checknpunct('$^E', $^E+0,$fake_cE);
+        checknpunct('$^W', $^W+0,$fake_cW);
 
         # Restore
         ($@, $/, $\, $,, $!, $^E, $^W)
-          = ($origAt, $origFs, $origBs, $origComma, $origBang, $origCarE, $origCarW);
+          = ($origAt,$origFs,$origBs,$origComma,$origBang,$origCarE,$origCarW);
         $dolatval = $@;
       }; #// do{ $actual  = $@ };
-      if ($@) { $actual = $@ }
+      $actual = $@ if $@;
       $@ = $dolatval;
 
       checkeq_literal(
@@ -897,9 +808,9 @@ EOF
       # if there are any Unicode characters present.
       # So we can not test single-quoted mode in those cases
       next
-        if $input =~ tr/0-\377//c; #
+        if !$useqq && $input =~ tr/\0-\377//c; #
       my $exp = doquoting($input, $useqq);
-      my $act = Data::Dumper::Interp->new->Useqq($useqq)->dvis($input);
+      my $act = Data::Dumper::Interp->new->Useqq($useqq)->vis($input);
       die "\n\nUseqq ",u($useqq)," bug:\n"
          ."   Input   «${input}»\n"
          ."  Expected «${exp}»\n"
@@ -924,6 +835,7 @@ sub g($) {
 &g(42,$toplex_ar);
 
 #print "Tests passed.\n";
+#say "stderrstring:$stderr_string";
 
 ok(1, "The whole shebang");
 done_testing();

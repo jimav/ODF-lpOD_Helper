@@ -37,8 +37,11 @@ use Term::ReadKey ();
 use overload ();
 
 sub _dbvis(_) {  # for our internal debugging messages
-  my $s = Data::Dumper->new([shift])->Useqq(1)->Terse(1)->Indent(0)->Dump;
-  chomp $s;
+  chomp( my $s = Data::Dumper->new([shift])->Useqq(1)->Terse(1)->Indent(0)->Dump );
+  $s
+}
+sub _dbvisq(_) {  # for our internal debugging messages
+  chomp( my $s = Data::Dumper->new([shift])->Useqq(0)->Terse(1)->Indent(0)->Dump );
   $s
 }
 sub _dbavis(@) { "(" . join(", ", map{_dbvis} @_) . ")" }
@@ -550,12 +553,14 @@ sub __unescape_printables() {
    )( do{
         local $_ = $1;
         if (/^"/) {  # "double quoted string
-          s{ (?: [^\\]++ | \\(?!x) )*+ \K ( \\x\{ (?<hex>[a-fA-F0-9]+) \} )
+          s{ \G (?: [^\\]++ | \\[^x] )*+ \K ( \\x\{ (?<hex>[a-fA-F0-9]+) \} )
            }{
-              my $c;
-              length($+{hex}) <= 6
-                && ($c = chr(hex($+{hex}))) !~ m<\P{XPosixGraph}|[\0-\377]>
-              ? $c : $1
+              my $orig = $1;
+              local $_ = hex( length($+{hex}) > 6 ? '0' : $+{hex} );
+              $_ = $_ > 0x10FFFF ? "\0" : chr($_); # 10FFFF is Unicode limit
+              # Using 'lc' so regression tests do not depend on Data::Dumper's
+              # choice of case when escaping wide characters.
+              m<\P{XPosixGraph}|[\0-\377]> ? lc($orig) : $_
            }xesg;
         }
         $_
@@ -681,8 +686,7 @@ sub _Interpolate {
         if ($s_or_d eq 'd') {
           # Inject a "plain text" fragment containing the dvis "expr=" prefix,
           # omitting the '$' sigl if the expr is a plain '$name'.
-          push @pieces, ["",
-                         "q(".(/^\$(?!_)(${userident_re})\z/ ? $1 : $_)."=)"];
+          push @pieces, ["=", (/^\$(?!_)(${userident_re})\z/ ? $1 : $_)."="];
         }
         if ($sigl eq '$') {
           push @pieces, ["vis", $_];
@@ -697,7 +701,13 @@ sub _Interpolate {
         else { confess "BUG:sigl='$sigl'"; }
       } else {
         if (/^.+?(?<!\\)([\$\@\%])/) { confess __PACKAGE__." bug: Missed '$1' in «$_»" }
-        push @pieces, ["", "\"${1}\""];
+        if (/\\/) {
+          # Interpolate backslash escapes so users can say (ivis '$foo\n';)
+          s/([()])/\\$1/g;
+          push @pieces, [ "e", "qq(".$_.")" ];
+        } else {
+          push @pieces, [ "=", $_ ];
+        }
       }
     }
     if (!defined(pos) || pos() < length($_)) {
@@ -717,10 +727,14 @@ package
 
 sub DB_Vis_Interpolate {
   my ($self, $funcname, $pieces) = @_;
+  #say "###Vis pieces=",Data::Dumper::Interp::_dbvis($pieces);
   my $result = "";
   foreach my $p (@$pieces) {
     my ($methname, $arg) = @$p;
-    if ($methname eq "") {
+    if ($methname eq "=") {
+      $result .= $arg;
+    }
+    elsif ($methname eq "e") {
       $result .= DB::DB_Vis_Eval($funcname, $arg);
     } else {
       # Reduce indent before first wrap to account for stuff alrady there
