@@ -20,19 +20,16 @@ my $pkgname;
 BEGIN {
   use Data::Dumper::Interp;
   $pkgname = "Data::Dumper::Interp";
-  sub getPkgVar($) {
-    my ($varname) = @_;
-    no strict 'refs'; my $r = eval "\$${pkgname}::$varname"; die $@ if $@;
-    $r
+  sub _doeval($;@) {
+    my $saved_at = $@;
+    no strict 'refs'; my @r = eval $_[0]; die $@ if $@;
+    $@ = $saved_at;
+    wantarray ? @r : (@r > 1 ? confess("scalar context but > 1 value returned") : $r[0])
   }
-  sub setPkgVar($$) {
-    my ($varname, $value) = @_;
-    no strict 'refs'; eval "\$${pkgname}::$varname = \$value"; die $@ if $@;
-  }
-  sub callPkgNew(@) {
-    no strict 'refs'; my $r; eval "\$r = ${pkgname}->new(\@_)"; die $@ if $@;
-    $r
-  }
+  sub getPkgVar($) { _doeval "\$${pkgname}::$_[0]" }
+  sub getPkgAry($) { my @a = _doeval "\@${pkgname}::$_[0]"; @a }
+  sub setPkgVar($$) { _doeval "\$${pkgname}::$_[0] = \$_[1]", $_[1] }
+  sub callPkgNew(@) { _doeval "${pkgname}->new( \@_[1..\$#_] )", @_ }
 }
 diag "Loaded ", $INC{"${pkgname}.pm" =~ s/::/\//gr}, 
      " VERSION=", (getPkgVar("VERSION") // "undef"),"\n"; 
@@ -64,9 +61,9 @@ sub timed_run(&$@) {
 }
 
 sub visFoldwidth() {
-  "Data::Dumper::Interp::Foldwidth=".u($Data::Dumper::Interp::Foldwidth)
- ." Foldwidth1=".u($Data::Dumper::Interp::Foldwidth1)
- .($Data::Dumper::Interp::Foldwidth ? ("\n".("." x $Data::Dumper::Interp::Foldwidth)) : "")
+  "${pkgname}::Foldwidth=".u(getPkgVar("Foldwidth"))
+ ." Foldwidth1=".u(getPkgVar("Foldwidth1"))
+ .(getPkgVar('Foldwidth') ? ("\n".("." x getPkgVar('Foldwidth'))) : "")
 }
 sub checkeq_literal($$$) {
   my ($testdesc, $exp, $act) = @_;
@@ -88,7 +85,7 @@ sub checkeq_literal($$$) {
 }
 
 # USAGE: check $code_display, qr/$exp/, $doeval->($code, $item) ;
-# { my $code="Data::Dumper::Interp->new->hvis(k=>'v');"; check $code, '(k => "v")',eval $code }
+# { my $code="${pkgname}->new->hvis(k=>'v');"; check $code, '(k => "v")',eval $code }
 sub check($$@) {
   my ($code, $expected_arg, @actual) = @_;
   local $_;  # preserve $1 etc. for caller
@@ -166,7 +163,7 @@ sub checklit(&$$) {
     =~ s{ ( [^\\"]++|(\\.) )*+ \K " }{'}xsg
        or do{ die "bug" if $dq_expected_re =~ /(?<![^\\])'/; }; #probably
   foreach (
-    [ 'Data::Dumper::Interp->new()->vis($_[1])',  '_Q_' ],
+    [ "${pkgname}->new()->vis(\$_[1])",  '_Q_' ],
     [ 'vis($_[1])',              '_Q_' ],
     [ 'visq($_[1])',             '_q_' ],
     [ 'avis($_[1])',             '(_Q_)' ],
@@ -194,11 +191,11 @@ sub checklit(&$$) {
 }#checklit()
 
 # Basic test of OO interfaces
-{ my $code="Data::Dumper::Interp->new->vis('foo')  ;"; check $code, '"foo"',     eval $code }
-{ my $code="Data::Dumper::Interp->new->avis('foo') ;"; check $code, '("foo")',   eval $code }
-{ my $code="Data::Dumper::Interp->new->hvis(k=>'v');"; check $code, '(k => "v")',eval $code }
-{ my $code="Data::Dumper::Interp->new->dvis('foo') ;"; check $code, 'foo',       eval $code }
-{ my $code="Data::Dumper::Interp->new->ivis('foo') ;"; check $code, 'foo',       eval $code }
+{ my $code="${pkgname}->new->vis('foo')  ;"; check $code, '"foo"',     eval $code }
+{ my $code="${pkgname}->new->avis('foo') ;"; check $code, '("foo")',   eval $code }
+{ my $code="${pkgname}->new->hvis(k=>'v');"; check $code, '(k => "v")',eval $code }
+{ my $code="${pkgname}->new->dvis('foo') ;"; check $code, 'foo',       eval $code }
+{ my $code="${pkgname}->new->ivis('foo') ;"; check $code, 'foo',       eval $code }
 
 foreach (
           ['Foldwidth',0,1,80,9999],
@@ -225,14 +222,14 @@ foreach (
          $dumper .= ", 43" if $base =~ /^[ahl]/;
          $dumper .= ")";
         {
-          my $v = eval "{ local \$Data::Dumper::Interp::$confname = \$value;
-                          my \$obj = Data::Dumper::Interp->new();
+          my $v = eval "{ local \$${pkgname}::$confname = \$value;
+                          my \$obj = ${pkgname}->new();
                           \$obj->$dumper ;   # discard dump result
                           \$obj->$confname() # fetch effective setting
                         }";
         confess "bug:$@ " if $@;
-        confess "\$Data::Dumper::Interp::$confname value is not preserved by $dumper\n",
-            "(Set \$Data::Dumper::Interp::$confname=",u($value)," but new()...->$confname() returned ",u($v),")\n"
+        confess "\$${pkgname}::$confname value is not preserved by $dumper\n",
+            "(Set \$${pkgname}::$confname=",u($value)," but new()...->$confname() returned ",u($v),")\n"
          unless (! defined $v and ! defined $value) || ($v eq $value);
         }
       }
@@ -248,7 +245,7 @@ sub MyClass::meth {
 }
 
 # Many tests assume this
-$Data::Dumper::Interp::Foldwidth = 72;
+setPkgVar('Foldwidth', 72);
 
 @ARGV = ('fake','argv');
 $. = 1234;
@@ -335,7 +332,7 @@ $_ = "GroupA.GroupB";
   check $code, '2 3 a=3 b=2', eval $code;
 }
 
-# Data::Dumper::Interp v1.147ish+ : Check corner cases of re-parsing code 
+# Vis v1.147ish+ : Check corner cases of re-parsing code 
 { my $code = q(my $v = undef; dvis('$v')); check $code, "v=undef", eval $code; }
 { my $code = q(my $v = \undef; dvis('$v')); check $code, "v=\\undef", eval $code; }
 { my $code = q(my $v = \"abc"; dvis('$v')); check $code, 'v=\\"abc"', eval $code; }
@@ -775,7 +772,7 @@ EOF
           = ($fakeAt,$fakeFs,$fakeBs,$fakeCom,$fakeBang,$fake_cE,$fake_cW);
 
         $actual = $use_oo
-           ? Data::Dumper::Interp->new->dvis($dvis_input)
+           ? callPkgNew()->dvis($dvis_input)
            : dvis($dvis_input);
 
         checkspunct('$@',  $@,   $fakeAt);
@@ -810,7 +807,7 @@ EOF
       next
         if !$useqq && $input =~ tr/\0-\377//c; #
       my $exp = doquoting($input, $useqq);
-      my $act = Data::Dumper::Interp->new->Useqq($useqq)->vis($input);
+      my $act = callPkgNew()->Useqq($useqq)->vis($input);
       die "\n\nUseqq ",u($useqq)," bug:\n"
          ."   Input   «${input}»\n"
          ."  Expected «${exp}»\n"
@@ -826,7 +823,7 @@ sub f($) {
   get_closure(1);
   get_closure(1);
   $code->(@_);
-  die "Punct save/restore imbalance" if @Data::Dumper::Interp::save_stack != 0;
+  die "Punct save/restore imbalance" if getPkgAry('save_stack') != 0;
 }
 sub g($) {
   local $_ = 'SHOULD NEVER SEE THIS';
