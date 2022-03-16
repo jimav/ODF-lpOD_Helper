@@ -45,6 +45,9 @@ sub _dbvisq(_) {  # for our internal debugging messages
   $s
 }
 sub _dbavis(@) { "(" . join(", ", map{_dbvis} @_) . ")" }
+our $_dbmaxlen = 300;
+sub _dbrawstr(_) { "«".(length($_[0])>$_dbmaxlen ? substr($_[0],0,$_dbmaxlen-3)."..." : $_[0])."»" }
+
 sub oops(@) { @_ = ("\noops:",@_,"\n  "); goto &Carp::confess }
 
 use Exporter 'import';
@@ -53,7 +56,8 @@ our @EXPORT    = qw(vis  avis  alvis  ivis  dvis  hvis  hlvis
                     u qsh _forceqsh qshpath);
 
 our @EXPORT_OK = qw($Debug $MaxStringwidth $Truncsuffix $Stringify $Foldwidth
-                    $Useqq $Quotekeys $Sortkeys $Sparseseen);
+                    $Useqq $Quotekeys $Sortkeys $Sparseseen
+                    $Maxdepth $Maxrecurse $Deparse);
 
 our @ISA       = ('Data::Dumper'); # see comments at new()
 
@@ -88,7 +92,8 @@ sub qshpath(_) {  # like qsh but does not quote initial ~ or ~username
 
 our ($Debug, $MaxStringwidth, $Truncsuffix, $Stringify,
      $Foldwidth, $Foldwidth1,
-     $Useqq, $Quotekeys, $Sortkeys, $Sparseseen);
+     $Useqq, $Quotekeys, $Sortkeys, $Sparseseen,
+     $Maxdepth, $Maxrecurse, $Deparse);
 
 $Debug          = 0            unless defined $Debug;
 $MaxStringwidth = 0            unless defined $MaxStringwidth;
@@ -102,6 +107,9 @@ $Useqq          = 1            unless defined $Useqq;
 $Quotekeys      = 0            unless defined $Quotekeys;
 $Sortkeys       = \&__sortkeys unless defined $Sortkeys;
 $Sparseseen     = 1            unless defined $Sparseseen;
+$Maxdepth       = $Data::Dumper::Maxdepth   unless defined $Maxdepth;
+$Maxrecurse     = $Data::Dumper::Maxrecurse unless defined $Maxrecurse;
+$Deparse        = 0             unless defined $Deparse;
 
 #################### Methods #################
 
@@ -207,6 +215,9 @@ sub _config_defaults {
     ->Stringify($Stringify)
     ->Truncsuffix($Truncsuffix)
     ->Quotekeys($Quotekeys)
+    ->Maxdepth($Maxdepth)
+    ->Maxrecurse($Maxrecurse)
+    ->Deparse($Deparse)
     ->Sortkeys($Sortkeys)
     ->Sparseseen($Sparseseen)
     ->Useqq($Useqq)
@@ -450,49 +461,71 @@ our $curliesorsquares_re = RE_balanced(-parens=>'{}[]');
 my $bareword_re = qr/\b[A-Za-z_][A-Za-z0-9_]*\b/;
 my $qquote_re = qr/"(?:[^"\\]++|\\.)*+"/;
 my $squote_re = qr/'(?:[^'\\]++|\\.)*+'/;
-my $quote_re = qr/${qquote_re}|${squote_re}/;
+my $regexp_re = qr<qr/(?:[^\\\/]++|\\.)*+/>;
+my $quote_re = qr/${qquote_re}|${squote_re}|${regexp_re}/;
 
 # These never match spaces (except as part of a quote)
+
+# The match must stop at places where folding might happen.
 my $nonquote_atom_re
-      = qr/ (?: [^,;\{\}\[\]"'\s]++ | \\["'] )++ | [,;\{\}\[\]] /xs;
+      #= qr/ (?: [^,;\{\}\[\]"'\s] | \\["'] ) | [,;\{\}\[\]] /xs;
+      = qr/ [^,;\(\)\{\}\[\]"'\s]++ | \\["'] | [,;\(\)\{\}\[\]] /xs;
 my $atom_re = qr/ $quote_re | $nonquote_atom_re /x;
+
+#{ 
+#  local $_ = <<'EOF';
+#"\@_=(42,[0,1,\"C\",{\"\" => \"Emp\",A => 111, \"B B\" => 222, C => {d => 888, \n e => 999}, D => {}, EEEEEEEEEEEEEEEEEEEEEEEEEE => \\42, F => \n \\\\\\43}, [], [0,1,2,3,4,5,6,7,8,9]])\n\@_\\nqqq\@_(\\(\\))){\\{\\}\\\"\"'\n"
+#EOF
+#  my $fure = qr/${atom_re} (?: , | \s*=> )?+/sx;
+#  say "##BEGIN TEST";
+#  pos=0;
+#  while (/\G(?=.)/xsgc) {
+#    if (0 && /\G(${fure})/xsgc) { say "## fure ",_dbrawstr($1); }
+#    elsif (/\G(${nonquote_atom_re})/xsgc) { say "## nonquote_atom_re ",_dbrawstr($1); }
+#    elsif (/\G(${quote_re})/xsgc) { say "## quote_re ",_dbrawstr($1); }
+#    elsif (/\G(${atom_re})/xsgc) { say "## atom_re ",_dbrawstr($1); }
+#    elsif (/\G(\s+)/xsgc) { say "## spaces ",_dbrawstr($1); }
+#    else { die "stuck pos=",u(pos),"->",_dbrawstr(substr($_,pos)) }
+#  }
+#  say "##END TEST";
+#  die "Tex";
+#}
 
 my $indent_unit = 2;
 
 sub __insert_spaces() { # edits $_ in place
-  #FIXME BUG HERE might corrupt interior of quoted strings
+  # Do things piece-meal to avoid 'recursion limit exceeded'
+  # \K after detecting a quoted string so we don't change anything inside it
+  s( \G $quote_re ?+ \K (\s* (?: ${nonquote_atom_re}++ \s* )++ )
+   )(
+     local $_ = $1;
+     #NO s/\ (?![\$\@])//g;       # FIXME: is this correct?
+     s/\s*+=>\s*+/ => /g;
+     s/(=>\s*[-.\w\\]+,)/$1 /g;  #  key => value,<space>
+     s/([\]\}],)(?!\ )/$1 /g;    # ],<space> or },<space>
+     #NO s/,(?!\ )/, /g;      # space after every comma
+     s/\ +/ /sg;           # collapse muiltiple spaces
+     $_
+  )exsg;
 
-  ### TEMP? Verify that we can parse everything
-  ### (probably redundant with 'unmatched tail' check in __fold)
-  /\A(?: ${atom_re} | \s+ )+\z/xs or oops "regex problem($_)";
-
-  s( $quote_re ?+ \K
-     ( \bsub\s*${curlies_re} | (?: $nonquote_atom_re | \s+)*+ )
-   )
-   ( do {
-       local $_ = $1;
-       s/\ (?![\$\@])//g;                        # FIXME: is this correct?
-       s/^sub\ ?(${curlies_re})/"sub { ".substr($1,1,length($1)-2)." }"/eg;
-       s/=>/ => /g;
-       s/(=>\s*[-.\w\\]+,)/$1 /g;  #  key => value,<add space here>
-       s/([\]\}],)(?!\ )/$1 /g; # after ], or },
-       #s/,(?!\ )/, /g;      # space after every comma
-       # Insert a space after an opening bracket at start of line, so the
-       # first item will line up with the indentation of stuff at that level.
-       s/\ +/ /sg;           # collapse muiltiple spaces
-       $_
-     }
-   )exsg;
+  s( \G $quote_re ?+ \K \s* \bsub\s*(${curlies_re}) \s* 
+   )(
+     local $_ = $1; # {...}
+     /^\{\s*(.*?)\s*\}\z/ or oops;
+     "sub { $1 }"
+  )exsg;
 }#__insert_spaces
 
-my $foldunit_re = qr/${atom_re}(?: , | \s*=>)?+/x;
+my $foldunit_re = qr/${atom_re}(?: , | \s*=>)?+/sx;
 
 sub _fold { # edits $_ in place
   my $self = shift;
   my ($debug, $maxwidth, $maxwidth1, $pad) =
        (@$self{qw/Debug Foldwidth Foldwidth1/}, $self->Pad);
   return
-    if $maxwidth == 0;  # no folding
+    if $maxwidth == 0;  # no folding desired
+  return
+    if length($_) > 2000; # forget folding if huge
   my $maxwid = $maxwidth1 || $maxwidth;
   #$maxwid = INT_MAX if $maxwid==0;  # no folding, but maybe space adjustments
   $maxwid = max(0, $maxwid - length($pad));
@@ -504,8 +537,9 @@ sub _fold { # edits $_ in place
   our $nind; local $nind = 0;
   my sub __ind_adjustment(;$) {
     if ($debug) {
-      my $len = $curr_indent + pos() - $-[0];
-      say "#VisFold: @{_}atom «$^N» len=$len pos=${\pos} \$-[0]=$-[0] c_indent=$curr_indent n_indent=$next_indent nind=$nind mw=$maxwid,$smidgen";
+      my $cumlen = $curr_indent + pos() - $-[0];
+      my $atomlen = length($^N);
+      say "#VisFold: @{_}atom (len $atomlen) «$^N» cumlen=$cumlen pos=${\pos} \$-[0]=$-[0] c_indent=$curr_indent n_indent=$next_indent nind=$nind mw=$maxwid,$smidgen";
     }
     local $_ = $^N;;
     /^["']/ ? 0 : ( (()=/[\[\{\(]/) - (()=/[\]\}\)]/) )*$indent_unit;
@@ -522,8 +556,8 @@ sub _fold { # edits $_ in place
           \s*
           (${foldunit_re})
           (?{ local $nind = $nind + __ind_adjustment("Cont  ") })
-          (?(?{ my $len = $curr_indent + pos() - $-[0];
-                $len <= ($^N eq "[" ? $maxwid-$smidgen : $maxwid)
+          (?(?{ my $cumlen = $curr_indent + pos() - $-[0];
+                $cumlen <= ($^N eq "[" ? $maxwid-$smidgen : $maxwid)
               })|(*FAIL))
       )*+
     )
@@ -534,7 +568,7 @@ sub _fold { # edits $_ in place
        my $indent = $curr_indent;
        $curr_indent = $next_indent;
        $maxwid = max(0, $maxwidth - length($pad)); # stop using maxwidth1
-       say "#VisFold: --folding-- after «$1» pos ${\pos} new mw=$maxwid"
+       say "#VisFold: --folding-- after (len ",length($1),") «$1» pos ${\pos} new mw=$maxwid"
          if $debug;
        $pad . (" " x $indent) . $1 ."\n"
      }
@@ -547,7 +581,7 @@ sub _fold { # edits $_ in place
 
 sub __unescape_printables() {
   # Data::Dumper outputs wide characters as escapes with Useqq(1).
-  #say "__un INPUT:$_";
+  #say "__unesc INPUT:",_dbrawstr($_);
 
   s( \G (${atom_re}) (?<trailing>\s*)
    )( do{
@@ -566,6 +600,7 @@ sub __unescape_printables() {
         $_
       }.$+{trailing}
    )xesg;
+  #say "__unesc OUT  :",_dbrawstr($_);
 }
 
 sub _postprocess_DD_result {
@@ -577,14 +612,19 @@ sub _postprocess_DD_result {
   croak "invalid _vistype ", u($vistype)
     unless ($vistype//0) =~ /^(?:[salh]|hl)$/;
 
-  say "##RAW  :",$_ if $self->{Debug};
+  say "##RAW  :",_dbrawstr($_) if $self->{Debug};
 
   s/(['"])\Q$magic_num_prefix\E(.*?)(\1)/$2/sg;
   s/\Q$magic_numstr_prefix\E//sg;
 
-  __unescape_printables;
-  __insert_spaces;
-  $self->_fold();
+  eval {
+    __unescape_printables;
+    __insert_spaces;
+    $self->_fold();
+  };
+  croak $@ if $@;
+  croak $@ if $@ && $@ !~ /regular subexpression recursion limit.*exceeded/;
+  # just accept raw Data::Dumper output as-is if it is too complicated for us
 
   if (($vistype//"s") eq "s") { }
   elsif ($vistype eq "a") {
@@ -651,16 +691,25 @@ sub _Interpolate {
     while (
       /\G (
            # Stuff without variable references (might include \n etc. escapes)
-           ( (?: [^\\\$\@\%] | \\[^\$\@\%] )++ )
+           
+           #This gets "recursion limit exceeded"
+           #( (?: [^\\\$\@\%] | \\[^\$\@\%] )++ )
+           #|
+
+           (?: [^\\\$\@\%]++ )
            |
+           (?: (?: \\[^\$\@\%] )++ )
+           |
+
            # $#arrayvar $#$$...refvarname $#{aref expr} $#$$...{ref2ref expr}
            #
            (?: \$\#\$*+\K ${anyvname_or_refexpr_re} )
            |
+           
            # $scalarvar $$$...refvarname ${sref expr} $$$...{ref2ref expr}
            #  followed by [] {} ->[] ->{} ->method() ... «zero or more»
            # EXCEPT $$<punctchar> is parsed as $$ followed by <punctchar>
-           #
+           
            (?:
              (?: \$\$++ ${pkgname_re} \K | \$ ${anyvname_or_refexpr_re} \K )
              (?:
@@ -670,6 +719,7 @@ sub _Interpolate {
              )*
            )
            |
+
            # @arrayvar @$$...varname @{aref expr} @$$...{ref2ref expr}
            #  followed by [] {} «zero or one»
            #
@@ -701,10 +751,11 @@ sub _Interpolate {
         else { confess "BUG:sigl='$sigl'"; }
       } else {
         if (/^.+?(?<!\\)([\$\@\%])/) { confess __PACKAGE__." bug: Missed '$1' in «$_»" }
-        if (/\\/) {
-          # Interpolate backslash escapes so users can say (ivis '$foo\n';)
-          s/([()])/\\$1/g;
-          push @pieces, [ "e", "qq(".$_.")" ];
+        # Due to the need to simplify the big regexp above, \x{abcd} is now 
+        # split into "\x" and "{abcd}".  Accumlate everything as a single 
+        # passthru ("=") and convert later to "e" if an eval if needed.
+        if (@pieces && $pieces[-1]->[0] eq "=") {
+          $pieces[-1]->[1] .= $_;
         } else {
           push @pieces, [ "=", $_ ];
         }
@@ -714,7 +765,15 @@ sub _Interpolate {
       my $leftover = substr($_,pos()//0);
       confess __PACKAGE__." Bug:LEFTOVER «$leftover»";
     }
-  }# local $_
+    foreach (@pieces) {
+      my ($meth, $str) = @$_;
+      next unless $meth eq "=" && $str =~ /\\[abtnfrexXN0-7]/;
+      $str =~ s/([()\$\@\%])/\\$1/g;  # don't hide \-escapes to be interpolated!
+      $str =~ s/\$\\/\$\\\\/g;
+      $_->[1] = "qq(" . $str . ")";
+      $_->[0] = 'e';
+    }
+  } #local $_
 
   my $q = $useqq ? "" : "q";
   my $funcname = $s_or_d . "vis" .$q;
@@ -1014,14 +1073,21 @@ class name(s).
 
 =head2 $Data::Dumper::Interp::Sortkeys or $obj->Sortkeys(subref)
 
-Controls sorting and optionally filtering of hash keys.  
 See C<Data::Dumper> documentation.
 
 C<Data::Dumper::Interp> provides a default which sorts
 numeric substrings in keys by numerical
 value (see "DIFFERENCES FROM Data::Dumper").
 
-=head2 $Data::Dumper::Interp::Quotekeys or $obj->Quotekeys(subref)
+=head2 Quotekeys
+
+=head2 Sparseseen
+
+=head2 Maxdepth
+
+=head2 Maxrecurse
+
+=head2 Deparse
 
 See C<Data::Dumper> documentation.
 

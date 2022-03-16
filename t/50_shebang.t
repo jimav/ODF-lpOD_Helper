@@ -1,9 +1,6 @@
 #!/usr/bin/perl
 use strict; use warnings  FATAL => 'all'; use feature qw(state say); use utf8;
 srand(42);  # so reproducible
-say "FIXME: Test qr/.../ as values to be dumped.";
-  #use Regexp::Common qw/RE_balanced/;
-  #my $re = RE_balanced(-parens=>'(){}[]');
 use open IO => ':locale';
 select STDERR; $|=1; select STDOUT; $|=1;
 use Scalar::Util qw(blessed reftype looks_like_number);
@@ -37,6 +34,8 @@ diag "Loaded ", $INC{"${pkgname}.pm" =~ s/::/\//gr},
 # Do an initial read of $[ so arybase will be autoloaded
 # (prevents corrupting $!/ERRNO in subsequent tests)
 eval '$[' // die;
+
+#$Data::Dumper::Interp::Debug = 1;
 
 #sub _dbvis(_) { goto &Data::Dumper::Interp::_dbvis }
 #sub _dbvisq(_) { goto &Data::Dumper::Interp::_dbvisq }
@@ -252,30 +251,34 @@ $. = 1234;
 $ENV{EnvVar} = "Test EnvVar Value";
 
 
-my %toplex_h = ("" => "Emp", A=>111,"B B"=>222,C=>{d=>888,e=>999},D=>{},EEEEEEEEEEEEEEEEEEEEEEEEEE=>\42,F=>\\\43);
+my %toplex_h = ("" => "Emp", A=>111,"B B"=>222,C=>{d=>888,e=>999},D=>{},EEEEEEEEEEEEEEEEEEEEEEEEEE=>\42,F=>\\\43, G=>qr/foo.*bar/xsi);
    # EEE... identifer is long to force linewrap
 my @toplex_a = (0,1,"C",\%toplex_h,[],[0..9]);
 my $toplex_ar = \@toplex_a;
 my $toplex_hr = \%toplex_h;
 my $toplex_obj = bless {}, 'MyClass';
+my $toplex_regexp= qr/my.*regexp/;
 
 our %global_h = %toplex_h;
 our @global_a = @toplex_a;
 our $global_ar = \@global_a;
 our $global_hr = \%global_h;
 our $global_obj = bless {}, 'MyClass';
+our $global_regexp = $toplex_regexp;
 
 our %maskedglobal_h = (key => "should never be seen");
 our @maskedglobal_a = ("should never be seen");
 our $maskedglobal_ar = \@maskedglobal_a;
 our $maskedglobal_hr = \%maskedglobal_h;
 our $maskedglobal_obj = bless {}, 'ShouldNeverBeUsedClass';
+our $maskedglobal_regexp = qr/should.*never.*be_seen/;
 
 our %local_h = (key => "should never be seen");
 our @local_a = ("should never be seen");
 our $local_ar = \@local_a;
 our $local_hr = \%local_h;
 our $local_obj = \%local_h;
+our $local_regexp = qr/should.*never.*be_seen/;
 
 our $a = "global-a";  # used specially used by sort()
 our $b = "global-b";
@@ -286,6 +289,7 @@ our @ABC_a = @main::global_a;
 our $ABC_ar = \@ABC_a;
 our $ABC_hr = \%ABC_h;
 our $ABC_obj = $main::global_obj;
+our $ABC_regexp = $main::global_regexp;
 
 package main;
 
@@ -364,9 +368,9 @@ $_ = "GroupA.GroupB";
 # Check Deparse support
 { my $data = eval 'BEGIN{ ${^WARNING_BITS} = 0 } no strict; no feature;
                    sub{ my $x = 42; };';
-  { my $code = 'vis($data)'; check $code, "sub { \"DUMMY\" }", eval $code; }
-  $Data::Dumper::Deparse = 1;
-  { my $code = 'vis($data)'; check $code, "sub { my \$x=42; }", eval $code; }
+  { my $code = 'vis($data)'; check $code, 'sub { "DUMMY" }', eval $code; }
+  setPkgVar("Deparse", 1);
+  { my $code = 'vis($data)'; check $code, 'sub { my $x = 42; }', eval $code; }
 }
 
 # Floating point values (single values special-cased to show not as 'string')
@@ -455,7 +459,8 @@ my $ratstr  = '1/9';
 check 
   'global divs %toplex_h',
   '%toplex_h=("" => "Emp",A => 111, "B B" => 222, C => {d => 888, e => 999'."\n"
-    .'    }, D => {}, EEEEEEEEEEEEEEEEEEEEEEEEEE => \\42, F => \\\\\\43)',
+    .'    }, D => {}, EEEEEEEEEEEEEEEEEEEEEEEEEE => \\42, F => \\\\\\43, G =>'."\n"
+    .'  qr/foo.*bar/six)',
   dvis('%toplex_h');
 check 'global divs @ARGV', q(@ARGV=("fake","argv")), dvis('@ARGV');
 check 'global divs $.', q($.=1234), dvis('$.');
@@ -558,16 +563,19 @@ sub get_closure(;$) {
   our $maskedglobal_ar = \@maskedglobal_a;
   our $maskedglobal_hr = \%maskedglobal_h;
   our $maskedglobal_obj = $toplex_obj;
+  our $maskedglobal_regexp = $toplex_regexp;
   local %local_h = %toplex_h;
   local @local_a = @toplex_a;
   local $local_ar = \@toplex_a;
   local $local_hr = \%local_h;
   local $local_obj = $toplex_obj;
+  local $local_regexp = $toplex_regexp;
 
-  my @tests = (
-    [ __LINE__, q(\x{263a}), qq(\N{U+263A}) ],   # \x{...} in dvis input
-    [ __LINE__, q(\N{U+263a}), qq(\N{U+263A}) ], # \N{U+...} in dvis input
+  my @dvis_tests = (
+    [ __LINE__, q(hexesc:\x{263a}), qq(hexesc:\N{U+263A}) ],   # \x{...} in dvis input
+    [ __LINE__, q(NUesc:\N{U+263a}), qq(NUesc:\N{U+263A}) ], # \N{U+...} in dvis input
     [ __LINE__, q(aaa\\\\bbb), q(aaa\bbb) ],
+    [ __LINE__, q(re is $toplex_regexp), q(re is toplex_regexp=qr/my.*regexp/) ],
 
     #[ q($unicode_str\n), qq(unicode_str=\" \\x{263a} \\x{263b} \\x{263c} \\x{263d} \\x{263e} \\x{263f} \\x{2640} \\x{2641} \\x{2642} \\x{2643} \\x{2644} \\x{2645} \\x{2646} \\x{2647} \\x{2648} \\x{2649} \\x{264a} \\x{264b} \\x{264c} \\x{264d} \\x{264e} \\x{264f} \\x{2650}\"\n) ],
     [__LINE__, q($unicode_str\n), qq(unicode_str="${unicode_str}"\n) ],
@@ -614,7 +622,7 @@ sub get_closure(;$) {
     [__LINE__, q(@_\n), <<'EOF' ],  # N.B. Foldwidth was set to 72
 @_=(42,[0,1,"C",{"" => "Emp",A => 111, "B B" => 222, C => {d => 888,
         e => 999}, D => {}, EEEEEEEEEEEEEEEEEEEEEEEEEE => \42, F =>
-      \\\43}, [], [0,1,2,3,4,5,6,7,8,9]])
+      \\\43, G => qr/foo.*bar/six}, [], [0,1,2,3,4,5,6,7,8,9]])
 EOF
     [__LINE__, q($#_\n), qq(\$#_=1\n) ],
     [__LINE__, q($@\n), qq(\$\@=\"FAKE DEATH\\n\"\n) ],
@@ -640,14 +648,15 @@ EOF
 
           [__LINE__, qq(${pfx}%${dollar}${name}_h${r}\\n), <<EOF ],
 ${pfx}\%${dollar}${name}_h${r}=("" => "Emp",A => 111, "B B" => 222, C => {d => 888,
-${p}    e => 999}, D => {}, EEEEEEEEEEEEEEEEEEEEEEEEEE => \\42, F => \\\\\\43)
+${p}    e => 999}, D => {}, EEEEEEEEEEEEEEEEEEEEEEEEEE => \\42, F => \\\\\\43,
+${p}  G => qr/foo.*bar/six)
 EOF
 
 
           [__LINE__, qq(${pfx}\@${dollar}${name}_a${r}\\n), <<EOF ],
 ${pfx}\@${dollar}${name}_a${r}=(0,1,"C",{"" => "Emp",A => 111, "B B" => 222, C => {
 ${p}      d => 888, e => 999}, D => {}, EEEEEEEEEEEEEEEEEEEEEEEEEE => \\42,
-${p}    F => \\\\\\43}, [], [0,1,2,3,4,5,6,7,8,9])
+${p}    F => \\\\\\43, G => qr/foo.*bar/six}, [], [0,1,2,3,4,5,6,7,8,9])
 EOF
 
           [__LINE__, qq(${pfx}\$#${dollar}${name}_a${r}),    
@@ -719,7 +728,7 @@ EOF
       } ('""', "''")
     ), #map ($LQ,$RQ)
   );
-  for my $test (@tests) {
+  for my $test (@dvis_tests) {
     my ($lno, $dvis_input, $expected) = @$test;
     #warn "##^^^^^^^^^^^ lno=$lno dvis_input='$dvis_input' expected='$expected'\n";
 
@@ -798,14 +807,13 @@ EOF
         $actual);
     }
 
-    # Check Useqq
     for my $useqq (0, 1) {
       my $input = $expected.$dvis_input.'qqq@_(\(\))){\{\}\""'."'"; # gnarly
       # Now Data::Dumper (version 2.174) forces "double quoted" output
       # if there are any Unicode characters present.
       # So we can not test single-quoted mode in those cases
       next
-        if !$useqq && $input =~ tr/\0-\377//c; #
+        if !$useqq && $input =~ tr/\0-\377//c;
       my $exp = doquoting($input, $useqq);
       my $act = callPkgNew()->Useqq($useqq)->vis($input);
       die "\n\nUseqq ",u($useqq)," bug:\n"
