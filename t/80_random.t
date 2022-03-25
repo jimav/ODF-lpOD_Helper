@@ -13,7 +13,7 @@ use Test::More;
 use Data::Dumper::Interp;
 
 my $initial_seed;
-my $time_limit = 4;  # seconds
+my $time_limit = 3;  # seconds
 
 while (@ARGV) {
   if ($ARGV[0] =~ /^-s/) { shift; $initial_seed = shift // die }

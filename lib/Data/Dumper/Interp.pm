@@ -1062,11 +1062,9 @@ sub DB_Vis_Eval($$) {
 
 =encoding UTF-8
 
-=FIXME use single Unicode chars instead of "\n" etc.
-
 =head1 NAME
 
-Data::Dumper::Interp - Data::Dumper optimized for humans, with interpolation
+Data::Dumper::Interp - Data::Dumper for humans, with interpolation
 
 =head1 SYNOPSIS
 
@@ -1120,18 +1118,24 @@ Data::Dumper::Interp - Data::Dumper optimized for humans, with interpolation
 
 =head1 DESCRIPTION
 
-The namesake feature of this module is interpolating Data::Dumper output 
-into strings.
-In addition, simple functions are provided to visualize a scalar, array, or hash.
-And finally a few utilities to quote strings for /bin/sh.
+This is a wrapper for Data::Dumper optimized for use by humans
+instead of machines; the result may not be 'eval'able.
 
-Data::Dumper is used internally to visualize (i.e. format) data, 
+The namesake feature of this module is interpolating Data::Dumper output 
+into strings, but simple functions are also provided to 
+visualize a scalar, array, or hash.
+
+Casual debug messages are a primary use case.
+
+Internally, Data::Dumper is called to visualize (i.e. format) data
 with pre- and postprocessing to "improve" the results:
 Output is compact (1 line if possibe) and omits a trailing newline;
 Unicode characters appear as themselves,
 objects like Math:BigInt are stringified, and some
 Data::Dumper bugs^H^H^H^Hquirks are circumvented.
 See "DIFFERENCES FROM Data::Dumper".
+
+Finally, a few utilities are provided to quote strings for /bin/sh.
 
 =head1 FUNCTIONS
 
@@ -1144,14 +1148,8 @@ format variable values.
 C<$var> is replaced by its value,
 C<@var> is replaced by "(comma, sparated, list)",
 and C<%hash> by "(key => value, ...)" visualizations.
-
-Most Perl expressions are recognized including slices and method calls.
-For example
-
-  say ivis 'The value is ${\@myarray}[42]->{$key}->method(...)'
-
-would print "The value is " followed by the Data:Dumper visualization of
-the value of that expression.
+Most complex expressions are recognized, e.g. indexing,
+dereferences, slices, etc.
 
 Expressions are evaluated in the caller's context using Perl's debugger
 hooks, and may refer to almost any lexical or global visible at
@@ -1168,27 +1166,24 @@ are prefixed with a "exprtext=" label.
 The 'd' in 'dvis' stands for B<d>ebugging messages, a frequent use case where
 brevity of typing is more highly prized than beautiful output.
 
-=head2 vis
-
-=head2 vis SCALAR
+=head2 vis [SCALAREXPR]
 
 =head2 avis LIST
 
 =head2 hvis EVENLIST
 
-These are the underlying functions used by C<ivis> to visualize expressions.
-
-C<vis> formats a single scalar ($_ if no argument is given).
+C<vis> formats a single scalar ($_ if no argument is given)
+and returns the resulting string.
 
 C<avis> formats an array (or any list) as comma-separated values in parenthesis.
 
-C<hvis> formats a hash as key => value pairs in parens.
+C<hvis> formats a hash as key => value pairs in parenthesis.
 
 =head2 alvis LIST
 
 =head2 hlvis EVENLIST
 
-These variants produce a bare list without the enclosing parenthesis
+These "l" variants return a bare list without the enclosing parenthesis.
 
 =head2 ivisq 'string to be interpolated'
 
@@ -1216,7 +1211,7 @@ if wide characters are present.
 =head2 Data::Dumper::Interp->new()
 
 Creates an object initialized from the global configuration
-variables listed below.
+variables listed below.  C<new> takes no arguments.
 
 The functions described above may also be used as I<methods>
 when called on a C<Data::Dumper::Interp> object
@@ -1233,31 +1228,34 @@ returns the same string as
 
 =head1 Configuration Variables / Methods
 
-These work in the same way as similar variables/methods in Data::Dumper.
+These work the same way as variables/methods in Data::Dumper.
 
-Global variables determine the initial state of objects created by C<new>,
-and the state of an object can be quieried or changed with corresponding
-methods.  When a method is called with arguments to set a value,
-the method returns the object itself to facilitate chained calls.
+For each of the following configuration items, there is a global
+variable in package C<Data::Dumper::Interp> which provides the default value,
+and a I<method> of the same name which sets or retrieves a config value
+on a specific object.
 
-The following configuration methods may be used:
+When a methods is called without arguments, the current value is returned.
 
-=head2 $Data::Dumper::Interp::MaxStringwidth or $obj->MaxStringwidth(INTEGER)
+When a method is called with an argument (i.e. to set a value), the object
+is returned so that method calls can be chained.
 
-=head2 $Data::Dumper::Interp::Truncsuffix or $obj->Truncsuffix("...")
+=head2 MaxStringwidth(INTEGER)
+
+=head2 Truncsuffix("...")
 
 Longer strings are truncated and I<Truncsuffix> appended.
 MaxStringwidth=0 (the default) means no limit.
 
-=head2 $Data::Dumper::Interp::Foldwidth or $obj->Foldwidth(INTEGER)
+=head2 Foldwidth(INTEGER)
 
 Defaults to the terminal width at the time of first use.
 
-=head2 $Data::Dumper::Interp::Stringify or $obj->Stringify(BOOL);
+=head2 Stringify(BOOL);
 
-=head2                        or (classname);
+=head2 Stringify("classname")
 
-=head2                        or ([list of classnames]);
+=head2 Stringify([ list of classnames ])
 
 A I<false> value disables object stringification.
 
@@ -1267,13 +1265,45 @@ support it (i.e. they overload the "" operator).
 Otherwise stringification is enabled only for the specified
 class name(s).
 
-=head2 $Data::Dumper::Interp::Sortkeys or $obj->Sortkeys(subref)
+=head2 Sortkeys(subref)
 
 See C<Data::Dumper> documentation.
 
-C<Data::Dumper::Interp> provides a default which sorts
-numeric substrings in keys by numerical
+The default sorts numeric substrings in keys by numerical
 value (see "DIFFERENCES FROM Data::Dumper").
+
+=head2 Useqq
+
+The default value is 0 for functions/methods with 'q' in their name,
+otherwise "unicode".
+
+0 means generate 'single quoted' strings when possible.
+
+1 means generate "double quoted" strings, as-is from Data::Dumper.
+Non-ASCII charcters will be shown as hex escapes.
+
+Otherwise generate "double quoted" strings enhanced by options
+given as a :-separated list of keywords, for example Useqq("unicode:controlpic").
+The two avilable options are:
+
+=over 4
+
+=item "unicode" (or "utf8" for historical compat.) 
+
+Show all printable
+characters as themselves rather than hex escapes.
+
+=item "controlpic"
+
+Visualize non-printing ASCII characters using Unicode "control picture" characters.
+'␤' is used instead of '\n' and similarly for \0 \a \b \e \f \r and \t.
+
+This can be useful in debugging because every character occupies the same space
+(assuming a fixed-width font).  However the commonly-used "Last Resort" font
+draws these symbols with single-pixel lines, which on modern high-res displays
+are dim and hard to read.  For this reason, "controlpic" is no longer the default.
+
+=back
 
 =head2 Quotekeys
 
@@ -1376,17 +1406,17 @@ the "_" filehandle will not change across calls.
 
 =head1 DIFFERENCES FROM Data::Dumper
 
-Visualized data structures differ from using C<Data::Dumper> directly 
+Visualized data structures differ from plain C<Data::Dumper> output
 as follows:
 
 =over 2
 
 =item *
 
+A final newline is I<not> included.
+
 Everything is shown on a single line if possible, otherwise wrapped to
 the terminal width with indentation appropriate to structure levels.
-
-A final newline is I<not> included.
 
 =item *
 
@@ -1403,7 +1433,7 @@ will be escaped as individual bytes when necessary.
 
 Object refs are replaced by the object's stringified representation.
 For example, C<bignum> and C<bigrat> numbers are shown as easily
-readable values rather than "bless( {...}, 'Math::BigInt')".
+readable values rather than "bless( {...}, 'Math::...')".
 
 Stingified objects are prefixed with "(classname)" to make clear what
 happened.
@@ -1415,7 +1445,7 @@ For example "A.20" sorts before "A.100".
 
 =item *
 
-Punctuation variables, including $@ and $?, are preserved over calls.
+All punctuation variables, including $@ and $?, are preserved over calls.
 
 =item *
 
@@ -1424,8 +1454,8 @@ Floating-point values always appear as numbers (not 'quoted strings'),
 and strings containing digits like "42" appear as quoted strings
 and not numbers (string vs. number detection is ala JSON::PP).
 
-Such differences might not matter to Perl when executing code,
-but may be important when communicating to a human.
+Although such differences might be immaterial to Perl when executing code,
+they may be important when communicating to a human.
 
 =back
 
@@ -1440,9 +1470,13 @@ Jim Avera  (jim.avera AT gmail dot com)
 =for nobody Foldwidth1 is currently an undocumented experimental method
 =for nobody which sets a different fold width for the first line only.
 =for nobody Terse & Indent methods exist to croak; using them is not allowed.
-=for nobody oops is an internal function (called to die if bug detected)
-=for nobody Debug method is for author's debugging, not documented
+=for nobody oops is an internal function (called to die if bug detected).
+=for nobody Debug method is for author's debugging, not documented.
+=for nobody BLK_* CLOSER FLAGS_MASK NOOP OPENER are internal "constants".
 
 =for Pod::Coverage Foldwidth1 Terse Indent oops Debug
+
+=for Pod::Coverage BLK_CANTSPACE BLK_FATARROW BLK_FOLDEDBACK BLK_HASCHILD BLK_MASK CLOSER FLAGS_MASK NOOP OPENER
+
 
 =cut
