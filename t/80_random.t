@@ -99,11 +99,12 @@ while (time < $start_time+$time_limit) {
   my $item = gen_item();
   my $r; eval { $r = vis $item };
   if ($@) {
-    #die "Iter $iter:\n$@";
-    die "Iter $iter:\n$@\n\n", Data::Dumper->new([$item],["item"])->Dump,"\n iter $iter, len(exmsg)=",length($@);
+    die "Iter $iter:\n$@\n\n", Data::Dumper->new([$item],["item"])->Dump,"\nFailed on iter $iter. initial_seed=$initial_seed  len(exmsg)=",length($@);
   }
-  diag "Iter $iter : vis result length = ",length($r);
-}
-diag "Stopped after $time_limit seconds.";
+  #diag "Iter $iter : vis result length = ",length($r);
+} 
+ok(1, "Stopped after time limit expired ($time_limit seconds).  $iter iterations completed.");
 
 done_testing();
+
+exit 0;
