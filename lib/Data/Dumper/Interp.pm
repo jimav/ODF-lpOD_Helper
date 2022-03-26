@@ -1129,7 +1129,8 @@ Casual debug messages are a primary use case.
 
 Internally, Data::Dumper is called to visualize (i.e. format) data
 with pre- and postprocessing to "improve" the results:
-Output is compact (1 line if possibe) and omits a trailing newline;
+Output omits a trailing newline and is compact (1 line if possibe,
+otherwise folded at your terminal width);
 Unicode characters appear as themselves,
 objects like Math:BigInt are stringified, and some
 Data::Dumper bugs^H^H^H^Hquirks are circumvented.
