@@ -1214,8 +1214,8 @@ if wide characters are present.
 Creates an object initialized from the global configuration
 variables listed below.  C<new> takes no arguments.
 
-The functions described above may also be used as I<methods>
-when called on a C<Data::Dumper::Interp> object
+The functions described above may then be called as I<methods>
+on a C<Data::Dumper::Interp> object
 (when not called as a method they create a new object internally).
 
 For example:
@@ -1268,14 +1268,12 @@ class name(s).
 
 =head2 Sortkeys(subref)
 
-See C<Data::Dumper> documentation.
-
 The default sorts numeric substrings in keys by numerical
-value (see "DIFFERENCES FROM Data::Dumper").
+value.  See C<Data::Dumper> documentation.
 
 =head2 Useqq
 
-The default value is "unicode:controlpic" except for 
+The default is "unicode:controlpic" except for 
 functions/methods with 'q' in their name, which force C<Useqq(0)>.
 
 0 means generate 'single quoted' strings when possible.
@@ -1434,6 +1432,10 @@ contains characters outside the ASCII range.
 
 Undecoded binary octets (e.g. data read from a 'binmode' file)
 will be escaped as individual bytes when necessary.
+
+=item *
+
+'␤' and similar "control picture" characters are shown for ASCII controls.
 
 =item *
 
