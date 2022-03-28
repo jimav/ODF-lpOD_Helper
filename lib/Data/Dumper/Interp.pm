@@ -1275,34 +1275,37 @@ value (see "DIFFERENCES FROM Data::Dumper").
 
 =head2 Useqq
 
-The default value is 0 for functions/methods with 'q' in their name,
-otherwise "unicode".
+The default value is "unicode:controlpic" except for 
+functions/methods with 'q' in their name, which force C<Useqq(0)>.
 
 0 means generate 'single quoted' strings when possible.
 
 1 means generate "double quoted" strings, as-is from Data::Dumper.
 Non-ASCII charcters will be shown as hex escapes.
 
-Otherwise generate "double quoted" strings enhanced by options
-given as a :-separated list of keywords, for example Useqq("unicode:controlpic").
+Otherwise generate "double quoted" strings enhanced according to option
+keywords given as a :-separated list, e.g. Useqq("unicode:controlpic").
 The two avilable options are:
 
 =over 4
 
-=item "unicode" (or "utf8" for historical compat.) 
+=item "unicode" (or "utf8" for historical reasons)
 
 Show all printable
 characters as themselves rather than hex escapes.
 
 =item "controlpic"
 
-Visualize non-printing ASCII characters using Unicode "control picture" characters.
-'␤' is used instead of '\n' and similarly for \0 \a \b \e \f \r and \t.
+Show non-printing ASCII characters using single "control picture" characters,
+for example '␤' is shown for newline instead of '\n'.  
+Similarly for \0 \a \b \e \f \r and \t.
 
-This can be useful in debugging because every character occupies the same space
-(assuming a fixed-width font).  However the commonly-used "Last Resort" font
-draws these symbols with single-pixel lines, which on modern high-res displays
-are dim and hard to read.  For this reason, "controlpic" is no longer the default.
+This is sometimes useful for debugging because every character occupies 
+the same space with a fixed-width font.  
+The commonly-used "Last Resort" font draws these symbols 
+with single-pixel lines, which on modern high-res displays
+can be dim and hard to read.  If you experience this problem,
+set C<Useqq> to "unicode" to see traditional \n etc. backslash escapes.
 
 =back
 
@@ -1424,8 +1427,10 @@ the terminal width with indentation appropriate to structure levels.
 Printable Unicode characters appear as themselves instead of \x{ABCD}.
 
 Note: If your data contains 'wide characters', you must encode
-the result before displaying it as explained in C<perluniintro>.
-For example with C<< use open IO => ':locale'; >>
+the result before displaying it as explained in C<perluniintro>,
+for example with C<< use open IO => ':locale'; >>.  
+You'll also want C<< use utf8; >> if your Perl source code
+contains characters outside the ASCII range.
 
 Undecoded binary octets (e.g. data read from a 'binmode' file)
 will be escaped as individual bytes when necessary.
