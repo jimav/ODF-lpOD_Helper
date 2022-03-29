@@ -60,7 +60,6 @@ sub _dbstrposn($$) {
   $_ = _dbstr($_);
   $_ .= "\n " . (" " x $posn) . "^";
 }
-
 sub oops(@) { @_ = ("\n".__PACKAGE__." oops:",@_,"\n  "); goto &Carp::confess }
 
 use Exporter 'import';
@@ -183,8 +182,14 @@ sub new {
 
 ########### Subs callable as either a Function or Method #############
 
+sub __chop_loc($) {
+  (local $_ = shift) =~ s/ at .*? line \d+[^\n]*\n?\z//s;
+  $_
+}
 sub __getobj {
-  (blessed($_[0]) && $_[0]->isa(__PACKAGE__) ? shift : __PACKAGE__->new())
+  # Args are not evaluated until referenced, and tie handlers might throw
+  my $bl; do{ local $@; eval {$bl=blessed($_[0])}; croak __chop_loc($@) if $@ };
+  $bl && $_[0]->isa(__PACKAGE__) ? shift : __PACKAGE__->new()
 }
 sub __getobj_s { &__getobj->Values([$_[0]]) }
 sub __getobj_a { &__getobj->Values([\@_])   } #->Values([[@_]])
@@ -299,11 +304,11 @@ sub __walk_worker($$$$$) {
   #     maintainers won't fix it because the difference isn't functionally
   #     relevant to correctly-written Perl code.  However we want to help
   #     humans debug their software and so want to see the representation
-  #     most liklye to have been used by the programmer to store the value.
+  #     most likely to be what the programmer used to create the datum.
   #
   #  2. Floating point values come out as "strings" to avoid some
-  #     cross-platform problem I don't understand.  For our purposes
-  #     we want all numbers to appear as numbers.
+  #     cross-platform problem issue.  For our purposes we want all numbers 
+  #     to appear as numbers.
   if (!reftype($_[0]) && looks_like_number($_[0])) {
     return \undef if $detection_pass;  # halt immediately
     my $prefix = _show_as_number($_[0])
@@ -327,16 +332,20 @@ sub Dump {
     = @$self{qw/Debug MaxStringwidth Stringify/};
 
   # Do desired substitutions in the data (cloning first)
+  # Catch possible exceptions from tie handlers
   if ($stringify || $maxstringwidth) {
-    $stringify = [ $stringify ] unless ref($stringify) eq 'ARRAY';
-    $maxstringwidth //= 0;
-    my $truncsuf = $self->{Truncsuffix};
-    my $r = $self->_Visit_Values(
-      sub{ __walk_worker(shift,1,$stringify,$maxstringwidth,$truncsuf) } );
-    if (ref $r) {  # something needs changing
-      $self->_Modify_Values(
-        sub{ __walk_worker(shift,0,$stringify,$maxstringwidth,$truncsuf) } );
-    }
+    eval {
+      $stringify = [ $stringify ] unless ref($stringify) eq 'ARRAY';
+      $maxstringwidth //= 0;
+      my $truncsuf = $self->{Truncsuffix};
+      my $r = $self->_Visit_Values(
+        sub{ __walk_worker(shift,1,$stringify,$maxstringwidth,$truncsuf) } );
+      if (ref $r) {  # something needs changing
+        $self->_Modify_Values(
+          sub{ __walk_worker(shift,0,$stringify,$maxstringwidth,$truncsuf) } );
+      }
+    };
+    croak "Exception while traversing data: $@ " if $@;
   }
 
   my @values = $self->Values;
@@ -494,12 +503,6 @@ my %qqesc2controlpic = (
   '\r' => "\N{SYMBOL FOR CARRIAGE RETURN}",
   '\t' => "\N{SYMBOL FOR HORIZONTAL TABULATION}",
 );
-sub __postprocess_atom() {  # edits $_
-  s/\Q$magic_numstr_prefix\E//s 
-    if /^['"]/s;
-
-  s/^(['"])[^'"]*?\Q$magic_num_prefix\E(.*?)(\1)/$2/s;
-}
 
 sub __unesc_unicode() {  # edits $_
   if (/^"/) {
@@ -558,6 +561,12 @@ sub _fmt_block($) {
   "[".$blk->[0]."→".substr($outstr,$blk->[0],1)._fmt_flags($blk->[1])."]"
 }
 sub _fmt_stack() { @stack ? (join ",", map{ _fmt_block($_) } @stack) : "()" }
+
+sub __unmagic($) {
+  ${$_[0]} =~ s/(['"])([^'"]*?)
+                (?:\Q$magic_numstr_prefix\E|\Q$magic_num_prefix\E)
+                (.*?)(\1)/$2$3/xgs;
+}
 
 sub _postprocess_DD_result {
   (my $self, local $_) = @_;
@@ -677,6 +686,8 @@ sub _postprocess_DD_result {
     (local $_, my $flags) = ($previtem, $prevflags);
     ($previtem, $prevflags) = ($_[0], $_[1]//0);
 
+    __unmagic(\$previtem);
+
     if (/\A[\\\*]+$/) {
       # Glue backslashes or * onto the front of whatever follows
       $previtem = $_ . $previtem;
@@ -684,7 +695,6 @@ sub _postprocess_DD_result {
       return;
     }
 
-    __postprocess_atom;
     __unesc_unicode if $unesc_unicode;
     __subst_controlpics if $controlpics;
 
@@ -825,7 +835,7 @@ sub _postprocess_DD_result {
     elsif (/\G:*${pkgname_re}/gc)             { atom($&) }
     elsif (/\G[\[\{]/gc) { pushlevel($&) }
     elsif (/\G[\]\}]/gc) { poplevel($&)  }
-    else { oops "UNPARSED ",_dbstr(substr($_,pos,30)."..."),"\   at pos ",u(pos()), " ",_dbstrposn($_,pos()//0);
+    else { oops "UNPARSED ",_dbstr(substr($_,pos//0,30)."..."),"\   at pos ",u(pos()), " ",_dbstrposn($_,pos()//0);
     }
   }
   atom(""); # push through the lookahead item
@@ -1050,7 +1060,7 @@ sub DB_Vis_Eval($$) {
   $Data::Dumper::Interp::save_stack[-1]->[0] = $Data::Dumper::Interp::user_dollarat;
 
   if ($errmsg) {
-    $errmsg =~ s/ at \(eval \d+\) line \d+[^\n]*\n?\z//s;
+    $errmsg = __chop_loc($errmsg);
     Carp::confess("${label_for_errmsg}: Error interpolating '$evalarg' at $fname line $lno:\n$errmsg\n");
   }
 
