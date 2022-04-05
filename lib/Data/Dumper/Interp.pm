@@ -1069,34 +1069,34 @@ Data::Dumper::Interp - Data::Dumper for humans, with interpolation
   # Interpolate variables in strings with Data::Dumper output
   say ivis 'FYI ref is $ref\nThat hash is: %hash\nArgs are @ARGV';
 
-    -->FYI ref is {abc => [1,2,3,4,5], def => undef}
-       That hash is: (abc => [1,2,3,4,5], def => undef)
-       Args are ("-i","/file/path")
+    # -->FYI ref is {abc => [1,2,3,4,5], def => undef}
+    #    That hash is: (abc => [1,2,3,4,5], def => undef)
+    #    Args are ("-i","/file/path")
 
   # Label interpolated values with "expr=" 
   say dvis '$ref\nand @ARGV'; 
 
-     -->ref={abc => [1,2,3,4,5], def => undef} 
-        and @ARGV=("-i","/file/path")
+    # -->ref={abc => [1,2,3,4,5], def => undef} 
+    #    and @ARGV=("-i","/file/path")
 
   # Functions to format one thing 
-  say vis $ref;     -->{abc => [1,2,3,4,5], def => undef}
-  say vis \@ARGV;   -->["-i", "/file/path"]  # any scalar
-  say avis @ARGV;   -->("-i", "/file/path")
-  say hvis %hash;   -->(abc => [1,2,3,4,5], def => undef)
+  say vis $ref;     #-->{abc => [1,2,3,4,5], def => undef}
+  say vis \@ARGV;   #-->["-i", "/file/path"]  # any scalar
+  say avis @ARGV;   #-->("-i", "/file/path")
+  say hvis %hash;   #-->(abc => [1,2,3,4,5], def => undef)
 
   # Stringify objects
   { use bigint;
     my $struct = { debt => 999_999_999_999_999_999.02 };
     say vis $struct;
-      --> {debt => (Math::BigFloat)999999999999999999.02}
+      # --> {debt => (Math::BigFloat)999999999999999999.02}
   }
 
   # Wide characters are readable
   use utf8;
   my $h = {msg => "My language is not ASCII ☻ ☺ 😊 \N{U+2757}!"};
   say dvis '$h' ;
-    --> h={msg => "My language is not ASCII ☻ ☺ 😊 ❗"}
+    # --> h={msg => "My language is not ASCII ☻ ☺ 😊 ❗"}
 
   #-------- OO API --------
 
@@ -1404,7 +1404,7 @@ the "_" filehandle will not change across calls.
 =head1 DIFFERENCES FROM Data::Dumper
 
 Visualized data structures differ from plain C<Data::Dumper> output
-as follows:
+as follows (by default):
 
 =over 2
 
@@ -1436,7 +1436,7 @@ will be escaped as individual bytes when necessary.
 
 Object refs are replaced by the object's stringified representation.
 For example, C<bignum> and C<bigrat> numbers are shown as easily
-readable values rather than "bless( {...}, 'Math::...')".
+readable values rather than S<"bless( {...}, 'Math::...')">.
 
 Stingified objects are prefixed with "(classname)" to make clear what
 happened.
