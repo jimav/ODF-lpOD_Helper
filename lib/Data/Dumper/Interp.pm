@@ -12,6 +12,8 @@
 # restriction, but the library as a whole (or any portion containing those 
 # extracts) may only be distributred under the said software licenses.
 
+##FIXME: Blessed structures are not formatted because we treat bless(...) as an atom
+
 use strict; use warnings FATAL => 'all'; use utf8; use 5.020;
 use feature qw(state);
 package  Data::Dumper::Interp;
@@ -283,7 +285,7 @@ sub __walk_worker($$$$$) {
     }
   }
   if (my $class = blessed($_[0])) {
-    # Strinify objects which have the stringification operator
+    # Stringify objects which have the stringification operator
     if (overload::Method($class,'""')) { # implements operator stringify
       if (any { ref() eq "Regexp" ? $class =~ /$_/
                                   : ($_ eq "1" || $_ eq $class) } @$stringify)
@@ -370,13 +372,17 @@ sub Dump {
   $_
 }
 
-# Walk an arbitrary structure calling &coderef on each item. stopping
+# Walk an arbitrary structure calling &coderef on each item.
 # The sub should return 1 to continue, or any other defined value to
 # terminate the traversal early.
 # Members of containers are visited after processing the container item itself,
 # and containerness is checked after &$coderef returns so that &$coderef
 # may transform the item (by reference through $_[0]) e.g. to replace a
 # container with a scalar.
+#
+# Tied items are skipped because we can not safely modify even cloned
+# copies because the side-effects can not be known.
+#
 # RETURNS: The final $&coderef return val
 sub __walk($$;$);
 sub __walk($$;$) {  # (coderef, item [, seenhash])
@@ -384,15 +390,25 @@ sub __walk($$;$) {  # (coderef, item [, seenhash])
   my $seen = $_[2] // {};
   # Test for recursion both before and after calling the coderef, in case the
   # code unconditionally clones or otherwise replaces the item with new data.
-  if (reftype($_[1])) {
+#say "###A item=",u($_[1]), " rt=", u(reftype $_[1]); #," tied=", u(tied $_[1]); 
+  if (my $rt = reftype($_[1])) {
     my $refaddr0 = refaddr($_[1]);
     return 1 if $seen->{$refaddr0}; # increment only below
+    return 1
+      if ( ($rt eq 'ARRAY'  && tied @{ $_[1] }) ||
+           ($rt eq 'HASH'   && tied %{ $_[1] }) ||
+           ($rt eq 'SCALAR' && tied ${ $_[1] }) ||
+           ($rt eq 'REF'    && tied ${ $_[1] }) );
+  } else {
+    return 1 if tied $_[1];
   }
   # Now call the coderef and re-check the item
   my $r = &{ $_[0] }($_[1]);
-  return $r unless (my $reftype = reftype($_[1])); # no longer a container?
-  my $refaddr1 = refaddr($_[1]);
-  return $r if $seen->{$refaddr1}++;
+  my $reftype = reftype($_[1]);
+  return $r unless $reftype;  # not (or not any longer) a container
+  my $refaddr = refaddr($_[1]);
+#say "#B item=",u($_[1]), " reftype=", u($reftype), " seen=",u($seen->{$refaddr}), " r=",u($r); #, " tied=",u(tied $_[1]);
+  return $r if $seen->{$refaddr}++;
   return $r unless $r eq "1";
   if ($reftype eq 'ARRAY') {
     foreach (@{$_[1]}) {
@@ -401,14 +417,14 @@ sub __walk($$;$) {  # (coderef, item [, seenhash])
     }
   }
   elsif ($reftype eq 'HASH') {
-    #foreach (values %{$_[1]})
-    #  return 0 unless __walk($_[0], $_, $seen);
-    #}
-    # sort to retain same visitation order in cloned copy
-    foreach (sort keys %{$_[1]}) {
-      my $r = __walk($_[0], $_[1]->{$_}, $seen);
+    foreach my $key (sort keys %{$_[1]}) {
+      my $r = __walk($_[0], $_[1]->{$key}, $seen); # walk the value
       return $r unless $r eq "1";
     }
+  }
+  elsif ($reftype eq 'SCALAR' or $reftype eq 'REF') {
+    my $r = __walk($_[0], ${ $_[1] }, $seen);
+    return $r unless $r eq "1";
   }
   1
 }
@@ -825,7 +841,6 @@ sub _postprocess_DD_result {
   }
   else { oops }
   oops if @stack;
-
   $outstr
 } #_postprocess_DD_result {
 
