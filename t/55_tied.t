@@ -12,7 +12,8 @@ select STDERR;
 
 package main::TieHash;
 require Tie::Hash;
-use parent -norequire, 'Tie::StdHash';
+#use parent -norequire, 'Tie::StdHash';
+our @ISA = ('Tie::StdHash'); # https://github.com/rjbs/Dist-Zilla/issues/705
 use Carp;
 
 sub STORE {
@@ -23,7 +24,8 @@ sub STORE {
 
 package main::TieArray;
 require Tie::Array;
-use parent -norequire, 'Tie::StdArray';
+#use parent -norequire, 'Tie::StdArray';
+our @ISA = ('Tie::StdArray'); # https://github.com/rjbs/Dist-Zilla/issues/705
 use Carp;
 
 sub STORE {
@@ -34,7 +36,8 @@ sub STORE {
 
 package main::TieScalar;
 require Tie::Scalar;
-use parent -norequire, 'Tie::StdScalar';
+#use parent -norequire, 'Tie::StdScalar';
+our @ISA = ('Tie::StdScalar'); # https://github.com/rjbs/Dist-Zilla/issues/705
 use Carp;
 
 sub STORE {
@@ -45,7 +48,8 @@ sub STORE {
 
 package main::TieHandle;
 require Tie::Handle;
-use parent -norequire, 'Tie::StdHandle';
+#use parent -norequire, 'Tie::StdHandle';
+our @ISA = ('Tie::StdHandle');
 use Carp;
 sub _checkwrite {
   my ($self, @args) = @_;
