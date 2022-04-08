@@ -15,7 +15,7 @@
 ##FIXME: Blessed structures are not formatted because we treat bless(...) as an atom
 
 use strict; use warnings FATAL => 'all'; use utf8; use 5.020;
-use feature qw(state);
+use feature qw(say state);
 package  Data::Dumper::Interp;
 
 
@@ -67,7 +67,7 @@ sub oops(@) { @_ = ("\n".__PACKAGE__." oops:",@_,"\n  "); goto &Carp::confess }
 use Exporter 'import';
 our @EXPORT    = qw(vis  avis  alvis  ivis  dvis  hvis  hlvis
                     visq avisq alvisq ivisq dvisq hvisq hlvisq
-                    u qsh _forceqsh qshpath);
+                    u quotekey qsh _forceqsh qshpath);
 
 our @EXPORT_OK = qw($Debug $MaxStringwidth $Truncsuffix $Stringify $Foldwidth
                     $Useqq $Quotekeys $Sortkeys $Sparseseen
@@ -78,6 +78,7 @@ our @ISA       = ('Data::Dumper'); # see comments at new()
 ############### Utility Functions #################
 
 sub u(_) { $_[0] // "undef" }
+sub quotekey(_); # forward.  Implemented after regex declarations.
 sub _forceqsh(_) {
   # Unlike Perl, /bin/sh does not recognize any backslash escapes in '...'
   local $_ = shift;
@@ -284,9 +285,11 @@ sub __walk_worker($$$$$) {
       }
     }
   }
-  if (my $class = blessed($_[0])) {
+  #if (my $class = blessed($_[0])) {
+  if (overload::Overloaded($_[0])) {
+    my $class = blessed($_[0]) // oops;
     # Stringify objects which have the stringification operator
-    if (overload::Method($class,'""')) { # implements operator stringify
+    if (overload::Method($class,'""')) {
       if (any { ref() eq "Regexp" ? $class =~ /$_/
                                   : ($_ eq "1" || $_ eq $class) } @$stringify)
       {
@@ -295,6 +298,18 @@ sub __walk_worker($$$$$) {
         my $prefix = _show_as_number($_[0]) ? $magic_num_prefix : "";
         $_[0] = "${prefix}($class)".$_[0];  # *calls stringify operator*
       }
+    }
+    # If the object overloads ARRAYref or HASHref operator, replace it with
+    # the resulting (presumably real) hash or array.
+    elsif (overload::Method($class,'@{}')) {
+      return \undef if $detection_pass;  # halt immediately
+      my @array = @{ $_[0] };
+      $_[0] = \@array; # HOW TO MARK THAT THIS HAPPENED?
+    }
+    elsif (overload::Method($class,'%{}')) {
+      return \undef if $detection_pass;  # halt immediately
+      my %hash = %{ $_[0] };
+      $_[0] = \%hash; # HOW TO MARK THAT THIS HAPPENED?
     }
   }
   # Prepend a "magic prefix" (later removed) to items which Data::Dumper is
@@ -330,8 +345,8 @@ sub Dump {
     croak "extraneous args" if @_ != 1;
   }
 
-  my ($maxstringwidth, $stringify)
-    = @$self{qw/MaxStringwidth Stringify/};
+  my ($maxstringwidth, $stringify, $debug)
+    = @$self{qw/MaxStringwidth Stringify Debug/};
 
   # Do desired substitutions in the data (cloning first)
   # Catch possible exceptions from tie handlers
@@ -340,11 +355,35 @@ sub Dump {
       $stringify = [ $stringify ] unless ref($stringify) eq 'ARRAY';
       $maxstringwidth //= 0;
       my $truncsuf = $self->{Truncsuffix};
-      my $r = $self->_Visit_Values(
-        sub{ __walk_worker(shift,1,$stringify,$maxstringwidth,$truncsuf) } );
-      if (ref $r) {  # something needs changing
-        $self->_Modify_Values(
-          sub{ __walk_worker(shift,0,$stringify,$maxstringwidth,$truncsuf) } );
+      # BUT! If there are *any* tied objects in the data, do not clone/modify
+      # because the handlers might indirectly look at modified data
+      # "elsewhere" in the overall structure and mis-behave.
+      my $r = $self->_Visit_Values(sub{ 
+                       my $item = shift;
+                       if (overload::Overloaded($item)) {
+                         # Overloads can hide tied variables
+                         my $r = eval{ tied @$item } ||
+                                 eval{ tied %$item } ||
+                                 eval{ tied $$item };
+                         return $r if $r;
+                       }
+                       my $t = reftype($item);
+                       my $r = 
+                       ($t ? ($t eq 'ARRAY' ? tied(@$item) :
+                              $t eq 'HASH'  ? tied(%$item) :
+                              $t eq 'REF'   ? tied($$item) :
+                              $t eq 'SCALAR'? tied($$item) : undef)
+                           : tied($item)) // 1
+                       ;
+                       $r
+                     });
+      if ($r eq "1") {
+        $r = $self->_Visit_Values(
+          sub{ __walk_worker(shift,1,$stringify,$maxstringwidth,$truncsuf) } );
+        if (ref $r) {  # something needs changing
+          $self->_Modify_Values(
+            sub{ __walk_worker(shift,0,$stringify,$maxstringwidth,$truncsuf) } );
+        }
       }
     };
     croak "Exception while traversing data: $@ " if $@;
@@ -380,9 +419,6 @@ sub Dump {
 # may transform the item (by reference through $_[0]) e.g. to replace a
 # container with a scalar.
 #
-# Tied items are skipped because we can not safely modify even cloned
-# copies because the side-effects can not be known.
-#
 # RETURNS: The final $&coderef return val
 sub __walk($$;$);
 sub __walk($$;$) {  # (coderef, item [, seenhash])
@@ -390,24 +426,17 @@ sub __walk($$;$) {  # (coderef, item [, seenhash])
   my $seen = $_[2] // {};
   # Test for recursion both before and after calling the coderef, in case the
   # code unconditionally clones or otherwise replaces the item with new data.
-#say "###A item=",u($_[1]), " rt=", u(reftype $_[1]); #," tied=", u(tied $_[1]); 
   if (my $rt = reftype($_[1])) {
     my $refaddr0 = refaddr($_[1]);
     return 1 if $seen->{$refaddr0}; # increment only below
-    return 1
-      if ( ($rt eq 'ARRAY'  && tied @{ $_[1] }) ||
-           ($rt eq 'HASH'   && tied %{ $_[1] }) ||
-           ($rt eq 'SCALAR' && tied ${ $_[1] }) ||
-           ($rt eq 'REF'    && tied ${ $_[1] }) );
-  } else {
-    return 1 if tied $_[1];
   }
+
   # Now call the coderef and re-check the item
   my $r = &{ $_[0] }($_[1]);
+
   my $reftype = reftype($_[1]);
   return $r unless $reftype;  # not (or not any longer) a container
   my $refaddr = refaddr($_[1]);
-#say "#B item=",u($_[1]), " reftype=", u($reftype), " seen=",u($seen->{$refaddr}), " r=",u($r); #, " tied=",u(tied $_[1]);
   return $r if $seen->{$refaddr}++;
   return $r unless $r eq "1";
   if ($reftype eq 'ARRAY') {
@@ -553,7 +582,7 @@ my @stack; # [offset_of_start, flags]
 sub BLK_FOLDEDBACK() {    1 } # block start has been folded back to min indent
 sub BLK_CANTSPACE()  {    2 } # blanks may not (any longer) be inserted
 sub BLK_HASCHILD()   {    4 }
-sub BLK_FATARROW()   {    8 } # block is actually a key => value triple
+sub BLK_TRIPLE()     {    8 } # block is actually a key => value triple
 sub BLK_MASK()       { 0x0F }
 sub OPENER()         { 0x10 } # (used in &atom flags argument)
 sub CLOSER()         { 0x20 } # (used in &atom flags argument)
@@ -564,7 +593,7 @@ sub _fmt_flags($) {
   $r .= " FOLDEDBACK" if $_[0] & BLK_FOLDEDBACK;
   $r .= " CANTSPACE"  if $_[0] & BLK_CANTSPACE;
   $r .= " HASCHILD"   if $_[0] & BLK_HASCHILD;
-  $r .= " FATARROW"   if $_[0] & BLK_FATARROW;
+  $r .= " TRIPLE"     if $_[0] & BLK_TRIPLE;
   $r .= " OPENER"     if $_[0] & OPENER;
   $r .= " CLOSER"     if $_[0] & CLOSER;
   $r .= " NOOP"       if $_[0] & NOOP;
@@ -688,10 +717,9 @@ sub _postprocess_DD_result {
 
   my ($previtem, $prevflags);
   my sub atom($;$) {
-    # Queue each item for one "look ahead" cycle before processing.  
+    # Queue each item for one "look ahead" cycle before fully processing.  
     (local $_, my $flags) = ($previtem, $prevflags);
     ($previtem, $prevflags) = ($_[0], $_[1]//0);
-
     __unmagic(\$previtem);
 
     if (/\A[\\\*]+$/) {
@@ -702,6 +730,8 @@ sub _postprocess_DD_result {
 
     __unesc_unicode if $unesc_unicode;
     __subst_controlpics if $controlpics;
+
+say "atom ",_dbrawstr($_),_fmt_flags($flags) if $debug;
 
     return if ($flags & NOOP);
    
@@ -784,7 +814,8 @@ sub _postprocess_DD_result {
       push @stack, [length($outstr)-length(), $flags & BLK_MASK];
     }
 
-    if (@stack && $stack[-1]->[1] & BLK_FATARROW) {
+    if (@stack && $stack[-1]->[1] & BLK_TRIPLE) {
+      say "     Closing TRIPLE" if $debug;
       $reserved -= ($indent_unit - 1)  # can never happen!
         if ($stack[-1]->[1] & (BLK_HASCHILD|BLK_CANTSPACE))==BLK_HASCHILD;
       pop @stack;
@@ -792,40 +823,49 @@ sub _postprocess_DD_result {
   }
   my sub pushlevel($) { atom( $_[0], OPENER ); }
   my sub poplevel($) { atom( $_[0], CLOSER ); }
-  my sub fatarrow($) {
+  my sub triple($) {
     my $item = shift;
-    # Make a "key => value" triple be a block, to keep together if possible
-    oops if $prevflags != 0;
+    # Make a "key => value" or "var = value" triple be a block, 
+    # to keep together if possible
+    oops _fmt_flags($prevflags) if $prevflags != 0;
     $prevflags |= (OPENER | BLK_CANTSPACE);
-    atom( " $item ", 0 );  # " => "
+    atom( $item, 0 );  # " => " or " = "
     atom( "", NOOP );      # push through the =>
-    $stack[-1]->[1] |= BLK_FATARROW;
+    $stack[-1]->[1] |= BLK_TRIPLE;
   }
   my sub commasemi($) {
     # Glue to the end of the pending item, so they always appear together
     $previtem .= $_[0];
   }
+#  my sub space() {
+#    return if substr($outstr,-1,1) eq " ";
+#    atom(" ");
+#  }
 
   $previtem = "";
   $prevflags = NOOP;
 
   while ((pos()//0) < length) {
-    if    (/\G\s+/sgc) { }
-    elsif (/\G[\\\*]/gc)                      { atom($&) } # will be glued fwd
-    elsif (/\G[,;]/gc)                        { commasemi($&) }
-    elsif (/\G"(?:[^"\\]++|\\.)*+"/gc)        { atom($&) } # "quoted"
-    elsif (/\G'(?:[^'\\]++|\\.)*+'/gc)        { atom($&) } # 'quoted'
+       if (/\G[\\\*]/gc)                         { atom($&) } # glued fwd
+    elsif (/\G[,;]/gc)                           { commasemi($&) }
+    elsif (/\G"(?:[^"\\]++|\\.)*+"/gc)           { atom($&) } # "quoted"
+    elsif (/\G'(?:[^'\\]++|\\.)*+'/gc)           { atom($&) } # 'quoted'
     elsif (m(\Gqr/(?:[^\\\/]++|\\.)*+/[a-z]*)gc) { atom($&) } # Regexp
-    elsif (/\Gsub\s*${curlies_re}/gc)         { atom($&) } # sub{...}
-    elsif (/\G\$(?:VAR\d+|->|${balanced_re})++/gc) { atom($&) } 
-    elsif (/\G${userident_re}(?=\()${balanced_re}\s*/gc) { atom($&) } #bless(...)
-    elsif (/\G${userident_re}\(.*?\)\S*/gc) { atom($&) } #bless(...)
-    elsif (/\G\b[A-Za-z_][A-Za-z0-9_]*+\b/gc) { atom($&) } # bareword
+    
+    # With Deparse(1) the body has arbitrary Perl code, which we can't parse
+    elsif (/\Gsub\s*${curlies_re}/gc)            { atom($&) } # sub{...}
+
+    # $VAR1->[ix] $VAR1->{key} or just $varname
+    elsif (/\G\$(?:${userident_re}\s*|->|${balanced_re})++/gc) { atom($&) } 
+
+    elsif (/\G\b[A-Za-z_][A-Za-z0-9_]*+\b\s*/gc) { atom($&) } # bareword+space?
     elsif (/\G\b-?\d[\deE\.]*+\b/gc)          { atom($&) } # number
-    elsif (/\G=>/gc)                          { fatarrow($&) }
+    elsif (/\G\s*=>\s*/gc)                    { triple($&) }
+    elsif (/\G\s*=(?=[\w\s'"])\s*/gc)         { triple($&) }
     elsif (/\G:*${pkgname_re}/gc)             { atom($&) }
-    elsif (/\G[\[\{]/gc) { pushlevel($&) }
-    elsif (/\G[\]\}]/gc) { poplevel($&)  }
+    elsif (/\G[\[\{\(]/gc) { pushlevel($&) }
+    elsif (/\G[\]\}\)]/gc) { poplevel($&)  }
+    elsif (/\G\s+/sgc)                        {          }
     else { oops "UNPARSED ",_dbstr(substr($_,pos//0,30)."..."),"\   at pos ",u(pos()), " ",_dbstrposn($_,pos()//0);
     }
   }
@@ -885,7 +925,8 @@ sub _Interpolate {
 
            (?: [^\\\$\@\%]++ )
            |
-           (?: (?: \\[^\$\@\%] )++ )
+           #(?: (?: \\[^\$\@\%] )++ )
+           (?: (?: \\. )++ )
            |
 
            # $#arrayvar $#$$...refvarname $#{aref expr} $#$$...{ref2ref expr}
@@ -966,6 +1007,10 @@ sub _Interpolate {
   goto &DB::DB_Vis_Interpolate
 }
 
+sub quotekey(_) { # Quote a hash key if not a valid bareword
+  $_[0] =~ /\A${userident_re}\z/s ? $_[0] : visq("$_[0]")
+}
+
 package 
   DB;
 
@@ -1041,8 +1086,8 @@ sub DB_Vis_Eval($$) {
   $Data::Dumper::Interp::save_stack[-1]->[0] = $Data::Dumper::Interp::user_dollarat;
 
   if ($errmsg) {
-    $errmsg = __chop_loc($errmsg);
-    Carp::confess("${label_for_errmsg}: Error interpolating '$evalarg' at $fname line $lno:\n$errmsg\n");
+    $errmsg = Data::Dumper::Interp::__chop_loc($errmsg);
+    Carp::croak("${label_for_errmsg}: Error interpolating '$evalarg' at $fname line $lno:\n$errmsg\n");
   }
 
   wantarray ? @result : (do{die "bug" if @result>1}, $result[0])
@@ -1105,10 +1150,12 @@ Data::Dumper::Interp - Data::Dumper for humans, with interpolation
 
   #-------- UTILITY FUNCTIONS --------
   say u($might_be_undef);  # $_[0] // "undef"
+  say quotekey($string);   # quote hash key if not a valid bareword
   say qsh($string);        # quote if needed for /bin/sh
-  say qshpath($pathname);  # quote except for ~ or ~username prefix
+  say qshpath($pathname);  # shell quote excepting ~ or ~username prefix
 
-    system "ls -ld ".join(" ",map{ qshpath } ("/tmp", "~", "~sally/subdir"));
+    system "ls -ld ".join(" ",map{ qshpath } 
+                              ("/tmp", "~sally/My Documents", "~"));
 
 
 =head1 DESCRIPTION
@@ -1325,6 +1372,13 @@ See C<Data::Dumper> documentation.
 Returns the argument ($_ by default) if it is defined, otherwise
 the string "undef".
 
+=head2 quotekey
+
+=head2 quotekey SCALAR
+
+Returns the argument ($_ by default) if it is a valid bareword,
+otherwise a quoted string.
+
 =head2 qsh
 
 =head2 qsh $string
@@ -1479,7 +1533,7 @@ Jim Avera  (jim.avera AT gmail dot com)
 
 =for Pod::Coverage Foldwidth1 Terse Indent oops Debug
 
-=for Pod::Coverage BLK_CANTSPACE BLK_FATARROW BLK_FOLDEDBACK BLK_HASCHILD BLK_MASK CLOSER FLAGS_MASK NOOP OPENER
+=for Pod::Coverage BLK_CANTSPACE BLK_TRIPLE BLK_FOLDEDBACK BLK_HASCHILD BLK_MASK CLOSER FLAGS_MASK NOOP OPENER
 
 
 =cut
