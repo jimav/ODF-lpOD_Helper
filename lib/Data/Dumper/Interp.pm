@@ -680,23 +680,22 @@ sub _postprocess_DD_result {
 
     # If the block has children, insert spacing before the first child
     # if not already done (as indicated by BLK_CANTSPACE not yet set),
-    # consuming reserved space.  If there are no children, just release
-    # the reserved space.
-    if ( !($stack[$bx]->[1] & BLK_CANTSPACE) ) {
+    # consuming reserved space.  N.B. if there are no children then
+    # no space has been reserved for this block.
+    if ( ($stack[$bx]->[1] & (BLK_CANTSPACE|BLK_HASCHILD)) == BLK_HASCHILD ) {
       my $spaces = " " x ($indent_unit-1);
-      if ($stack[$bx]->[1] & BLK_HASCHILD) {
-        my $insposn = $stack[$bx]->[0] + 1;
-        $linelen += length($spaces)
-          if $insposn >= length($outstr)-$linelen;
-        substr($outstr, $insposn, 0) = $spaces;
-        $foldposn += length($spaces);
-        foreach (@stack[$bx+1 .. $#stack]) { $_->[0] += length($spaces) }
-        ($reserved -= length($spaces)) >= 0 or oops;
-        $stack[$bx]->[1] |= BLK_CANTSPACE; 
-      }
+      my $insposn = $stack[$bx]->[0] + 1;
+      $linelen += length($spaces)
+        if $insposn >= length($outstr)-$linelen;
+      substr($outstr, $insposn, 0) = $spaces;
+      $foldposn += length($spaces);
+      foreach (@stack[$bx+1 .. $#stack]) { $_->[0] += length($spaces) }
+      ($reserved -= length($spaces)) >= 0 or oops;
+      $stack[$bx]->[1] |= BLK_CANTSPACE; 
+      say "#***>space inserted b4 first item in bx $bx" if $debug;
     }
     my $indent = ($bx+1) * $indent_unit;
-    # Remove any spaces at what will become end of line
+    # Remove any spaces at what will become end of line before a fold
     pos($outstr) = max(0, $foldposn - $indent_unit);
     my $replacelen = $outstr =~ /\G\S*\K\s++/gcs ? length($&) : 0;
     if (pos($outstr) == $foldposn) {
@@ -713,6 +712,7 @@ sub _postprocess_DD_result {
     foreach ($bx+1 .. $#stack) { $stack[$_]->[0] += $delta }
     substr($outstr, $foldposn, $replacelen) = "\n" . (" " x $indent);
     $maxlinelen = $foldwidthN;
+    say "   After fold: stack=${\_fmt_stack()} length(outstr)=${\length($outstr)} llen=$linelen maxllen=$maxlinelen res=$reserved\n",_dbstr($outstr) if $debug;
   }#_fold_block
 
   my ($previtem, $prevflags);
@@ -731,23 +731,24 @@ sub _postprocess_DD_result {
     __unesc_unicode if $unesc_unicode;
     __subst_controlpics if $controlpics;
 
-say "atom ",_dbrawstr($_),_fmt_flags($flags) if $debug;
+say "atom ",_dbrawstr($_),_fmt_flags($flags), "  stack:", _fmt_stack(), " os=",_dbstr($outstr)
+  if $debug;
 
     return if ($flags & NOOP);
    
     if ( !($flags & CLOSER)
          && @stack 
          && ($stack[-1]->[1] & (BLK_HASCHILD|BLK_CANTSPACE))==0 ) {
-      # Reserve space to insert blanks before the item being added
+      # First child: Reserve space to insert blanks before it 
       $reserved += ($indent_unit - 1);
       $stack[-1]->[1] |= BLK_HASCHILD if @stack;
     }
     if ( ($flags & CLOSER) 
          && ($stack[-1]->[1] & (BLK_HASCHILD|BLK_CANTSPACE))==BLK_HASCHILD 
          && length() <= ($indent_unit - 1)) {
-      # Closing a block which has reserved space and has not been folded yet;
-      # unless the closer is larger than the reserved space, release the
-      # reserved space to the closer can fit on the same line.
+      # Closing a block which has reserved space but has not been folded yet;
+      # If the closer is not larger than the reserved space, release the
+      # reserved space so the closer can fit on the same line.
       $reserved -= ($indent_unit - 1); oops if $reserved < 0;
       $stack[-1]->[1] |= BLK_CANTSPACE;
     }
@@ -767,7 +768,7 @@ say "atom ",_dbrawstr($_),_fmt_flags($flags) if $debug;
     # not be needed if the item fits on the same line.
     #
     # But always fold if this is a block-closer and there exist already-folded
-    # children; in that case align the closer with the opener:
+    # children; in that case align the closer with opener like this:
     #     [ aaa, bbb, 
     #       ccc, «wrap instead of putting closer here»
     #     ]
@@ -825,6 +826,7 @@ say "atom ",_dbrawstr($_),_fmt_flags($flags) if $debug;
   my sub poplevel($) { atom( $_[0], CLOSER ); }
   my sub triple($) {
     my $item = shift;
+    say "##triple '$item'" if $debug;
     # Make a "key => value" or "var = value" triple be a block, 
     # to keep together if possible
     oops _fmt_flags($prevflags) if $prevflags != 0;
@@ -856,9 +858,9 @@ say "atom ",_dbrawstr($_),_fmt_flags($flags) if $debug;
     elsif (/\Gsub\s*${curlies_re}/gc)            { atom($&) } # sub{...}
 
     # $VAR1->[ix] $VAR1->{key} or just $varname
-    elsif (/\G\$(?:${userident_re}\s*|->|${balanced_re})++/gc) { atom($&) } 
+    elsif (/\G(?:my\s+)?\$(?:${userident_re}|\s*->\s*|${balanced_re})++/gc) { atom($&) } 
 
-    elsif (/\G\b[A-Za-z_][A-Za-z0-9_]*+\b\s*/gc) { atom($&) } # bareword+space?
+    elsif (/\G\b[A-Za-z_][A-Za-z0-9_]*+\b/gc) { atom($&) } # bareword?
     elsif (/\G\b-?\d[\deE\.]*+\b/gc)          { atom($&) } # number
     elsif (/\G\s*=>\s*/gc)                    { triple($&) }
     elsif (/\G\s*=(?=[\w\s'"])\s*/gc)         { triple($&) }

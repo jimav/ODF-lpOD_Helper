@@ -161,7 +161,9 @@ is( dvis('\%{}'), '\%{}' );
 
 # Once hit an assertion
 is( Data::Dumper::Interp->new()->Foldwidth(0)
-     ->vis(bless \do{ my $x = [] }), q<bless(do{\(my $o = [])},'main')) > );
+     ->vis(bless do{ \(my $x = []) }), q<bless(do{\(my $o = [])},'main')> );
+
+#say vis bless( do{ \(my $x = []) } );
 
 is( Data::Dumper::Interp->new()->Foldwidth(4)->vis( [ [ ], 12345 ] ),
     do{chomp(my $_=<<'EOF'); $_} );
