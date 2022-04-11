@@ -33,7 +33,7 @@ use Carp;
 use POSIX qw(INT_MAX);
 use Encode ();
 use Scalar::Util qw(blessed reftype refaddr looks_like_number);
-use List::Util qw(min max first any);
+use List::Util qw(min max first any pairmap);
 use Regexp::Common qw/RE_balanced/;
 use Term::ReadKey ();
 use overload ();
@@ -69,7 +69,7 @@ our @EXPORT    = qw(vis  avis  alvis  ivis  dvis  hvis  hlvis
                     visq avisq alvisq ivisq dvisq hvisq hlvisq
                     u quotekey qsh _forceqsh qshpath);
 
-our @EXPORT_OK = qw($Debug $MaxStringwidth $Truncsuffix $Stringify $Foldwidth
+our @EXPORT_OK = qw($Debug $MaxStringwidth $Truncsuffix $Overloads $Foldwidth
                     $Useqq $Quotekeys $Sortkeys $Sparseseen
                     $Maxdepth $Maxrecurse $Deparse);
 
@@ -105,7 +105,7 @@ sub qshpath(_) {  # like qsh but does not quote initial ~ or ~username
 
 #################### Configuration Globals #################
 
-our ($Debug, $MaxStringwidth, $Truncsuffix, $Stringify,
+our ($Debug, $MaxStringwidth, $Truncsuffix, $Overloads,
      $Foldwidth, $Foldwidth1,
      $Useqq, $Quotekeys, $Sortkeys, $Sparseseen,
      $Maxdepth, $Maxrecurse, $Deparse);
@@ -113,7 +113,7 @@ our ($Debug, $MaxStringwidth, $Truncsuffix, $Stringify,
 $Debug          = 0            unless defined $Debug;
 $MaxStringwidth = 0            unless defined $MaxStringwidth;
 $Truncsuffix    = "..."        unless defined $Truncsuffix;
-$Stringify      = 1            unless defined $Stringify;
+$Overloads      = 1            unless defined $Overloads;
 $Foldwidth      = undef        unless defined $Foldwidth;  # undef auto-detects
 $Foldwidth1     = undef        unless defined $Foldwidth1; # override for 1st
 
@@ -140,9 +140,9 @@ sub Truncsuffix {
   my($s, $v) = @_;
   @_ == 2 ? (($s->{Truncsuffix} = $v), return $s) : $s->{Truncsuffix};
 }
-sub Stringify {
+sub Overloads {
   my($s, $v) = @_;
-  @_ == 2 ? (($s->{Stringify} = $v), return $s) : $s->{Stringify};
+  @_ == 2 ? (($s->{Overloads} = $v), return $s) : $s->{Overloads};
 }
 sub Foldwidth {
   my($s, $v) = @_;
@@ -233,7 +233,7 @@ sub _config_defaults {
     ->MaxStringwidth($MaxStringwidth)
     ->Foldwidth($Foldwidth)
     ->Foldwidth1($Foldwidth1)
-    ->Stringify($Stringify)
+    ->Overloads($Overloads)
     ->Truncsuffix($Truncsuffix)
     ->Quotekeys($Quotekeys)
     ->Maxdepth($Maxdepth)
@@ -269,47 +269,56 @@ sub __set_default_Foldwidth() {
 my $unique = refaddr \&new;
 my $magic_num_prefix    = "<NUMMagic$unique>";
 my $magic_numstr_prefix = "<NUMSTRMagic$unique>";
+my $COPY_NEEDED = "_CN_$unique";
+sub __COPY_NEEDED() { $COPY_NEEDED }
 
-sub __walk_worker($$$$$) {
-  my (undef, $detection_pass, $stringify, $maxstringwidth, $truncsuf) = @_;
-  return 1
-    unless defined $_[0];
-  # Truncate over-length strings
+sub _doedits {
+  my $self = shift;
+  my ($item, $testonly, $maxstringwidth, $truncsuf, $overloads) = @_;
+  return undef
+    unless defined($item);
   if ($maxstringwidth) {
-    if (ref($_[0]) eq "") { # a scalar
-      my $maxwid = $maxstringwidth + length($truncsuf);
-      if (!_show_as_number($_[0])
-          && length($_[0]) > $maxstringwidth + length($truncsuf)) {
-        return \undef if $detection_pass;
-        $_[0] = substr($_[0],0,$maxstringwidth).$truncsuf;
+    if (ref($item) eq "") { # a scalar
+      if (!_show_as_number($item)
+          && length($item) > $maxstringwidth + length($truncsuf)) {
+        return __COPY_NEEDED if $testonly;
+        $item = substr($item,0,$maxstringwidth).$truncsuf;
       }
     }
   }
-  #if (my $class = blessed($_[0])) {
-  if (overload::Overloaded($_[0])) {
-    my $class = blessed($_[0]) // oops;
-    # Stringify objects which have the stringification operator
-    if (overload::Method($class,'""')) {
-      if (any { ref() eq "Regexp" ? $class =~ /$_/
-                                  : ($_ eq "1" || $_ eq $class) } @$stringify)
-      {
-        return \undef if $detection_pass;  # halt immediately
-        # Make the change.  We are on a 2nd pass on a cloned copy
-        my $prefix = _show_as_number($_[0]) ? $magic_num_prefix : "";
-        $_[0] = "${prefix}($class)".$_[0];  # *calls stringify operator*
+  #if (my $class = blessed($item)) {
+  if (overload::Overloaded($item)) {
+    my $class = blessed($item) // oops;
+    if (any { ref() eq "Regexp" ? $class =~ $_
+                                : ($_ eq "1" || $_ eq $class) 
+            } @$overloads) {
+      # Stringify objects which have the stringification operator
+      if (overload::Method($class,'""')) {
+        return __COPY_NEEDED if $testonly;
+        my $prefix = _show_as_number($item) ? $magic_num_prefix : "";
+        $item = "${prefix}($class)".$item;  # *calls stringify operator*
       }
-    }
-    # If the object overloads ARRAYref or HASHref operator, replace it with
-    # the resulting (presumably real) hash or array.
-    elsif (overload::Method($class,'@{}')) {
-      return \undef if $detection_pass;  # halt immediately
-      my @array = @{ $_[0] };
-      $_[0] = \@array; # HOW TO MARK THAT THIS HAPPENED?
-    }
-    elsif (overload::Method($class,'%{}')) {
-      return \undef if $detection_pass;  # halt immediately
-      my %hash = %{ $_[0] };
-      $_[0] = \%hash; # HOW TO MARK THAT THIS HAPPENED?
+      # Substitute the virtual value behind an overloaded deref operator
+      elsif (overload::Method($class,'@{}')) {
+        return __COPY_NEEDED if $testonly;
+        $item = \@{ $item };
+      }
+      elsif (overload::Method($class,'%{}')) {
+        return __COPY_NEEDED if $testonly;
+        $item = \%{ $item };
+      }
+      elsif (overload::Method($class,'${}')) {
+        return __COPY_NEEDED if $testonly;
+        $item = \${ $item };
+      }
+      elsif (overload::Method($class,'&{}')) {
+        return __COPY_NEEDED if $testonly;
+        $item = \&{ $item };
+      }
+      elsif (overload::Method($class,'*{}')) {
+        return __COPY_NEEDED if $testonly;
+        # ??? $item = \*{ $item };
+      }
     }
   }
   # Prepend a "magic prefix" (later removed) to items which Data::Dumper is
@@ -326,13 +335,13 @@ sub __walk_worker($$$$$) {
   #  2. Floating point values come out as "strings" to avoid some
   #     cross-platform problem issue.  For our purposes we want all numbers 
   #     to appear as numbers.
-  if (!reftype($_[0]) && looks_like_number($_[0])) {
-    return \undef if $detection_pass;  # halt immediately
-    my $prefix = _show_as_number($_[0])
-                   ? $magic_num_prefix : $magic_numstr_prefix;
-    $_[0] = $prefix.$_[0];
+  if (!reftype($item) && looks_like_number($item)) {
+    return __COPY_NEEDED if $testonly;
+    my $prefix = _show_as_number($item) ? $magic_num_prefix 
+                                        : $magic_numstr_prefix;
+    $item = $prefix.$item;
   }
-  1
+  $item
 }
 
 sub Dump {
@@ -345,53 +354,33 @@ sub Dump {
     croak "extraneous args" if @_ != 1;
   }
 
-  my ($maxstringwidth, $stringify, $debug)
-    = @$self{qw/MaxStringwidth Stringify Debug/};
+  my ($maxstringwidth, $overloads, $debug)
+    = @$self{qw/MaxStringwidth Overloads Debug/};
 
-  # Do desired substitutions in the data (cloning first)
-  # Catch possible exceptions from tie handlers
-  if ($stringify || $maxstringwidth) {
-    eval {
-      $stringify = [ $stringify ] unless ref($stringify) eq 'ARRAY';
-      $maxstringwidth //= 0;
-      my $truncsuf = $self->{Truncsuffix};
-      # BUT! If there are *any* tied objects in the data, do not clone/modify
-      # because the handlers might indirectly look at modified data
-      # "elsewhere" in the overall structure and mis-behave.
-      my $r = $self->_Visit_Values(sub{ 
-                       my $item = shift;
-                       if (overload::Overloaded($item)) {
-                         # Overloads can hide tied variables
-                         my $r = eval{ tied @$item } ||
-                                 eval{ tied %$item } ||
-                                 eval{ tied $$item };
-                         return $r if $r;
-                       }
-                       my $t = reftype($item);
-                       my $r = 
-                       ($t ? ($t eq 'ARRAY' ? tied(@$item) :
-                              $t eq 'HASH'  ? tied(%$item) :
-                              $t eq 'REF'   ? tied($$item) :
-                              $t eq 'SCALAR'? tied($$item) : undef)
-                           : tied($item)) // 1
-                       ;
-                       $r
-                     });
-      if ($r eq "1") {
-        $r = $self->_Visit_Values(
-          sub{ __walk_worker(shift,1,$stringify,$maxstringwidth,$truncsuf) } );
-        if (ref $r) {  # something needs changing
-          $self->_Modify_Values(
-            sub{ __walk_worker(shift,0,$stringify,$maxstringwidth,$truncsuf) } );
-        }
-      }
+  # Do desired substitutions in a copy of the data.
+  #
+  # (This used to just Clone:clone the whole thing and then walk and modify 
+  # the copy; but cloned tied variables could blow up if their handlers
+  # got conused by our changes in the copy.  Now our copy never contains
+  # tied variables, although it might contain cloned objects (with any
+  # internal tied vars substituted).
+
+  { my @values = $self->Values;
+    croak "No Values set" if @values == 0;
+    croak "Only a single scalar value is allowed" if @values > 1;
+    $maxstringwidth //= 0;
+    $maxstringwidth = 0 if $maxstringwidth >= INT_MAX;
+    my $truncsuf = $self->{Truncsuffix};
+    $overloads = [ $overloads ] unless ref($overloads) eq 'ARRAY';
+    $overloads = undef unless grep{ $_ } @$overloads; # all false?
+    my $callback = sub { 
+      $self->_doedits(@_, $maxstringwidth, $truncsuf, $overloads) 
     };
-    croak "Exception while traversing data: $@ " if $@;
-  }
-
-  my @values = $self->Values;
-  if (@values != 1) {
-    croak(@values==0 ? "No Values set" : "Only a single scalar value allowed")
+    eval { 
+      $values[0] = __copysubst($values[0], $callback)
+    };
+    croak "Exception while traversing value: $@" if $@;
+    $self->Values(\@values);
   }
 
   # We always call Data::Dumper with Indent(0) and Pad("") to get a single
@@ -411,78 +400,100 @@ sub Dump {
   $_
 }
 
-# Walk an arbitrary structure calling &coderef on each item.
-# The sub should return 1 to continue, or any other defined value to
-# terminate the traversal early.
-# Members of containers are visited after processing the container item itself,
-# and containerness is checked after &$coderef returns so that &$coderef
-# may transform the item (by reference through $_[0]) e.g. to replace a
-# container with a scalar.
+# Recursively copy an arbitrary structure, calling a callback to provide
+# possibly-substitute values.  The callback will be called again on any
+# substituted values until no substitution occurs (i.e. the original value
+# is returned).
 #
-# RETURNS: The final $&coderef return val
-sub __walk($$;$);
-sub __walk($$;$) {  # (coderef, item [, seenhash])
+# A "testonly" parameter to the callback indicates that the callback
+# may return __COPY_NEEDED as soon as it determines that a substitute 
+# value will probably be provided; the callback may ignore this parameter and 
+# always just return the substitute value, if that is easier.
+#
+# Substitute values may not use tied variables or overloads because the
+# copy-and-substitute process may cause tie handlers to encounter unexpected
+# data, and misbehave.  The copy machinery re-creates all refs so as to
+# disable any overloads initially present; if the virtual content behind an
+# overload is desired, the callback must perform the overloaded operation(s) 
+# and return the virtual content as a substition value.
+
+sub _x_same_items($$) {
+  my ($a, $b) = @_;
+  return 0 if ref($a) ne ref($b); # different types or different classes
+  return 1 if !defined($a) and !defined($b);
+  return 0 if !defined($a) or !defined($b);
+  # avoid executing any overloads
+  ref($a) ? (refaddr($a)==refaddr($b)) : ($a eq $b)  
+}
+sub _same_items($$) {
+  my ($a, $b) = @_;
+  my $r = _x_same_items($a,$b);
+  #say "# _same_items ",_dbvis($a)," ",_dbvis($b)," = ", _dbvis($r);
+  $r
+}
+
+sub __copysubst($$;$$);
+sub __copysubst($$;$$) {
+  my ($item, $coderef, $testonly, $seenhash) = @_;
   no warnings 'recursion';
-  my $seen = $_[2] // {};
-  # Test for recursion both before and after calling the coderef, in case the
-  # code unconditionally clones or otherwise replaces the item with new data.
-  if (my $rt = reftype($_[1])) {
-    my $refaddr0 = refaddr($_[1]);
-    return 1 if $seen->{$refaddr0}; # increment only below
+  $seenhash //= {};
+  my $rt = reftype($item);
+  if ($rt) {
+    return $item if $seenhash->{ refaddr($item) }; # increment only below
+  }
+  if (! defined $testonly) {
+    #say "## testing ", _dbvis($item);
+    $testonly = 1;
+    my $testresult = __copysubst($item, $coderef, $testonly, $seenhash);
+    return $item
+      if _same_items($item, $testresult)
+         && ref($testresult) || u($testresult) ne __COPY_NEEDED;
+    #say "## copy needed!";
+    $testonly = 0;
+    $seenhash = {};
   }
 
-  # Now call the coderef and re-check the item
-  my $r = &{ $_[0] }($_[1]);
+  my $count;
+  for(;;) { 
+    my $nitem = $coderef->($item, $testonly);
+    last if _same_items($item, $nitem);
+    return __COPY_NEEDED
+      if $testonly && u($nitem) eq __COPY_NEEDED;
+    $item = $nitem;
+    oops "Too many repeated substitutions" if ++$count > 10;
+  } 
+  $rt = reftype($item);
+  if ($rt) {
+    $seenhash->{ refaddr($item) }++;
+    my $class = blessed($item);
 
-  my $reftype = reftype($_[1]);
-  return $r unless $reftype;  # not (or not any longer) a container
-  my $refaddr = refaddr($_[1]);
-  return $r if $seen->{$refaddr}++;
-  return $r unless $r eq "1";
-  if ($reftype eq 'ARRAY') {
-    foreach (@{$_[1]}) {
-      my $r = __walk($_[0], $_, $seen);
-      return $r unless $r eq "1";
+    if ($rt eq "REF" || $rt eq "SCALAR") {
+      my $copy = __copysubst(${ $item }, $coderef, $testonly, $seenhash);
+      return __COPY_NEEDED
+        if $testonly && u($copy) eq __COPY_NEEDED;
+      $item = \$copy;
     }
-  }
-  elsif ($reftype eq 'HASH') {
-    foreach my $key (sort keys %{$_[1]}) {
-      my $r = __walk($_[0], $_[1]->{$key}, $seen); # walk the value
-      return $r unless $r eq "1";
+    elsif ($rt eq "ARRAY") {
+      $item = [ map{ __copysubst($_, $coderef, $testonly, $seenhash) }
+                   @$item ];
+      return __COPY_NEEDED
+        if $testonly && grep {u() eq __COPY_NEEDED} @$item;
     }
+    elsif ($rt eq "HASH") {
+      $item = {
+        pairmap { ( __copysubst($a, $coderef, $testonly, $seenhash)
+                    =>
+                    __copysubst($b, $coderef, $testonly, $seenhash) ) 
+                } %$item
+      };
+      return __COPY_NEEDED
+        if $testonly && grep {u() eq __COPY_NEEDED} %$item;
+    }
+    bless $item, $class if $class; # re-create objects
   }
-  elsif ($reftype eq 'SCALAR' or $reftype eq 'REF') {
-    my $r = __walk($_[0], ${ $_[1] }, $seen);
-    return $r unless $r eq "1";
-  }
-  1
-}
-
-# __walk() is called with the specified subref on the
-# array of Values in the object.  The sub should not modify anything,
-# but may return other than "1" to terminate the traversal.
-# Returns the last value returned by the visitor sub.
-sub _Visit_Values {
-  my ($self, $coderef) = @_;
-  my @values = $self->Values;
-  __walk($coderef, \@values);
-}
-
-# Edit Values: __walk() is called with the specified subref on the
-# array of Values in the object.  The Values are cloned first to
-# avoid corrupting the user's data structure.
-# The sub should return only 1, or 0 to terminate the traversal early.
-sub _Modify_Values {
-  my ($self, $coderef) = @_;
-  my @values = $self->Values;
-  unless ($self->{VisCloned}++) {
-    require Clone;
-    @values = map{ Clone::clone($_) } @values;
-  }
-  my $r = __walk($coderef, \@values);
-  confess "bug" unless $r =~ /^[01]$/;
-  $self->Values(\@values);
-}
+  # Else not a ref, or else a ref we don't know how to handle.
+  $item
+}#__copysubst
 
 sub _show_as_number(_) { # Derived from JSON::PP version 4.02
   my $value = shift;
@@ -1163,7 +1174,8 @@ Data::Dumper::Interp - Data::Dumper for humans, with interpolation
 =head1 DESCRIPTION
 
 This is a wrapper for Data::Dumper optimized for use by humans
-instead of machines; the result may not be 'eval'able.
+instead of machines; the output defaults to higher-level 
+forms which may not be 'eval'able.
 
 The namesake feature of this module is interpolating Data::Dumper output 
 into strings, but simple functions are also provided to 
@@ -1176,8 +1188,9 @@ with pre- and postprocessing to "improve" the results:
 Output omits a trailing newline and is compact (1 line if possibe,
 otherwise folded at your terminal width);
 Unicode characters appear as themselves,
-objects like Math:BigInt are stringified, and some
-Data::Dumper bugs^H^H^H^Hquirks are circumvented.
+objects like Math:BigInt are stringified, "virtual" values behind
+overloaded array/hash-deref operators are shown, and 
+some Data::Dumper bugs^H^H^H^Hquirks are circumvented.
 See "DIFFERENCES FROM Data::Dumper".
 
 Finally, a few utilities are provided to quote strings for /bin/sh.
@@ -1296,19 +1309,20 @@ MaxStringwidth=0 (the default) means no limit.
 
 Defaults to the terminal width at the time of first use.
 
-=head2 Stringify(BOOL);
+=head2 Overloads(BOOL);
 
-=head2 Stringify("classname")
+=head2 Overloads("classname")
 
-=head2 Stringify([ list of classnames ])
+=head2 Overloads([ list of classnames ])
 
-A I<false> value disables object stringification.
+A I<false> value disables stringification or evaluation of overloaded
+deref operators.
 
-A "1" (the default) enables stringification of all objects which
-support it (i.e. they overload the "" operator).
+A "1" (the default) enables stringification or showing "virtual" values
+behind overloaded deref operators for all applicable objects 
+(i.e. those which overload the "", @{} or %{} operator).
 
-Otherwise stringification is enabled only for the specified
-class name(s).
+Otherwise this is enabled only for the specified class name(s).
 
 =head2 Sortkeys(subref)
 
@@ -1459,8 +1473,8 @@ the "_" filehandle will not change across calls.
 
 =head1 DIFFERENCES FROM Data::Dumper
 
-Visualized data structures differ from plain C<Data::Dumper> output
-as follows (by default):
+Results differ from plain C<Data::Dumper> output in the following ways
+(most substitutions can be disabled via Config options):
 
 =over 2
 
@@ -1478,7 +1492,7 @@ Printable Unicode characters appear as themselves instead of \x{ABCD}.
 Note: If your data contains 'wide characters', you must encode
 the result before displaying it as explained in C<perluniintro>,
 for example with C<< use open IO => ':locale'; >>.  
-You'll also want C<< use utf8; >> if your Perl source code
+You'll also want C<< use utf8; >> if your Perl source
 contains characters outside the ASCII range.
 
 Undecoded binary octets (e.g. data read from a 'binmode' file)
@@ -1496,6 +1510,11 @@ readable values rather than S<"bless( {...}, 'Math::...')">.
 
 Stingified objects are prefixed with "(classname)" to make clear what
 happened.
+
+=item *
+
+The "virtual" value of objects which overload a dereference operator 
+(C<@{}> or C<%{}>) is displayed instead of the object's internals.
 
 =item *
 
@@ -1522,9 +1541,7 @@ they may be important when communicating to a human.
 
 Data::Dumper
 
-=head1 AUTHOR
-
-Jim Avera  (jim.avera AT gmail dot com)
+Jim Avera  (jim.avera AT gmail)
 
 =for nobody Foldwidth1 is currently an undocumented experimental method
 =for nobody which sets a different fold width for the first line only.
