@@ -317,7 +317,7 @@ sub _doedits {
       }
       elsif (overload::Method($class,'*{}')) {
         return __COPY_NEEDED if $testonly;
-        # ??? $item = \*{ $item };
+        $item = \*{ $item };
       }
     }
   }
