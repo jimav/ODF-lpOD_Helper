@@ -52,7 +52,7 @@ sub _dbrawstr(_) { "«".(length($_[0])>$_dbmaxlen ? substr($_[0],0,$_dbmaxlen-3)
 sub _dbstr($) {
   local $_ = shift;
   s/\n/\N{U+2424}/sg; # a special NL glyph
-  s/[\x{00}-\x{20}]/ chr( ord($&)+0x2400 ) /aseg;
+  s/[\x{00}-\x{1F}]/ chr( ord($&)+0x2400 ) /aseg;
   _dbrawstr($_) . " (".length().")";
 }
 sub _dbstrposn($$) {
@@ -186,7 +186,7 @@ sub new {
 ########### Subs callable as either a Function or Method #############
 
 sub __chop_loc($) {
-  (local $_ = shift) =~ s/ at .*? line \d+[^\n]*\n?\z//s;
+  (local $_ = shift) =~ s/ at \(eval[^\)]*\) line \d+[^\n]*\n?\z//s;
   $_
 }
 sub __getobj {
@@ -286,8 +286,8 @@ sub _doedits {
       }
     }
   }
-  #if (my $class = blessed($item)) {
-  if (overload::Overloaded($item)) {
+  # Overloaded(string) returns true if it's a NAME of an overloaded package!
+  if (overload::Overloaded($item) && ref($item)) {
     my $class = blessed($item) // oops;
     if (any { ref() eq "Regexp" ? $class =~ $_
                                 : ($_ eq "1" || $_ eq $class) 
@@ -549,17 +549,6 @@ my $anyvname_re =
 
 my $anyvname_or_refexpr_re = qr/ ${anyvname_re} | ${curlies_re} /x;
 
-my %qqesc2controlpic = (
-  '\0' => "\N{SYMBOL FOR NULL}",
-  '\a' => "\N{SYMBOL FOR BELL}",
-  '\b' => "\N{SYMBOL FOR BACKSPACE}",
-  '\e' => "\N{SYMBOL FOR ESCAPE}",
-  '\f' => "\N{SYMBOL FOR FORM FEED}",
-  '\n' => "\N{SYMBOL FOR NEWLINE}",
-  '\r' => "\N{SYMBOL FOR CARRIAGE RETURN}",
-  '\t' => "\N{SYMBOL FOR HORIZONTAL TABULATION}",
-);
-
 sub __unesc_unicode() {  # edits $_
   if (/^"/) {
     # Data::Dumper outputs wide characters as escapes with Useqq(1).
@@ -575,6 +564,17 @@ sub __unesc_unicode() {  # edits $_
       }xesg;
   } 
 }
+
+my %qqesc2controlpic = (
+  '\0' => "\N{SYMBOL FOR NULL}",
+  '\a' => "\N{SYMBOL FOR BELL}",
+  '\b' => "\N{SYMBOL FOR BACKSPACE}",
+  '\e' => "\N{SYMBOL FOR ESCAPE}",
+  '\f' => "\N{SYMBOL FOR FORM FEED}",
+  '\n' => "\N{SYMBOL FOR NEWLINE}",
+  '\r' => "\N{SYMBOL FOR CARRIAGE RETURN}",
+  '\t' => "\N{SYMBOL FOR HORIZONTAL TABULATION}",
+);
 sub __subst_controlpics() {  # edits $_
   if (/^"/) {
     s{ \G (?: [^\\]++ | \\[^0abefnrt] )*+ \K ( \\[abefnrt] | \\0(?![0-7]) )
@@ -1100,7 +1100,7 @@ sub DB_Vis_Eval($$) {
 
   if ($errmsg) {
     $errmsg = Data::Dumper::Interp::__chop_loc($errmsg);
-    Carp::croak("${label_for_errmsg}: Error interpolating '$evalarg' at $fname line $lno:\n$errmsg\n");
+    Carp::croak("${label_for_errmsg}: Error interpolating '$evalarg':\n$errmsg\n");
   }
 
   wantarray ? @result : (do{die "bug" if @result>1}, $result[0])
