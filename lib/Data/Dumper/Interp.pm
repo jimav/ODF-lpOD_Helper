@@ -216,8 +216,8 @@ sub hlvisq(@) { substr &hvisq, 1, -1 }
 
 # Trampolines which replace the call frame with a call directly to the
 # interpolation code which uses $package DB to access the user's context.
-sub ivis(_) { @_=(&__getobj,          shift,'s');goto &_Interpolate }
-sub ivisq(_){ @_=(&__getobj->Useqq(0),shift,'s');goto &_Interpolate }
+sub ivis(_) { @_=(&__getobj,          shift,'i');goto &_Interpolate }
+sub ivisq(_){ @_=(&__getobj->Useqq(0),shift,'i');goto &_Interpolate }
 sub dvis(_) { @_=(&__getobj,          shift,'d');goto &_Interpolate }
 sub dvisq(_){ @_=(&__getobj->Useqq(0),shift,'d');goto &_Interpolate }
 
@@ -914,7 +914,7 @@ sub _RestorePunct() {
 }
 
 sub _Interpolate {
-  my ($self, $input, $s_or_d) = @_;
+  my ($self, $input, $i_or_d) = @_;
   return "<undef arg>" if ! defined $input;
 
   &_SaveAndResetPunct;
@@ -922,11 +922,14 @@ sub _Interpolate {
   my $debug = $self->Debug;
   my $useqq = $self->Useqq;
 
+  my $q = $useqq ? "" : "q";
+  my $funcname = $i_or_d . "vis" .$q;
+
   my @pieces;  # list of [visfuncname or "", inputstring]
   { local $_ = $input;
     if (/\b((?:ARRAY|HASH)\(0x[a-fA-F0-9]+\))/) {
       state $warned=0;
-      carp("Warning: String passed to ${s_or_d}vis may have been interpolated by Perl\n(use 'single quotes' to avoid this)\n") unless $warned++;
+      carp("Warning: String passed to $funcname may have been interpolated by Perl\n(use 'single quotes' to avoid this)\n") unless $warned++;
     }
     while (
       /\G (
@@ -973,7 +976,7 @@ sub _Interpolate {
       local $_ = $1; oops unless length() > 0;
       if (/^[\$\@\%]/) {
         my $sigl = substr($_,0,1);
-        if ($s_or_d eq 'd') {
+        if ($i_or_d eq 'd') {
           # Inject a "plain text" fragment containing the dvis "expr=" prefix,
           # omitting the '$' sigl if the expr is a plain '$name'.
           push @pieces, ["=", (/^\$(?!_)(${userident_re})\z/ ? $1 : $_)."="];
@@ -1002,6 +1005,10 @@ sub _Interpolate {
     }
     if (!defined(pos) || pos() < length($_)) {
       my $leftover = substr($_,pos()//0);
+      # Try to recognize user syntax errors
+      croak "Invalid expression syntax starting at '$leftover' in $funcname arg"
+        if $leftover =~ /^[\$\@\%][\s\%\@]/;
+      # Otherwise we may have a parser bug
       confess __PACKAGE__." Bug:LEFTOVER «$leftover»";
     }
     foreach (@pieces) {
@@ -1014,8 +1021,6 @@ sub _Interpolate {
     }
   } #local $_
 
-  my $q = $useqq ? "" : "q";
-  my $funcname = $s_or_d . "vis" .$q;
   @_ = ($self, $funcname, \@pieces);
   goto &DB::DB_Vis_Interpolate
 }
