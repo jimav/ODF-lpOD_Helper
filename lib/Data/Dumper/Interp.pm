@@ -296,7 +296,12 @@ sub _doedits {
       if (overload::Method($class,'""')) {
         return __COPY_NEEDED if $testonly;
         my $prefix = _show_as_number($item) ? $magic_num_prefix : "";
-        $item = "${prefix}($class)".$item;  # *calls stringify operator*
+        $item = $item.""; # stringify;
+        if ($item !~ /^${class}=REF/) {
+          $item = "${prefix}($class)$item"; 
+        } else {
+          # The "stringification" looks like Perl's default, so don't prefix it
+        }
       }
       # Substitute the virtual value behind an overloaded deref operator
       elsif (overload::Method($class,'@{}')) {
@@ -925,7 +930,7 @@ sub _Interpolate {
   my $q = $useqq ? "" : "q";
   my $funcname = $i_or_d . "vis" .$q;
 
-  my @pieces;  # list of [visfuncname or "", inputstring]
+  my @pieces;  # list of [visfuncname or 'p' or 'e', inputstring]
   { local $_ = $input;
     if (/\b((?:ARRAY|HASH)\(0x[a-fA-F0-9]+\))/) {
       state $warned=0;
@@ -977,9 +982,9 @@ sub _Interpolate {
       if (/^[\$\@\%]/) {
         my $sigl = substr($_,0,1);
         if ($i_or_d eq 'd') {
-          # Inject a "plain text" fragment containing the dvis "expr=" prefix,
+          # Inject a "plain text" fragment containing the "expr=" prefix,
           # omitting the '$' sigl if the expr is a plain '$name'.
-          push @pieces, ["=", (/^\$(?!_)(${userident_re})\z/ ? $1 : $_)."="];
+          push @pieces, ['p', (/^\$(?!_)(${userident_re})\z/ ? $1 : $_)."="];
         }
         if ($sigl eq '$') {
           push @pieces, ["vis", $_];
@@ -994,12 +999,13 @@ sub _Interpolate {
       } else {
         if (/^.+?(?<!\\)([\$\@\%])/) { confess __PACKAGE__." bug: Missed '$1' in «$_»" }
         # Due to the need to simplify the big regexp above, \x{abcd} is now 
-        # split into "\x" and "{abcd}".  Accumlate everything as a single 
-        # passthru ("=") and convert later to "e" if an eval if needed.
-        if (@pieces && $pieces[-1]->[0] eq "=") {
+        # split into "\x" and "{abcd}".  Combine consecutive pass-thrus
+        # into a single passthru ('p') and convert later to 'e' if 
+        # an eval if needed.
+        if (@pieces && $pieces[-1]->[0] eq 'p') {
           $pieces[-1]->[1] .= $_;
         } else {
-          push @pieces, [ "=", $_ ];
+          push @pieces, [ 'p', $_ ];
         }
       }
     }
@@ -1013,7 +1019,7 @@ sub _Interpolate {
     }
     foreach (@pieces) {
       my ($meth, $str) = @$_;
-      next unless $meth eq "=" && $str =~ /\\[abtnfrexXN0-7]/;
+      next unless $meth eq 'p' && $str =~ /\\[abtnfrexXN0-7]/;
       $str =~ s/([()\$\@\%])/\\$1/g;  # don't hide \-escapes to be interpolated!
       $str =~ s/\$\\/\$\\\\/g;
       $_->[1] = "qq(" . $str . ")";
@@ -1026,7 +1032,9 @@ sub _Interpolate {
 }
 
 sub quotekey(_) { # Quote a hash key if not a valid bareword
-  $_[0] =~ /\A${userident_re}\z/s ? $_[0] : visq("$_[0]")
+  $_[0] =~ /\A${userident_re}\z/s ? $_[0] : 
+            $_[0] =~ /"/  ? visq("$_[0]") : 
+            $_[0] =~ /\W/ ? vis( "$_[0]") : "\"$_[0]\""
 }
 
 package 
@@ -1038,10 +1046,10 @@ sub DB_Vis_Interpolate {
   my $result = "";
   foreach my $p (@$pieces) {
     my ($methname, $arg) = @$p;
-    if ($methname eq "=") {
+    if ($methname eq 'p') {
       $result .= $arg;
     }
-    elsif ($methname eq "e") {
+    elsif ($methname eq 'e') {
       $result .= DB::DB_Vis_Eval($funcname, $arg);
     } else {
       # Reduce indent before first wrap to account for stuff alrady there
