@@ -286,45 +286,48 @@ sub _doedits {
       }
     }
   }
-  # Overloaded(string) returns true if it's a NAME of an overloaded package!
-  if (overload::Overloaded($item) && ref($item)) {
-    my $class = blessed($item) // oops;
-    if (any { ref() eq "Regexp" ? $class =~ $_
-                                : ($_ eq "1" || $_ eq $class) 
-            } @$overloads) {
-      # Stringify objects which have the stringification operator
-      if (overload::Method($class,'""')) {
-        return __COPY_NEEDED if $testonly;
-        my $prefix = _show_as_number($item) ? $magic_num_prefix : "";
-        $item = $item.""; # stringify;
-        if ($item !~ /^${class}=REF/) {
-          $item = "${prefix}($class)$item"; 
-        } else {
-          # The "stringification" looks like Perl's default, so don't prefix it
-        }
-      }
-      # Substitute the virtual value behind an overloaded deref operator
-      elsif (overload::Method($class,'@{}')) {
-        return __COPY_NEEDED if $testonly;
-        $item = \@{ $item };
-      }
-      elsif (overload::Method($class,'%{}')) {
-        return __COPY_NEEDED if $testonly;
-        $item = \%{ $item };
-      }
-      elsif (overload::Method($class,'${}')) {
-        return __COPY_NEEDED if $testonly;
-        $item = \${ $item };
-      }
-      elsif (overload::Method($class,'&{}')) {
-        return __COPY_NEEDED if $testonly;
-        $item = \&{ $item };
-      }
-      elsif (overload::Method($class,'*{}')) {
-        return __COPY_NEEDED if $testonly;
-        $item = \*{ $item };
+  my $overload_depth;
+  while (overload::Overloaded($item) && ref($item)) {
+    # N.B. Overloaded(...) also returns true if it's a NAME of an overloaded package
+    my $class = blessed($item) // oops; # overloaded ref is not blessed !?
+    last unless any { ref() eq "Regexp" ? $class =~ $_
+                                        : ($_ eq "1" || $_ eq $class) 
+                    } @$overloads;
+    warn("Recursive overloads on $item ?\n"),last
+      if $overload_depth++ > 10;
+    # Stringify objects which have the stringification operator
+    if (overload::Method($class,'""')) {
+      return __COPY_NEEDED if $testonly;
+      my $prefix = _show_as_number($item) ? $magic_num_prefix : "";
+      $item = $item.""; # stringify;
+      if ($item !~ /^${class}=REF/) {
+        $item = "${prefix}($class)$item"; 
+      } else {
+        # The "stringification" looks like Perl's default, so don't prefix it
       }
     }
+    # Substitute the virtual value behind an overloaded deref operator
+    elsif (overload::Method($class,'@{}')) {
+      return __COPY_NEEDED if $testonly;
+      $item = \@{ $item };
+    }
+    elsif (overload::Method($class,'%{}')) {
+      return __COPY_NEEDED if $testonly;
+      $item = \%{ $item };
+    }
+    elsif (overload::Method($class,'${}')) {
+      return __COPY_NEEDED if $testonly;
+      $item = \${ $item };
+    }
+    elsif (overload::Method($class,'&{}')) {
+      return __COPY_NEEDED if $testonly;
+      $item = \&{ $item };
+    }
+    elsif (overload::Method($class,'*{}')) {
+      return __COPY_NEEDED if $testonly;
+      $item = \*{ $item };
+    }
+    else { last; }  # nothing we care about
   }
   # Prepend a "magic prefix" (later removed) to items which Data::Dumper is
   # likely to represent wrongly or anyway not how we want:
@@ -556,7 +559,7 @@ my $anyvname_or_refexpr_re = qr/ ${anyvname_re} | ${curlies_re} /x;
 
 sub __unesc_unicode() {  # edits $_
   if (/^"/) {
-    # Data::Dumper outputs wide characters as escapes with Useqq(1).
+    # Data::Dumper with Useqq(1) outputs wide characters as hex escapes 
   
     s{ \G (?: [^\\]++ | \\[^x] )*+ \K (?<w> \\x\{ (?<hex>[a-fA-F0-9]+) \} )
      }{
@@ -565,7 +568,7 @@ sub __unesc_unicode() {  # edits $_
         $_ = $_ > 0x10FFFF ? "\0" : chr($_); # 10FFFF is Unicode limit
         # Using 'lc' so regression tests do not depend on Data::Dumper's
         # choice of case when escaping wide characters.
-        m<\P{XPosixGraph}|[\0-\377]> ? lc($orig) : $_
+        m<\P{XPosixGraph}|[\0-\177]> ? lc($orig) : $_
       }xesg;
   } 
 }
@@ -1033,7 +1036,7 @@ sub _Interpolate {
 
 sub quotekey(_) { # Quote a hash key if not a valid bareword
   $_[0] =~ /\A${userident_re}\z/s ? $_[0] : 
-            $_[0] =~ /"/  ? visq("$_[0]") : 
+            $_[0] =~ /(?!.*')["\$\@]/  ? visq("$_[0]") : 
             $_[0] =~ /\W/ ? vis( "$_[0]") : "\"$_[0]\""
 }
 
@@ -1331,11 +1334,13 @@ Defaults to the terminal width at the time of first use.
 A I<false> value disables stringification or evaluation of overloaded
 deref operators.
 
-A "1" (the default) enables stringification or showing "virtual" values
-behind overloaded deref operators for all applicable objects 
-(i.e. those which overload the "", @{} or %{} operator).
+A "1" (the default) enables for all objects, otherwise only 
+for the specified class name(s).
 
-Otherwise this is enabled only for the specified class name(s).
+If enabled, then objects are checked for an overloaded stringification
+('""') operator, or array-, hash-, scalar-, or glob- deref operators,
+in that order.  The first overloaded operator found will be evaluated and 
+the object ref replaced by the result.  The check is then repeated.
 
 =head2 Sortkeys(subref)
 
