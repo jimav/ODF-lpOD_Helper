@@ -493,19 +493,38 @@ sub doquoting($$) {
   my ($input, $useqq) = @_;
   my $quoted = $input;
   if ($useqq) {
-    $quoted =~ s/([\$\@"\\])/\\$1/gs;
-    if ($useqq =~ /controlp/) {
+    my %subopts;
+    if ($useqq ne "1") {
+      foreach my $item (split /:/, $useqq) {
+        if ($item =~ /^([^=]+)=(.*)/) {
+          $subopts{$1} = $2;
+        } else {
+          $subopts{$item} = 1;
+        }
+      }
+    }
+    $quoted =~ s/([\$\@\\])/\\$1/gs;
+    if (delete $subopts{controlpic}) {
       $quoted =~ s/\n/\N{SYMBOL FOR NEWLINE}/gs;
       $quoted =~ s/\t/\N{SYMBOL FOR HORIZONTAL TABULATION}/gs;
     } else {
       $quoted =~ s/\n/\\n/gs;
       $quoted =~ s/\t/\\t/gs;
     }
-    if ($useqq !~ /unicode|utf/) {
+    my $unicode = delete $subopts{unicode} || delete $subopts{utf8};
+    if (!$unicode) {
       $quoted = join("", map{ ord($_) > 127 ? sprintf("\\x{%x}", ord($_)) : $_ } 
                            split //,$quoted);
     }
-    $quoted = "\"${quoted}\"";
+    if (my $arg = delete $subopts{qq}) {
+      my ($left, $right) = split //, ($arg eq 1 ? "{}" : $arg);
+      $quoted =~ s/([\Q${left}${right}\E])/\\$1/g;
+      $quoted = "qq" . $left . $quoted . $right;
+    } else {
+      $quoted =~ s/"/\\"/g;
+      $quoted = '"' . $quoted . '"';
+    }
+    confess "testbug: Useqq subopt: '",keys(%subopts),"'\n" if %subopts;
   } else {
     $quoted =~ s/([\\'])/\\$1/gs;
     $quoted = "'${quoted}'";
@@ -526,6 +545,7 @@ my $unicode_str = join "", map { chr($_) } (0x263A .. 0x2650);
 my $byte_str = join "",map { chr $_ } 10..30;
 
 sub get_closure(;$) {
+
  my ($clobber) = @_;
 
  my %closure_h = (%toplex_h);
@@ -834,7 +854,9 @@ EOF
         $actual);
     }
 
-    for my $useqq (0, 1, "utf", "unicode", "unicode|controlpic") {
+    for my $useqq (0, 1, "utf8", "unicode", "unicode:controlpic",
+                   "unicode:qq", "unicode:qq=()",
+                  ) {
       my $input = $expected.$dvis_input.'qqq@_(\(\))){\{\}\""'."'"; # gnarly
       # Now Data::Dumper (version 2.174) forces "double quoted" output
       # if there are any Unicode characters present.

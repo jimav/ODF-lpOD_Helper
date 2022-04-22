@@ -573,6 +573,16 @@ sub __unesc_unicode() {  # edits $_
   } 
 }
 
+sub __change_quotechars($) {  # edits $_
+  if (s/^"//) {
+    oops unless s/"$//;
+    s/\\"/"/g;
+    my ($l, $r) = split //, $_[0]; oops unless $r;
+    s/([\Q$l$r\E])/\\$1/g;
+    $_ = "qq".$l.$_.$r;
+  } 
+}
+
 my %qqesc2controlpic = (
   '\0' => "\N{SYMBOL FOR NULL}",
   '\a' => "\N{SYMBOL FOR BELL}",
@@ -637,7 +647,8 @@ sub _postprocess_DD_result {
     = @$self{qw/Debug _vistype Foldwidth Foldwidth1/};
   my $useqq = $self->Useqq();
   my $unesc_unicode = $useqq =~ /utf|unic/;
-  my $controlpics = $useqq =~ /pic/;
+  my $controlpics   = $useqq =~ /pic/;
+  my $qq            = $useqq =~ /qq(?:=(..))?/ ? ($1//'{}') : '';
 
   oops if @stack or $reserved;
   $reserved = 0;
@@ -749,6 +760,7 @@ sub _postprocess_DD_result {
 
     __unesc_unicode if $unesc_unicode;
     __subst_controlpics if $controlpics;
+    __change_quotechars($qq) if $qq;
 
 say "atom ",_dbrawstr($_),_fmt_flags($flags), "  stack:", _fmt_stack(), " os=",_dbstr($outstr)
   if $debug;
@@ -1189,20 +1201,21 @@ Data::Dumper::Interp - Data::Dumper for humans, with interpolation
 
 =head1 DESCRIPTION
 
-This is a wrapper for Data::Dumper optimized for use by humans
+This is a wrapper for Data::Dumper optimized for consumption by humans
 instead of machines; the output defaults to higher-level 
 forms which may not be 'eval'able.
 
-The namesake feature of this module is interpolating Data::Dumper output 
+The namesake feature is interpolating Data::Dumper output 
 into strings, but simple functions are also provided to 
 visualize a scalar, array, or hash.
 
-Casual debug messages are a primary use case.
+Diagnostic and debug messages are primary use cases.
 
 Internally, Data::Dumper is called to visualize (i.e. format) data
 with pre- and postprocessing to "improve" the results:
-Output omits a trailing newline and is compact (1 line if possibe,
-otherwise folded at your terminal width);
+
+Output is compact (1 line if possibe,
+otherwise folded at your terminal width), and OMITS a trailing newline.
 Unicode characters appear as themselves,
 objects like Math:BigInt are stringified, "virtual" values behind
 overloaded array/hash-deref operators are shown, and 
@@ -1216,7 +1229,7 @@ Finally, a few utilities are provided to quote strings for /bin/sh.
 =head2 ivis 'string to be interpolated'
 
 Returns the argument with variable references and escapes interpolated
-as in in Perl double-quotish strings, using Data::Dumper to
+as in in Perl double-quotish strings, but using Data::Dumper to
 format variable values.
 
 C<$var> is replaced by its value,
@@ -1251,13 +1264,13 @@ and returns the resulting string.
 
 C<avis> formats an array (or any list) as comma-separated values in parenthesis.
 
-C<hvis> formats a hash as key => value pairs in parenthesis.
+C<hvis> formats key => value pairs in parenthesis.
 
 =head2 alvis LIST
 
 =head2 hlvis EVENLIST
 
-These "l" variants return a bare list without the enclosing parenthesis.
+The "l" variants return a bare list without the enclosing parenthesis.
 
 =head2 ivisq 'string to be interpolated'
 
@@ -1304,8 +1317,8 @@ returns the same string as
 
 These work the same way as variables/methods in Data::Dumper.
 
-For each of the following configuration items, there is a global
-variable in package C<Data::Dumper::Interp> which provides the default value,
+For each configuration value, there is a global
+variable in package C<Data::Dumper::Interp> which provides the default,
 and a I<method> of the same name which sets or retrieves a config value
 on a specific object.
 
@@ -1359,7 +1372,7 @@ Non-ASCII charcters will be shown as hex escapes.
 
 Otherwise generate "double quoted" strings enhanced according to option
 keywords given as a :-separated list, e.g. Useqq("unicode:controlpic").
-The two avilable options are:
+The avilable options are:
 
 =over 4
 
@@ -1376,10 +1389,17 @@ Similarly for \0 \a \b \e \f \r and \t.
 
 This is sometimes useful for debugging because every character occupies 
 the same space with a fixed-width font.  
-The commonly-used "Last Resort" font draws these symbols 
-with single-pixel lines, which on modern high-res displays
-can be dim and hard to read.  If you experience this problem,
-set C<Useqq> to "unicode" to see traditional \n etc. backslash escapes.
+The commonly-used "Last Resort" font for these characters
+can be hard to read on modern high-res displays.
+You can set C<Useqq> to just "unicode" to see traditional \n etc. 
+backslash escapes while still seeing wide characters as themselves.
+
+=item "qq"
+
+=item "qq=XY"
+
+Show using Perl's qq{...} syntax, or qqX...Y if deliters are specified,
+rather than "...".
 
 =back
 
