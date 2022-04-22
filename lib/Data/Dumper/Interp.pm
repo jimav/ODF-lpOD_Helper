@@ -65,7 +65,8 @@ sub _dbstrposn($$) {
 sub oops(@) { @_ = ("\n".__PACKAGE__." oops:",@_,"\n  "); goto &Carp::confess }
 
 use Exporter 'import';
-our @EXPORT    = qw(vis  avis  alvis  ivis  dvis  hvis  hlvis
+our @EXPORT    = qw(visnew
+                    vis  avis  alvis  ivis  dvis  hvis  hlvis
                     visq avisq alvisq ivisq dvisq hvisq hlvisq
                     u quotekey qsh _forceqsh qshpath);
 
@@ -201,6 +202,8 @@ sub __getobj_h {
   (scalar(@_) % 2)==0 or croak "Uneven number args for hash key => val pairs";
   $o ->Values([{@_}])
 }
+
+sub visnew()  { __PACKAGE__->new() }  # shorthand
 
 # These can be called as *FUNCTIONS* or as *METHODS*
 sub vis(_)    { &__getobj_s ->_vistype('s' )->Dump; }
@@ -1187,7 +1190,9 @@ Data::Dumper::Interp - Data::Dumper for humans, with interpolation
   #-------- OO API --------
 
   say Data::Dumper::Interp->new()
-      ->MaxStringwidth(50)->Maxdepth($levels)->vis($datum);
+            ->MaxStringwidth(50)->Maxdepth($levels)->vis($datum);
+
+  say visnew->MaxStringwidth(50)->Maxdepth($levels)->vis($datum);
 
   #-------- UTILITY FUNCTIONS --------
   say u($might_be_undef);  # $_[0] // "undef"
@@ -1297,18 +1302,25 @@ if wide characters are present.
 
 =head2 Data::Dumper::Interp->new()
 
+=head2 visnew
+
 Creates an object initialized from the global configuration
-variables listed below.  C<new> takes no arguments.
+variables listed below
+(the function C<visnew> is simply a short-hand wrapper).
+
+No arguments are permitted.
 
 The functions described above may then be called as I<methods>
-on a C<Data::Dumper::Interp> object
-(when not called as a method they create a new object internally).
+on the object
+(when not called as a method the functions create a new object internally).
 
 For example:
 
    $msg = Data::Dumper::Interp->new()->Foldwidth(40)->avis(@ARGV);
+ and
+   $msg = visnew->Foldwidth(40)->avis(@ARGV);
 
-returns the same string as
+return the same string as
 
    local $Data::Dumper::Interp::Foldwidth = 40;
    $msg = avis(@ARGV);

@@ -45,7 +45,10 @@ is( vis { aaa => \\\12 }, do{chomp(my $str=<<'EOF'); $str} );
 EOF
 
 for my $fw (15..17) {
-  is( Data::Dumper::Interp->new()->Foldwidth($fw)->vis({C => {a => 1}}), '{C => {a => 1}}', "fw=$fw" );
+  my $item = {C => {a => 1}};
+  my $expected = '{C => {a => 1}}';
+  is( Data::Dumper::Interp->new()->Foldwidth($fw)->vis($item), $expected, "fw=$fw" );
+  is(                    visnew()->Foldwidth($fw)->vis($item), $expected, "fw=$fw" );
 }
 for my $fw (12..14) {
   is( Data::Dumper::Interp->new()->Foldwidth($fw)->vis({C => {a => 1}}), do{chomp($_=<<'EOF'); $_}, "fw=$fw" );
