@@ -341,9 +341,9 @@ sub _doedits {
   #     most likely to be what the programmer used to create the datum.
   #
   #  2. Floating point values come out as "strings" to avoid some
-  #     cross-platform problem issue.  For our purposes we want all numbers 
-  #     to appear as numbers.
-  if (!reftype($item) && looks_like_number($item)) {
+  #     cross-platform issue.  For our purposes we want all numbers 
+  #     to appear as numbers.  
+  if (!reftype($item) && $item !~ /^0\d/ && looks_like_number($item) ) {
     return __COPY_NEEDED if $testonly;
     my $prefix = _show_as_number($item) ? $magic_num_prefix 
                                         : $magic_numstr_prefix;
