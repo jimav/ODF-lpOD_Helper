@@ -68,7 +68,7 @@ use Exporter 'import';
 our @EXPORT    = qw(visnew
                     vis  avis  alvis  ivis  dvis  hvis  hlvis
                     visq avisq alvisq ivisq dvisq hvisq hlvisq
-                    u quotekey qsh _forceqsh qshpath);
+                    u quotekey qsh __forceqsh qshpath);
 
 our @EXPORT_OK = qw($Debug $MaxStringwidth $Truncsuffix $Overloads $Foldwidth
                     $Useqq $Quotekeys $Sortkeys $Sparseseen
@@ -78,12 +78,20 @@ our @ISA       = ('Data::Dumper'); # see comments at new()
 
 ############### Utility Functions #################
 
+sub __stringify($) {
+  if (defined(my $class = blessed($_[0]))) {
+    return "$_[0]" if overload::Method($class,'""');
+  }
+  $_[0]  # includes undef, ordinary ref, or non-stringifyable object
+}
+
 sub u(_) { $_[0] // "undef" }
 sub quotekey(_); # forward.  Implemented after regex declarations.
-sub _forceqsh(_) {
+
+sub __forceqsh(_) {
   # Unlike Perl, /bin/sh does not recognize any backslash escapes in '...'
   local $_ = shift;
-  return "undef" if !defined;
+  return "undef" if !defined;  # undef without quotes
   $_ = vis($_) if ref;
   # Prefer "double quoted" if no shell escapes would be needed
   if (/["\$`!\\\x{00}-\x{1F}\x{7F}]/) {
@@ -94,12 +102,13 @@ sub _forceqsh(_) {
   }
 }
 sub qsh(_) {
-  local $_ = shift;
-  defined && !/[^-=\w_\/:\.,]/ && $_ ne "" && !ref ? $_ : _forceqsh
+  local $_ = __stringify(shift());
+  defined && !ref && !/[^-=\w_\/:\.,]/ 
+    && $_ ne "" && $_ ne "undef" ? $_ : __forceqsh
 }
 sub qshpath(_) {  # like qsh but does not quote initial ~ or ~username
-  local $_ = shift;
-  return qsh if !defined or ref;
+  local $_ = __stringify(shift());
+  return qsh($_) if !defined or ref;
   my ($tilde_prefix, $rest) = /^( (?:\~[^\/\\]*[\/\\]?+)? )(.*)/xs or die;
   $rest eq "" ? $tilde_prefix : $tilde_prefix.qsh($rest)
 }
@@ -1033,7 +1042,7 @@ sub _Interpolate {
       croak "Invalid expression syntax starting at '$leftover' in $funcname arg"
         if $leftover =~ /^[\$\@\%][\s\%\@]/;
       # Otherwise we may have a parser bug
-      confess __PACKAGE__." Bug:LEFTOVER «$leftover»";
+      confess "Invalid expression (or ".__PACKAGE__." bug):\n«$leftover»";
     }
     foreach (@pieces) {
       my ($meth, $str) = @$_;
@@ -1052,7 +1061,8 @@ sub _Interpolate {
 sub quotekey(_) { # Quote a hash key if not a valid bareword
   $_[0] =~ /\A${userident_re}\z/s ? $_[0] : 
             $_[0] =~ /(?!.*')["\$\@]/  ? visq("$_[0]") : 
-            $_[0] =~ /\W/ ? vis( "$_[0]") : "\"$_[0]\""
+            $_[0] =~ /\W/ && !looks_like_number($_[0]) ? vis("$_[0]") : 
+            "\"$_[0]\""
 }
 
 package 
@@ -1458,15 +1468,14 @@ by /bin/sh, which has different quoting rules than Perl.
 
 If the string contains only "shell-safe" ASCII characters
 it is returned as-is, without quotes.
-Otherwise "double quotes" are used when no escapes would be needed,
-otherwise 'single quotes'.
 
 C<qshpath> is like C<qsh> except that an initial ~ or ~username is left
 unquoted.  Useful for paths given to bash or csh.
 
-If the argument is a ref it is first formatted as with C<vis()> and the
-resulting string quoted.
-Undefined values appear as C<undef> without quotes.
+If the argument is a ref but is not an object which stringifies,
+then vis() is called and the resulting string quoted.
+An undefined value is shown as C<undef> without quotes; 
+as a special case to avoid ambiguity the string 'undef' is always "quoted".
 
 =head1 LIMITATIONS
 

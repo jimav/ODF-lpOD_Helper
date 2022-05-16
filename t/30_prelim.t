@@ -106,14 +106,14 @@ EOF
 
 is( vis [12345678,4], '[12345678,4]' );
 
-is( vis [123456789,4], do{chomp(my $_=<<'EOF'); $_} );
+is( vis [123456789,4], do{chomp(local $_=<<'EOF'); $_} );
 [ 123456789,
   4
 ]
 EOF
 
 is( vis {bxxxxxxxxxxxxxxxxxxxxxxxxxbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb=>42},
-    do{chomp(my $_=<<'EOF'); $_} );
+    do{chomp(local $_=<<'EOF'); $_} );
 {
   bxxxxxxxxxxxxxxxxxxxxxxxxxbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
     => 42
@@ -121,7 +121,7 @@ is( vis {bxxxxxxxxxxxxxxxxxxxxxxxxxbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb=>42},
 EOF
 
 is( vis [[[[[[[[[[[[[42]]]]]]]]]]]]],
-    do{chomp(my $_=<<'EOF'); $_} );
+    do{chomp(local $_=<<'EOF'); $_} );
 [
   [
     [
@@ -153,7 +153,7 @@ EOF
 
 # Once hit an assertion
 is( vis [ \undef, \\undef ],
-    do{chomp(my $_=<<'EOF'); $_} );
+    do{chomp(local $_=<<'EOF'); $_} );
 [ \undef,
   \$VAR1->[0]
 ]
@@ -169,7 +169,7 @@ is( Data::Dumper::Interp->new()->Foldwidth(0)
 #say vis bless( do{ \(my $x = []) } );
 
 is( Data::Dumper::Interp->new()->Foldwidth(4)->vis( [ [ ], 12345 ] ),
-    do{chomp(my $_=<<'EOF'); $_} );
+    do{chomp(local $_=<<'EOF'); $_} );
 [
   [
   ],

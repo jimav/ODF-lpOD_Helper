@@ -299,10 +299,8 @@ $_ = "GroupA.GroupB";
 
 { my $code = 'qsh("a b")';           check $code, '"a b"',  eval $code; }
 { my $code = 'qsh(undef)';           check $code, "undef",  eval $code; }
-#qsh no longer accepts multiple args
-#{ my $code = 'qsh("a b","c d","e",undef,"g",q{\'ab\'"cd"})';
-#   check $code, ['"a b"','"c d"',"e","undef","g","''\\''ab'\\''\"cd\"'"], eval $code; }
-#{ my $code = 'qshpath("a b")';       check $code, '"a b"',  eval $code; }
+{ my $code = 'qsh("undef")';         check $code, "\"undef\"",  eval $code; }
+{ my $code = 'qshpath("a b")';       check $code, '"a b"',  eval $code; }
 { my $code = 'qshpath("~user")';     check $code, "~user",  eval $code; }
 { my $code = 'qshpath("~user/a b")'; check $code, '~user/"a b"', eval $code; }
 { my $code = 'qshpath("~user/ab")';  check $code, "~user/ab", eval $code; }
@@ -313,7 +311,6 @@ $_ = "GroupA.GroupB";
 { my $code = 'qshpath($_)';          check $code, "${_}",   eval $code; }
 { my $code = 'qshpath()';            check $code, "${_}",   eval $code; }
 { my $code = 'qshpath';              check $code, "${_}",   eval $code; }
-{ my $code = '_forceqsh($_)';         check $code, "\"${_}\"", eval $code; }
 
 # Basic checks
 { my $code = 'vis($_)'; check $code, "\"${_}\"", eval $code; }
@@ -352,16 +349,16 @@ $_ = "GroupA.GroupB";
 
 # Data::Dumper::Interp 2.12 : hex escapes including illegal code points:
 #   10FFFF is the highest legal Unicode code point which will ever be assigned.
-{ my $code = q(my $v = "beyondmax:\x{110000}\x{FFFFFF}\x{FFFFFFFF}"; dvis('$v')); 
-  check $code, 'v="beyondmax:\x{110000}\x{ffffff}\x{ffffffff}"', eval $code; }
+# Perl (v5.34 at least) mandates code points be <= max signed integer,
+# which on 32 bit systems is 7FFFFFFF.
+{ my $code = q(my $v = "beyondmax:\x{110000}\x{FFFFFF}\x{7FFFFFFF}"; dvis('$v')); 
+  check $code, 'v="beyondmax:\x{110000}\x{ffffff}\x{7fffffff}"', eval $code; }
 
 # Check that $1 etc. can be passed (this was once a bug...)
 # The duplicated calls are to check that $1 is preserved
 { my $code = '" a~b" =~ / (.*)()/ && qsh($1); die unless $1 eq "a~b";qsh($1)'; 
   check $code, '"a~b"', eval $code; }
 { my $code = '" a~b" =~ / (.*)()/ && qshpath($1); die unless $1 eq "a~b";qshpath($1)'; 
-  check $code, '"a~b"', eval $code; }
-{ my $code = '" a~b" =~ / (.*)()/ && _forceqsh($1); die unless $1 eq "a~b";_forceqsh($1)'; 
   check $code, '"a~b"', eval $code; }
 { my $code = '" a~b" =~ / (.*)()/ && vis($1); die unless $1 eq "a~b";vis($1)'; 
   check $code, '"a~b"', eval $code; }
@@ -855,7 +852,7 @@ EOF
     }
 
     for my $useqq (0, 1, "utf8", "unicode", "unicode:controlpic",
-                   "unicode:qq", "unicode:qq=()",
+                   "unicode:qq", "unicode:qq=()", "qq",
                   ) {
       my $input = $expected.$dvis_input.'qqq@_(\(\))){\{\}\""'."'"; # gnarly
       # Now Data::Dumper (version 2.174) forces "double quoted" output
