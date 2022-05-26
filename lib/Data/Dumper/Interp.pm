@@ -399,7 +399,7 @@ sub Dump {
     eval { 
       $values[0] = __copysubst($values[0], $callback)
     };
-    croak "Exception while traversing value: $@" if $@;
+    croak "Exception while traversing value:\n----\n$@----\n" if $@;
     $self->Values(\@values);
   }
 
@@ -515,20 +515,32 @@ sub __copysubst($$;$$) {
   $item
 }#__copysubst
 
-sub _show_as_number(_) { # Derived from JSON::PP version 4.02
+sub _show_as_number(_) { 
+  # Derived from JSON::PP version 4.02, except for the Overloaded stuff
   my $value = shift;
   return unless defined $value;
-  no warnings 'numeric';
   # if the utf8 flag is on, it almost certainly started as a string
   return if utf8::is_utf8($value);
+
+  no warnings 'numeric';
   # detect numbers
   # string & "" -> ""
   # number & "" -> 0 (with warning)
   # nan and inf can detect as numbers, so check with * 0
-  return unless length((my $dummy = "") & $value);
-  return unless 0 + $value eq $value;
-  return 1 if $value * 0 == 0;
-  return -1; # inf/nan
+  
+  # An exception will occur if $value is an object which does not overload 
+  # these operators.  Catch and ignore.
+  my $result = eval {
+    return unless length((my $dummy = "") & $value);
+    return unless 0 + $value eq $value;
+    return 1 if $value * 0 == 0;
+    return -1; # inf/nan
+  };
+  if ($@) {
+    oops unless $@ =~ /overload/i;
+    return;
+  }
+  $result
 }
 
 # Split keys into "components" (e.g. 2_16.A has 3 components) and sort
