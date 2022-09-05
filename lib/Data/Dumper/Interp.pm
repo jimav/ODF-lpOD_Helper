@@ -1412,12 +1412,13 @@ The avilable options are:
 
 =item "unicode" (or "utf8" for historical reasons)
 
-Show all printable
-characters as themselves rather than hex escapes.
+All printable
+characters are shown as themselves rather than hex escapes, and
+'\n', '\t', etc. are shown for common ASCII control codes.
 
 =item "controlpic"
 
-Show non-printing ASCII characters using single "control picture" characters,
+Show ASCII control characters using single "control picture" characters,
 for example '␤' is shown for newline instead of '\n'.  
 Similarly for \0 \a \b \e \f \r and \t.
 
