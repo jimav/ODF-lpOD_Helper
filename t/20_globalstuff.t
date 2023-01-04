@@ -7,24 +7,21 @@ use Carp;
 
 use Test::More;
 
-my $pkgname;
-BEGIN {
-  use Data::Dumper::Interp;
-  $pkgname = "Data::Dumper::Interp";
-  ###FIXME: Why must this be in BEGIN?
-  sub getPkgVar($) {
-    my ($varname) = @_;
-    no strict 'refs'; my $r = eval "\$${pkgname}::$varname"; die $@ if $@;
-    $r
-  }
-  sub setPkgVar($$) {
-    my ($varname, $value) = @_;
-    no strict 'refs'; eval "\$${pkgname}::$varname = \$value"; die $@ if $@;
-  }
-  sub callPkgNew(@) {
-    no strict 'refs'; my $r; eval "\$r = ${pkgname}->new(\@_)"; die $@ if $@;
-    $r
-  }
+use Data::Dumper::Interp;
+my $pkgname = "Data::Dumper::Interp";
+
+sub getPkgVar($) {
+  my ($varname) = @_;
+  no strict 'refs'; my $r = eval "\$${pkgname}::$varname"; die $@ if $@;
+  $r
+}
+sub setPkgVar($$) {
+  my ($varname, $value) = @_;
+  no strict 'refs'; eval "\$${pkgname}::$varname = \$value"; die $@ if $@;
+}
+sub callPkgNew(@) {
+  no strict 'refs'; my $r; eval "\$r = ${pkgname}->new(\@_)"; die $@ if $@;
+  $r
 }
 
 # ---------- Check stuff other than formatting or interpolation --------
