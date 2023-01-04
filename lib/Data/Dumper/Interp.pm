@@ -276,6 +276,7 @@ sub __set_default_Foldwidth() {
       say "Foldwidth=$Foldwidth from hard-coded backup default" if $Debug;
     }
   }
+  undef $Foldwidth1;
 }
 
 my $unique = refaddr \&new;
@@ -381,7 +382,7 @@ sub Dump {
   #
   # (This used to just Clone:clone the whole thing and then walk and modify 
   # the copy; but cloned tied variables could blow up if their handlers
-  # got conused by our changes in the copy.  Now our copy never contains
+  # got confused by our changes in the copy.  Now our copy never contains
   # tied variables, although it might contain cloned objects (with any
   # internal tied vars substituted).
 
@@ -1328,7 +1329,7 @@ if wide characters are present.
 
 Creates an object initialized from the global configuration
 variables listed below
-(the function C<visnew> is simply a short-hand wrapper).
+(the function C<visnew> is simply a shorthand wrapper function).
 
 No arguments are permitted.
 
