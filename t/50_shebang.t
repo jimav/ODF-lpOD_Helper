@@ -52,11 +52,15 @@ sub fmt_codestring($;$) { # returns list of lines
 
 sub timed_run(&$@) {
   my ($code, $maxcpusecs, @codeargs) = @_;
-  use Time::HiRes qw(clock);
-  my $startclock = clock();
+
+  eval { require Time::HiRes };
+  my $getcpu = defined(eval{ &Time::HiRes::clock() }) 
+    ? \&Time::HiRes::clock : sub{ my @t = times; $t[0]+$t[1] };
+  
+  my $startclock = &$getcpu();
   my (@result, $result);
   if (wantarray) {@result = &$code(@codeargs)} else {$result = &$code(@codeargs)};
-  my $cpusecs = clock() - $startclock;
+  my $cpusecs = &$getcpu() - $startclock;
   confess "TOOK TOO LONG ($cpusecs CPU seconds vs. limit of $maxcpusecs)\n"
     if $cpusecs > $maxcpusecs;
   if (wantarray) {return @result} else {return $result};
