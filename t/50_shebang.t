@@ -1,7 +1,9 @@
 #!/usr/bin/perl
 use strict; use warnings  FATAL => 'all'; use feature qw(state say); use utf8;
+use feature 'lexical_subs'; no warnings "experimental::lexical_subs";
 srand(42);  # so reproducible
-use open IO => ':locale';
+#use open IO => ':locale';
+use open ':std', ':encoding(UTF-8)';
 select STDERR; $|=1; select STDOUT; $|=1;
 use Scalar::Util qw(blessed reftype looks_like_number);
 use Carp;

@@ -14,8 +14,10 @@
 
 ##FIXME: Blessed structures are not formatted because we treat bless(...) as an atom
 
-use strict; use warnings FATAL => 'all'; use utf8; use 5.020;
-use feature qw(say state);
+use strict; use warnings FATAL => 'all'; use utf8; 
+use 5.020; 
+use feature qw(say state lexical_subs);
+use feature 'lexical_subs'; no warnings "experimental::lexical_subs";
 package  Data::Dumper::Interp;
 
 
