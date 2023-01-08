@@ -417,12 +417,6 @@ my $ratstr  = '1/9';
   }
 }
 {
-  use bigrat;
-  my $rat = eval $ratstr // die;
-  die unless blessed($rat) =~ /^Math::BigRat/;
-  checklit(sub{eval $_[0]}, $rat, qr/(?:\(Math::BigRat[^\)]*\))?${ratstr}/);
-}
-{
   # no 'bignum' etc. in effect, just explicit class names
   use Math::BigFloat;
   my $bigf = Math::BigFloat->new($bigfstr);
@@ -442,6 +436,24 @@ my $ratstr  = '1/9';
     # But not other classes
     my $s = vis($rat); die "bug($s)" unless $s =~ /^bless.*BigRat/s;
   }
+}
+
+{
+  # There is a new (with bigrat 0.51) bug where "use bigrat" immediately and
+  # permanently causes math operations on Math::BitFloat to produce BigRats in all 
+  # scopes, not just in the scope of the 'use bigrat'.   This breaks Math::BigFloat
+  # tests which execute after the bigrat package is loaded.
+  #
+  # So we have to do the bigrat test in an eval to defer loading it until after
+  # all other bignum tests have run.
+  # Arrgh!
+  eval <<'EOF';
+    use bigrat;
+    my $rat = eval $ratstr // die;
+    die unless blessed($rat) =~ /^Math::BigRat/;
+    checklit(sub{eval $_[0]}, $rat, qr/(?:\(Math::BigRat[^\)]*\))?${ratstr}/);
+EOF
+  die "urp\n$@" if $@
 }
 
 # Check string truncation, and that the original data is not modified in-place
