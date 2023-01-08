@@ -288,7 +288,7 @@ my $COPY_NEEDED = "_CN_$unique";
 sub __COPY_NEEDED() { $COPY_NEEDED }
 
 sub _doedits {
-  my $self = shift;
+  my $self = shift; oops unless @_ == 5;
   my ($item, $testonly, $maxstringwidth, $truncsuf, $overloads) = @_;
   return undef
     unless defined($item);
@@ -435,7 +435,7 @@ sub Dump {
 #
 # Substitute values may not use tied variables or overloads because the
 # copy-and-substitute process may cause tie handlers to encounter unexpected
-# data, and misbehave.  The copy machinery re-creates all refs so as to
+# data and misbehave.  The copy machinery re-creates all refs so as to
 # disable any overloads initially present; if the virtual content behind an
 # overload is desired, the callback must perform the overloaded operation(s) 
 # and return the virtual content as a substition value.
@@ -540,7 +540,7 @@ sub _show_as_number(_) {
     return -1; # inf/nan
   };
   if ($@) {
-    oops unless $@ =~ /overload/i;
+    oops "UNEXPECTED EXCEPTION: $@ " unless $@ =~ /overload/i;
     return;
   }
   $result
