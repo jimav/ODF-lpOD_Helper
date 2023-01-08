@@ -502,7 +502,7 @@ timed_run {
   check 'dvis @backtrack_bugtest_data',
         '@backtrack_bugtest_data=(42,{A => 0,BBBBBBBBBBBBB => "foo"})',
         dvis('@backtrack_bugtest_data');
-} 0.01;
+} 0.05; # was 0.01 but that failed on slow arm machines
 
 sub doquoting($$) {
   my ($input, $useqq) = @_;
