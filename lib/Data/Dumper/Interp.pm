@@ -1,4 +1,4 @@
-# Copyright © Jim Avera 2012-2022.  This software may be distributed,
+# Copyright © Jim Avera 2012-2023.  This software may be distributed,
 # at your option, under the GNU General Public License version 1 or 
 # any later version, or the Perl "Artistic License".
 #
@@ -566,9 +566,19 @@ sub _show_as_number(_) {
     my $dummy = ($value & "");
   };
   if ($@) {
-    die "bug($@) ",_dbvis($value) unless $@ =~ /"" isn't numeric/;
-    #say "DD (",_dbvis($value),"): Got $@ ...so must be numeric";
-    return 1;  # value must be numeric
+    if ($@ =~ /"" isn't numeric/) {
+      return 1; # Ergo $value must be numeric
+    }
+    if ($@ =~ /\& not supported/) {
+      # If it is an object then it probably (but not necessarily)
+      # is numeric but just doesn't support bitwise operators,
+      # for example BigRat.
+      return 1 if defined blessed($value);
+    } 
+    warn "### ".__PACKAGE__." : Unhandled warn/exception from unary &:\n $@"
+      if $Data::Dumper::Interp::Debug;
+    # Unknown problem, treat as a string
+    return 0;
   } 
   elsif (ref($and_result) && $and_result =~ /NaN|Inf/) {
     # unary & returned a an object representing Nan or Inf 
