@@ -29,7 +29,7 @@ sub fmt($) {
   return "undef" unless defined($value);
   my $pfx = blessed($value) ? "(".blessed($value).")" : "";
   if (defined($value) && $value eq "") {
-    return $pfx . "«${value}»";
+    return $pfx . "\"${value}\"";
   } else {
     return $pfx . u($value)
   }
@@ -37,12 +37,28 @@ sub fmt($) {
 
 my $n_count = 0;
 my $s_count = 0;
-sub check_numeric($$) {
+sub check_numeric($$) { # calls ok(...)
   my ($value, $expected) = @_;
   my $san = Data::Dumper::Interp::_show_as_number($value);
-  my $desc = ($expected ? "numeric ".fmt($value) : "non-number ".Data::Dumper::Interp::_dbvis($value));
-  ok( (!!$san == !!$expected), $desc );
+  my $desc = ($expected ? "":"non-")."numeric ".fmt($value);
+  my $ok = (!!$san == !!$expected);
+  if (!$ok) {
+    my @msgs = ("Failing test, got ".u($san)." expecting ".u($expected)."\n",
+                "Dump of value:".Data::Dumper::Interp::_dbvis($value)."\n",
+                "Repeating with Debug enabled...\n");
+    my $san2 = do{ 
+      local $SIG{__WARN__} = sub{ push @msgs, $_[0]; };
+      local $Data::Dumper::Interp::Debug = 1;
+      Data::Dumper::Interp::_show_as_number($value);
+    };
+    push @msgs, "Urp! Different result with Debug==1:". u($san2) 
+      if u($san2) ne u($san);
+    diag @msgs;
+  }
+  @_ = ($ok, $desc);
+  goto &Test::More::ok;  # so caller's line number is shown on failure
 }
+
 
 diag "=== prelim checks ===";
 

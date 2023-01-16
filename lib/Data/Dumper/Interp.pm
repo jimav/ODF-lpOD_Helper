@@ -540,12 +540,12 @@ sub _show_as_number(_) {
   # if the utf8 flag is on, it almost certainly started as a string
   return 0 if !ref($value) && utf8::is_utf8($value);
 
-  # Recently there is a bug where looks_like_number provokes a warning from BigRat.pm
-  # if it is called under 'use bigrat;'
-  # https://github.com/Perl/perl5/issues/20685
+  # Recently there was a Perl bug where looks_like_number() provoked a 
+  # warning from BigRat.pm if it is called under 'use bigrat;'
+  #   https://github.com/Perl/perl5/issues/20685
   #return 0 unless looks_like_number($value);
 
-  # JSON::PP uses these tricks.  We used to do that but no longer.
+  # JSON::PP uses these tricks.  We used to do similarly but no longer.
   # string & "" -> ""  # bitstring AND, truncating to shortest operand
   # number & "" -> 0 (with warning)
   # number * 0 -> 0 unless number is nan or inf
@@ -555,12 +555,10 @@ sub _show_as_number(_) {
     use warnings "FATAL" => "all"; # Convert warnings into exceptions
     # 'bitwise' is the default only in newer perls. So disable.
     BEGIN {
-      if ($] >= 5.022) { # no feature 'bitwise' won't compile on Perl 5.20
-        require feature;
+      eval { # no feature 'bitwise' won't compile on Perl 5.20
         feature->unimport( 'bitwise' ); 
-        require warnings;
         warnings->unimport("experimental::bitwise");
-      }
+      };
     }
     no warnings "once";
     my $dummy = ($value & "");
@@ -586,6 +584,8 @@ sub _show_as_number(_) {
     return 1;
   }
   else {
+    warn "### ".__PACKAGE__." : (value & \"\") succeeded so must be stringy\n"
+      if $Data::Dumper::Interp::Debug;
     return 0;  # (value & "") succeeded so value must be stringy
   }
 }
