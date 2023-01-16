@@ -16,9 +16,17 @@ use Data::Dumper::Interp;
 use Scalar::Util qw(blessed);
 use Carp;
 
-require Math::BigInt;
-require Math::BigFloat;
-require Math::BigRat;
+# Various bugs in Math::BigRat et al break tests on some platforms.
+# In an attempt to avoid these troubles, require known-good versions
+use Math::BigInt 1.999837 ();
+use Math::BigFloat 1.999837 ();
+use Math::BigRat 0.2624 ();
+require Data::Dumper;
+for my $modname (qw/Data::Dumper Math::BigInt Math::BigFloat Math::BigRat/) {
+  (my $modpath = "${modname}.pm") =~ s/::/\//g;
+  no strict 'refs';
+  diag "Loaded ", $INC{$modpath}, " VERSION=",u(${"${modname}::VERSION"}), "\n";
+}
 
 my $inf = 9**9**9;
 my $nan = -sin($inf);
