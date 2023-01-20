@@ -759,7 +759,7 @@ EOF
 
         ( $] >= 5.022001 && $] <= 5.022001
             ?  (do{ state $warned = 0;
-                    warn "\n\n** obj->method() tests disabled ** due to Perl v5.22.1 segfault!\n\n"
+                    diag "\n\n** obj->method() tests disabled ** due to Perl v5.22.1 segfault!\n\n"
                      unless $warned++; ()
                   },())
             : (
