@@ -30,7 +30,13 @@ sub DB_Vis_Evalwrapper { # Must appear before any variables are declared
 package Data::Dumper::Interp;
 # POD documentation follows __END__
 
-use Data::Dumper v2.174 ();
+# Old versions of Data::Dumper did not honor useqq when showing globs
+# so filehandles came out as \*{'::fh'} instead of \*{"::\$fh"}
+# I'm not sure whether we actually care here but the tests do care
+#Now I think I've configured the testers to skip based on VERSION
+#use Data::Dumper v2.174 ();
+use Data::Dumper ();
+
 use Carp;
 use POSIX qw(INT_MAX);
 use Encode ();
