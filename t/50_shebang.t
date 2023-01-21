@@ -2,6 +2,7 @@
 use strict; use warnings  FATAL => 'all'; use feature qw(state say); 
 srand(42);  # so reproducible
 use feature 'lexical_subs'; no warnings "experimental::lexical_subs";
+use version 0.77;
 #use open IO => ':locale';
 use open ':std', ':encoding(UTF-8)';
 use utf8;
@@ -349,7 +350,8 @@ $_ = "GroupA.GroupB";
 { my $code = q(my $v = \"abc"; dvisq('$v')); check $code, "v=\\'abc'", eval $code; }
 { my $code = q(my $v = \*STDOUT; dvisq('$v')); check $code, "v=\\*::STDOUT", eval $code; }
 SKIP: {
-  skip "because Data::Dumper too old", 1 if $Data::Dumper::VERSION <= 2.179;
+  skip "because Data::Dumper too old", 1 
+    if version->parse($Data::Dumper::VERSION) <= version->parse(2.179);
   { my $code = q(open my $fh, "</dev/null" or die; dvis('$fh')); 
     check $code, "fh=\\*{\"::\\\$fh\"}", eval $code; }
 }
