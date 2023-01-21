@@ -250,9 +250,11 @@ sub dvisq(_){ @_=(&__getobj->Useqq(0),shift,'d');goto &_Interpolate }
 
 BEGIN {
   if (! Data::Dumper->can("Maxrecurse")) { 
-    # Supply mehtod missing in older Data::Dumper 
-    eval q(sub Maxrecurse($;$) { $_[0] }); die $@ if $@;
-warn "### Emulating Maxrecurse\n";
+    eval q(sub Maxrecurse { # Supply if missing in older Data::Dumper 
+             my($s, $v) = @_;
+             @_ == 2 ? (($s->{Maxrecurse} = $v), return $s) : $s->{Maxrecurse}//0;
+           });
+    die $@ if $@;
   }
 }
 sub _config_defaults {
