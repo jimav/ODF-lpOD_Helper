@@ -248,6 +248,13 @@ sub dvisq(_){ @_=(&__getobj->Useqq(0),shift,'d');goto &_Interpolate }
 
 ############# only internals follow ############
 
+BEGIN {
+  if (! Data::Dumper->can("Maxrecurse")) { 
+    # Supply mehtod missing in older Data::Dumper 
+    eval q(sub Maxrecurse($;$) { $_[0] }); die $@ if $@;
+warn "### Emulating Maxrecurse\n";
+  }
+}
 sub _config_defaults {
   my $self = shift;
 
