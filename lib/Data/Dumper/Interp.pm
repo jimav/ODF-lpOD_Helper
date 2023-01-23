@@ -612,7 +612,8 @@ sub _show_as_number(_) {
   # Sigh.  With Perl 5.32 (at least) $value & "..." stringifies $value
   # or so it seems.
   if (blessed($value)) {
-    if (blessed($value + 42)) {
+    # +42 might throw if object is not numberish e.g. a DateTime
+    if (blessed(eval{ $value + 42 })) {
       warn "    Object and value+42 is still an object, so probably numberish\n"
         if $Data::Dumper::Interp::Debug;
       return 1
