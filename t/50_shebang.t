@@ -762,7 +762,7 @@ EOF
           (['$','r'],['',''])
         ), #map [$dollar,$r]
 
-        ( $] >= 5.022001 && $] <= 5.022001
+        ( $] >= 5.022000 && $] <= 5.022001
             ?  (do{ state $warned = 0;
                     diag "\n\n** obj->method() tests disabled ** due to Perl v5.22.1 segfault!\n\n"
                      unless $warned++; ()

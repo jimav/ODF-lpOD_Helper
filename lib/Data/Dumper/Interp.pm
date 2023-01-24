@@ -15,7 +15,8 @@
 ##FIXME: Blessed structures are not formatted because we treat bless(...) as an atom
 
 use strict; use warnings FATAL => 'all'; use utf8; 
-use 5.020; 
+use 5.010;  # say, state
+use 5.018;  # lexical_subs
 use feature qw(say state lexical_subs);
 use feature 'lexical_subs'; no warnings "experimental::lexical_subs";
 package  Data::Dumper::Interp;
@@ -671,15 +672,16 @@ sub __unesc_unicode() {  # edits $_
   if (/^"/) {
     # Data::Dumper with Useqq(1) outputs wide characters as hex escapes 
   
-    s{ \G (?: [^\\]++ | \\[^x] )*+ \K (?<w> \\x\{ (?<hex>[a-fA-F0-9]+) \} )
-     }{
-        my $orig = $+{w};
-        local $_ = hex( length($+{hex}) > 6 ? '0' : $+{hex} );
-        $_ = $_ > 0x10FFFF ? "\0" : chr($_); # 10FFFF is Unicode limit
-        # Using 'lc' so regression tests do not depend on Data::Dumper's
-        # choice of case when escaping wide characters.
-        m<\P{XPosixGraph}|[\0-\177]> ? lc($orig) : $_
-      }xesg;
+    s/
+       \G (?: [^\\]++ | \\[^x] )*+ \K (?<w> \\x\x{7B} (?<hex>[a-fA-F0-9]+) \x{7D} )
+     / 
+       my $orig = $+{w};
+       local $_ = hex( length($+{hex}) > 6 ? '0' : $+{hex} );
+       $_ = $_ > 0x10FFFF ? "\0" : chr($_); # 10FFFF is Unicode limit
+       # Using 'lc' so regression tests do not depend on Data::Dumper's
+       # choice of case when escaping wide characters.
+       m<\P{XPosixGraph}|[\0-\177]> ? lc($orig) : $_
+     /xesg;
   } 
 }
 
