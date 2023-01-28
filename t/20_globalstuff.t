@@ -52,16 +52,18 @@ use Math::BigRat 0.2624 ();
 
 require Data::Dumper;
 
-diag "Perl version ",u($^V),"\n";
+diag "Perl ",u($^V),"\n\n";
 
-my @modnames = (qw/Data::Dumper Math::BigInt Math::BigFloat Math::BigRat/);
+my @modnames = (qw/bigint bigfloat bigrat bignum 
+                   Data::Dumper Math::BigInt Math::BigFloat Math::BigRat/);
 for my $modname (@modnames) {
-  diag "Loaded ", $INC{ "${modname}.pm" =~ s/::/\//gr }, "\n";
-}
-for my $modname (@modnames) {
+  eval "require $modname;"; die "$modname : $@ " if $@;
   no strict 'refs';
-  diag sprintf "%-14s %s\n", $modname, u(${"${modname}::VERSION"});
+  diag sprintf "%-24s %s\n", 
+               $modname . '@' . u(${"${modname}::VERSION"}),
+               u($INC{ "${modname}.pm" =~ s/::/\//gr }) ;
 }
+diag "";
 
 # Has Data::Dumper::Useqq('utf8') been fixed?
 { my $s = Data::Dumper->new([$unicode_str],['unicode_str'])->Terse(1)->Useqq('utf8')->Dump;

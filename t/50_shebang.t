@@ -437,11 +437,11 @@ my $ratstr  = '1/9';
   local $Data::Dumper::Interp::Overloads = 1;  # NOTE: the '1' will be a BigInt !
 
   my $bigf = eval $bigfstr // die;
-  die unless blessed($bigf) =~ /^Math::BigFloat/;
+  die(u(blessed($bigf))," <<$bigfstr>> ",u($bigf)," $@") unless blessed($bigf) =~ /^Math::BigFloat/;
   checklit(sub{eval $_[0]}, $bigf, qr/(?:\(Math::BigFloat[^\)]*\))?${bigfstr}/);
 
   my $bigi = eval $bigistr // die;
-  die unless blessed($bigi) =~ /^Math::BigInt/;
+  die(u(blessed($bigi))," <<$bigistr>> ",u($bigi)," $@") unless blessed($bigi) =~ /^Math::BigInt/;
   checklit(sub{eval $_[0]}, $bigi, qr/(?:\(Math::BigInt[^\)]*\))?${bigistr}/);
 
   # Confirm that various Overloads values disable
