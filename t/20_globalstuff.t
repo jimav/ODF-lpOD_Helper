@@ -51,17 +51,27 @@ use Math::BigFloat 1.999837 ();
 use Math::BigRat 0.2624 ();
 
 require Data::Dumper;
+require bigint;
+#require bigfloat;
+require bigrat;
 
 diag "Perl ",u($^V),"\n\n";
 
-my @modnames = (qw/bigint bigfloat bigrat bignum 
-                   Data::Dumper Math::BigInt Math::BigFloat Math::BigRat/);
-for my $modname (@modnames) {
-  eval "require $modname;"; die "$modname : $@ " if $@;
-  no strict 'refs';
-  diag sprintf "%-24s %s\n", 
-               $modname . '@' . u(${"${modname}::VERSION"}),
-               u($INC{ "${modname}.pm" =~ s/::/\//gr }) ;
+for my $modname ( qw/bigint bigfloat bigrat bignum 
+                     bogon
+                     Data::Dumper Math::BigInt Math::BigFloat Math::BigRat/) {
+  # Not all these modules are explicitly used (e.g. bigfloat) 
+  # but if present, show their verions.
+  eval "require $modname;";
+  my $modpath = "${modname}.pm" =~ s/::/\//gr;
+  if ($INC{$modpath}) {
+    no strict 'refs';
+    diag sprintf "%-24s %s\n", 
+                 $modname . '@' . u(${"${modname}::VERSION"}),
+                 $INC{$modpath} ;
+  } else {
+    diag "(Module '$modname' is not available)\n";
+  }
 }
 diag "";
 
