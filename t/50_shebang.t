@@ -95,9 +95,9 @@ sub checkeq_literal($$$) {
   goto &Carp::confess;
 }
 
-# Convert a literal "expected" string check() which contains qr/.../ sequences
-# into a regex which matches the same string but allows various regex representations
-# used by various versions of Perl.
+# Convert a literal "expected" string which contains qr/.../ismx sequences
+# into a regex which matches the same string but allows various representations
+# of the regex (which differs among Perl versions).
 sub expstr2re($) {
   local $_ = shift;
   confess "bug" if ref($_);
