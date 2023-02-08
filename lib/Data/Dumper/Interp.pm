@@ -206,7 +206,15 @@ sub _vistype {
 sub new {
   croak "No args are allowed for ".__PACKAGE__."::new" if @_ > 1;
   my ($class) = @_;
-  (bless $class->SUPER::new([],[]), $class)->_config_defaults()
+  #(bless $class->SUPER::new([],[]), $class)->_config_defaults()
+  
+  ###TEMP DEBUGGING
+  # Try to catch FreeBSD bug where $! changes somewhere
+  my $initialbang = $!+0;
+  my $r = (bless $class->SUPER::new([],[]), $class)->_config_defaults();
+  Carp::confess blessed($r),"::new(...) changed \$! unexpectedly (was $initialbang, now ",$!+0
+    if $! != $initialbang;
+  $r
 }
 
 ########### Subs callable as either a Function or Method #############
