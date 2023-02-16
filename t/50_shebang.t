@@ -517,10 +517,10 @@ EOF
 }
 
 # There was a bug for s/dvis called direct from outer scope, so don't use eval:
-#WAS BUG HERE: qr/.../ can visualize in a longer form on some platorms,
-## changing wrap.  I increased "F" to super-long to force wrap b4 the regex.
+#WAS BUG HERE: On some older platforms qr/.../ can visualize to a different, 
+#longer representation, so forcing wrap to be the same on all platforms.
 check
-  'global divs %toplex_h',
+  'global dvis %toplex_h',
 q(%toplex_h=( "" => "Emp",A => 111,"B B" => 222,C => {d => 888,e => 999},
   D => {},EEEEEEEEEEEEEEEEEEEEEEEEEE => \\42,
   F_long_enough_to_force_wrap_FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF

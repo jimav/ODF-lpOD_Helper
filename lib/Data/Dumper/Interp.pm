@@ -342,47 +342,59 @@ sub _doedits {
     }
   }
   my $overload_depth;
-  while (overload::Overloaded($item) && ref($item)) {
-    # N.B. Overloaded(...) also returns true if it's a NAME of an overloaded package
-    my $class = blessed($item) // oops; # overloaded ref is not blessed !?
+  while (my $class = blessed($item)) {
+    # Some kind of object reference
     last unless any { ref() eq "Regexp" ? $class =~ $_
                                         : ($_ eq "1" || $_ eq $class) 
                     } @$overloads;
-    warn("Recursive overloads on $item ?\n"),last
-      if $overload_depth++ > 10;
-    # Stringify objects which have the stringification operator
-    if (overload::Method($class,'""')) {
-      return __COPY_NEEDED if $testonly;
-      my $prefix = _show_as_number($item) ? $magic_num_prefix : "";
-      $item = $item.""; # stringify;
-      if ($item !~ /^${class}=REF/) {
-        $item = "${prefix}($class)$item"; 
-      } else {
-        # The "stringification" looks like Perl's default, so don't prefix it
+    if (overload::Overloaded($item)) {
+      # N.B. Overloaded(...) also returns true if it's a NAME of an 
+      # overloaded package; should not happen in this case.
+      warn("Recursive overloads on $item ?\n"),last
+        if $overload_depth++ > 10;
+      # Stringify objects which have the stringification operator
+      if (overload::Method($class,'""')) {
+        return __COPY_NEEDED if $testonly;
+        my $prefix = _show_as_number($item) ? $magic_num_prefix : "";
+        $item = $item.""; # stringify;
+        if ($item !~ /^${class}=REF/) {
+          $item = "${prefix}($class)$item"; 
+        } else {
+          # The "stringification" looks like Perl's default, so don't prefix it
+        }
+        next
+      }
+      # Substitute the virtual value behind an overloaded deref operator
+      elsif (overload::Method($class,'@{}')) {
+        return __COPY_NEEDED if $testonly;
+        $item = \@{ $item };
+        next
+      }
+      elsif (overload::Method($class,'%{}')) {
+        return __COPY_NEEDED if $testonly;
+        $item = \%{ $item };
+        next
+      }
+      elsif (overload::Method($class,'${}')) {
+        return __COPY_NEEDED if $testonly;
+        $item = \${ $item };
+        next
+      }
+      elsif (overload::Method($class,'&{}')) {
+        return __COPY_NEEDED if $testonly;
+        $item = \&{ $item };
+        next
+      }
+      elsif (overload::Method($class,'*{}')) {
+        return __COPY_NEEDED if $testonly;
+        $item = \*{ $item };
+        next
       }
     }
-    # Substitute the virtual value behind an overloaded deref operator
-    elsif (overload::Method($class,'@{}')) {
-      return __COPY_NEEDED if $testonly;
-      $item = \@{ $item };
-    }
-    elsif (overload::Method($class,'%{}')) {
-      return __COPY_NEEDED if $testonly;
-      $item = \%{ $item };
-    }
-    elsif (overload::Method($class,'${}')) {
-      return __COPY_NEEDED if $testonly;
-      $item = \${ $item };
-    }
-    elsif (overload::Method($class,'&{}')) {
-      return __COPY_NEEDED if $testonly;
-      $item = \&{ $item };
-    }
-    elsif (overload::Method($class,'*{}')) {
-      return __COPY_NEEDED if $testonly;
-      $item = \*{ $item };
-    }
-    else { last; }  # nothing we care about
+    # overloaded operator not used, just stringify the ref
+    $item = "$item"
+      unless ($class eq "Regexp");  # unless Perl will handle it nicely
+    last
   }
   # Prepend a "magic prefix" (later removed) to items which Data::Dumper is
   # likely to represent wrongly or anyway not how we want:
@@ -1488,16 +1500,20 @@ Defaults to the terminal width at the time of first use.
 
 =head2 Overloads([ list of classnames ])
 
-A I<false> value disables stringification or evaluation of overloaded
-deref operators.
+This should be called "Objects" becuase when enabled Object internals
+are never shown.
+
+A I<false> value disables special handling of Objects and object internals are shown.
 
 A "1" (the default) enables for all objects, otherwise only 
 for the specified class name(s).
 
-If enabled, then objects are checked for an overloaded stringification
+If an object overloads the stringification
 ('""') operator, or array-, hash-, scalar-, or glob- deref operators,
-in that order.  The first overloaded operator found will be evaluated and 
-the object ref replaced by the result.  The check is then repeated.
+then the first overloaded operator found will be evaluated and the
+object replaced by the result, and the check repeated; otherwise
+the I<ref> is stringified in the usual way, so something
+like "Foo::Bar=HASH(0xabcd1234)" appears.
 
 =head2 Sortkeys(subref)
 
