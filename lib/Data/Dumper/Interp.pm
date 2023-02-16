@@ -86,7 +86,7 @@ our @EXPORT    = qw(visnew
                     visq avisq alvisq ivisq dvisq hvisq hlvisq
                     u quotekey qsh __forceqsh qshpath);
 
-our @EXPORT_OK = qw($Debug $MaxStringwidth $Truncsuffix $Overloads $Foldwidth
+our @EXPORT_OK = qw($Debug $MaxStringwidth $Truncsuffix $Objects $Foldwidth
                     $Useqq $Quotekeys $Sortkeys $Sparseseen
                     $Maxdepth $Maxrecurse $Deparse);
 
@@ -131,7 +131,7 @@ sub qshpath(_) {  # like qsh but does not quote initial ~ or ~username
 
 #################### Configuration Globals #################
 
-our ($Debug, $MaxStringwidth, $Truncsuffix, $Overloads,
+our ($Debug, $MaxStringwidth, $Truncsuffix, $Objects,
      $Foldwidth, $Foldwidth1,
      $Useqq, $Quotekeys, $Sortkeys, $Sparseseen,
      $Maxdepth, $Maxrecurse, $Deparse);
@@ -139,7 +139,7 @@ our ($Debug, $MaxStringwidth, $Truncsuffix, $Overloads,
 $Debug          = 0            unless defined $Debug;
 $MaxStringwidth = 0            unless defined $MaxStringwidth;
 $Truncsuffix    = "..."        unless defined $Truncsuffix;
-$Overloads      = 1            unless defined $Overloads;
+$Objects        = 1            unless defined $Objects;
 $Foldwidth      = undef        unless defined $Foldwidth;  # undef auto-detects
 $Foldwidth1     = undef        unless defined $Foldwidth1; # override for 1st
 
@@ -166,9 +166,16 @@ sub Truncsuffix {
   my($s, $v) = @_;
   @_ == 2 ? (($s->{Truncsuffix} = $v), return $s) : $s->{Truncsuffix};
 }
-sub Overloads {
+sub Objects {
   my($s, $v) = @_;
-  @_ == 2 ? (($s->{Overloads} = $v), return $s) : $s->{Overloads};
+  @_ == 2 ? (($s->{Objects} = $v), return $s) : $s->{Objects};
+}
+sub Overloads {
+  state $warned;
+  carp "WARNING: 'Overloads' is deprecated, please use 'Objects'\n"
+    unless $warned++;
+  my($s, $v) = @_;
+  goto &Objects;
 }
 sub Foldwidth {
   my($s, $v) = @_;
@@ -278,7 +285,7 @@ sub _config_defaults {
     ->MaxStringwidth($MaxStringwidth)
     ->Foldwidth($Foldwidth)
     ->Foldwidth1($Foldwidth1)
-    ->Overloads($Overloads)
+    ->Objects($Objects)
     ->Truncsuffix($Truncsuffix)
     ->Quotekeys($Quotekeys)
     ->Maxdepth($Maxdepth)
@@ -329,7 +336,7 @@ sub __COPY_NEEDED() { $COPY_NEEDED }
 
 sub _doedits {
   my $self = shift; oops unless @_ == 5;
-  my ($item, $testonly, $maxstringwidth, $truncsuf, $overloads) = @_;
+  my ($item, $testonly, $maxstringwidth, $truncsuf, $objects) = @_;
   return undef
     unless defined($item);
   if ($maxstringwidth) {
@@ -346,7 +353,7 @@ sub _doedits {
     # Some kind of object reference
     last unless any { ref() eq "Regexp" ? $class =~ $_
                                         : ($_ eq "1" || $_ eq $class) 
-                    } @$overloads;
+                    } @$objects;
     if (overload::Overloaded($item)) {
       # N.B. Overloaded(...) also returns true if it's a NAME of an 
       # overloaded package; should not happen in this case.
@@ -391,9 +398,11 @@ sub _doedits {
         next
       }
     }
-    # overloaded operator not used, just stringify the ref
-    $item = "$item"
-      unless ($class eq "Regexp");  # unless Perl will handle it nicely
+    # No overloaded operator (that we care about); just stringify the ref
+    unless ($class eq "Regexp") {  # unless Perl will handle it nicely
+      return __COPY_NEEDED if $testonly;
+      $item = "$item"
+    } 
     last
   }
   # Prepend a "magic prefix" (later removed) to items which Data::Dumper is
@@ -429,8 +438,8 @@ sub Dump {
     croak "extraneous args" if @_ != 1;
   }
 
-  my ($maxstringwidth, $overloads, $debug)
-    = @$self{qw/MaxStringwidth Overloads Debug/};
+  my ($maxstringwidth, $objects, $debug)
+    = @$self{qw/MaxStringwidth Objects Debug/};
 
   # Do desired substitutions in a copy of the data.
   #
@@ -446,10 +455,10 @@ sub Dump {
     $maxstringwidth //= 0;
     $maxstringwidth = 0 if $maxstringwidth >= INT_MAX;
     my $truncsuf = $self->{Truncsuffix};
-    $overloads = [ $overloads ] unless ref($overloads) eq 'ARRAY';
-    $overloads = undef unless grep{ $_ } @$overloads; # all false?
+    $objects = [ $objects ] unless ref($objects) eq 'ARRAY';
+    $objects = undef unless grep{ $_ } @$objects; # all false?
     my $callback = sub { 
-      $self->_doedits(@_, $maxstringwidth, $truncsuf, $overloads) 
+      $self->_doedits(@_, $maxstringwidth, $truncsuf, $objects) 
     };
     eval { 
       $values[0] = __copysubst($values[0], $callback)
@@ -1494,26 +1503,29 @@ MaxStringwidth=0 (the default) means no limit.
 
 Defaults to the terminal width at the time of first use.
 
-=head2 Overloads(BOOL);
+=head2 Objects(BOOL);
 
-=head2 Overloads("classname")
+=head2 Objects("classname")
 
-=head2 Overloads([ list of classnames ])
+=head2 Objects([ list of classnames ])
 
-This should be called "Objects" becuase when enabled Object internals
-are never shown.
-
-A I<false> value disables special handling of Objects and object internals are shown.
+A I<false> value disables special handling of object refs 
+and internals are shown the same as for ordinary structures.
 
 A "1" (the default) enables for all objects, otherwise only 
 for the specified class name(s).
 
-If an object overloads the stringification
-('""') operator, or array-, hash-, scalar-, or glob- deref operators,
+If enabled, object internals are never shown.  
+If the stringification ('""') operator, 
+or array-, hash-, scalar-, or glob- deref operators are overloaded,
 then the first overloaded operator found will be evaluated and the
 object replaced by the result, and the check repeated; otherwise
 the I<ref> is stringified in the usual way, so something
 like "Foo::Bar=HASH(0xabcd1234)" appears.
+
+=head2 Overloads(...);
+
+*DEPRECATED* alias for C<Objects>
 
 =head2 Sortkeys(subref)
 

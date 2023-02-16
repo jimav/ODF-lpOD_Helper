@@ -73,31 +73,31 @@ is_deeply (*{ $gobj }{SCALAR},\"scalar via virtual glob" , "*{Gobj}{SCALAR} basi
 is_deeply (*{ $gobj }{ARRAY},[qw/array via virtual glob/] , "*{Gobj}{ARRAY} basic test");
 is_deeply (*{ $gobj }{HASH},{hash_via_virtual_glob => 123}, "*{Gobj}{HASH} basic test");
 
-$Data::Dumper::Interp::Overloads = 0;
+$Data::Dumper::Interp::Objects = 0;
 is (vis \@$hvobj, '[0,1,2,3,4,5,6,7,8,9]', "\@{HVObj}");
 is (vis \%$hvobj, '{a => 111,b => 222,c => 333}', "\%{HVObj}");
-is (vis $hvobj, q!bless(do{\(my $o = [[0,1,2,3,4,5,6,7,8,9],{a => 111,b => 222,c => 333}])},'main::HVObj')!, "HVObj: Overloads disabled");
-is (vis $hobj, q<bless(do{\(my $o = \42)},'main::HObj')>, "HObj: Overloads disabled");
+is (vis $hvobj, q!bless(do{\(my $o = [[0,1,2,3,4,5,6,7,8,9],{a => 111,b => 222,c => 333}])},'main::HVObj')!, "HVObj: Objects handling disabled");
+is (vis $hobj, q<bless(do{\(my $o = \42)},'main::HObj')>, "HObj: Objects handling disabled");
 is (vis \%$hobj, '{a => 111,b => 222,c => 333}', "\%{HObj}");
-is (vis $sobj, q<bless({},'main::SObj')>, "SObj: Overloads disabled");
-is (vis $$sobj, q<"virtual value">, "\$SObj: Overloads disabled");
-is (vis $cobj, q!bless({},'main::CObj')!, "Cobj: Overloads disabled ");
-is(vis $gobj,q!bless({},'main::GObj')! , "Gobj: Overloads disabled");
+is (vis $sobj, q<bless({},'main::SObj')>, "SObj: Objects handling disabled");
+is (vis $$sobj, q<"virtual value">, "\$SObj: Objects handling disabled");
+is (vis $cobj, q!bless({},'main::CObj')!, "Cobj: Objects handling disabled ");
+is(vis $gobj,q!bless({},'main::GObj')! , "Gobj: Objects handling disabled");
 #is(vis *{ $gobj }{ARRAY},q!["array","via","virtual","glob"]! , "*{Gobj}{ARRAY} basic test");
 #is(vis *{ $gobj }{HASH},q!{hash_via_virtual_glob => 123}!, "*{Gobj}{HASH} basic test");
 
-$Data::Dumper::Interp::Overloads = 1;
+$Data::Dumper::Interp::Objects = 1;
 is (vis \@$hvobj, '[0,1,2,3,4,5,6,7,8,9]', "\@{HVObj} again");
 is (vis \%$hvobj, '{a => 111,b => 222,c => 333}', "\%{HVObj} again");
-is (vis $hvobj, '[0,1,2,3,4,5,6,7,8,9]', "HVObj: Overloads enabled");
-is (vis $hobj, '{a => 111,b => 222,c => 333}', "HObj: Overloads enabled");
-is (hvis(%$hobj), '(a => 111,b => 222,c => 333)', "\%HObj: Overloads enabled");
-is (vis $sobj, q<\\"virtual value">, "SObj: Overloads enabled");
-is (vis $$sobj, q<"virtual value">, "\$SObj: Overloads enabled");
+is (vis $hvobj, '[0,1,2,3,4,5,6,7,8,9]', "HVObj: Objects handling enabled");
+is (vis $hobj, '{a => 111,b => 222,c => 333}', "HObj: Objects handling enabled");
+is (hvis(%$hobj), '(a => 111,b => 222,c => 333)', "\%HObj: Objects handling enabled");
+is (vis $sobj, q<\\"virtual value">, "SObj: Objects handling enabled");
+is (vis $$sobj, q<"virtual value">, "\$SObj: Objects handling enabled");
 like(Data::Dumper::Interp->new()->Deparse(1)->vis($cobj), 
      qr/^sub\s*{.*['"]from virtual coderef['"]\s*;?\s*}$/,
-     "Cobj: Overloads enabled");
-is(vis $gobj, q!\*::GObj::Global! , "Gobj: Overloads enabled");
+     "Cobj: Objects handling enabled");
+is(vis $gobj, q!\*::GObj::Global! , "Gobj: Objects handling enabled");
 
 done_testing();
 exit 0;

@@ -435,7 +435,7 @@ my $ratstr  = '1/9';
   use bignum;  # BigInt and BigFloat together
 
   # stringify everything possible
-  local $Data::Dumper::Interp::Overloads = 1;  # NOTE: the '1' will be a BigInt !
+  local $Data::Dumper::Interp::Objects = 1;  # NOTE: the '1' will be a BigInt !
 
   my $bigf = eval $bigfstr // die;
   die(u(blessed($bigf))," <<$bigfstr>> ",u($bigf)," $@") unless blessed($bigf) =~ /^Math::BigFloat/;
@@ -448,9 +448,9 @@ my $ratstr  = '1/9';
     unless blessed($bigi) =~ /^Math::Big\w*/;
   checklit(sub{eval $_[0]}, $bigi, qr/(?:\(Math::Big\w*[^\)]*\))?${bigistr}/);
 
-  # Confirm that various Overloads values disable
+  # Confirm that various Objects values disable
   foreach my $Sval (0, undef, "", [], [0], [""]) {
-    local $Data::Dumper::Interp::Overloads = $Sval;
+    local $Data::Dumper::Interp::Objects = $Sval;
     my $s = vis($bigf);
     die "bug(",u($Sval),")($s)" unless $s =~ /^\(?bless.*BigFloat/s;
   }
@@ -466,11 +466,11 @@ my $ratstr  = '1/9';
   die unless blessed($rat) =~ /^Math::BigRat/;
 
   # Without stringification
-  { local $Data::Dumper::Interp::Overloads = 0;
+  { local $Data::Dumper::Interp::Objects = 0;
     my $s = vis($bigf); die "bug($s)" unless $s =~ /^bless.*BigFloat/s;
   }
   # With explicit stringification of BigFloat only
-  { local $Data::Dumper::Interp::Overloads = [qr/^Math::BigFloat/];
+  { local $Data::Dumper::Interp::Objects = [qr/^Math::BigFloat/];
     checklit(sub{eval $_[0]}, $bigf, qr/(?:\(Math::BigFloat[^\)]*\))?${bigfstr}/);
     # But not other classes
     my $s = vis($rat); die "bug($s)" unless $s =~ /^bless.*BigRat/s;
