@@ -1289,7 +1289,7 @@ sub DB_Vis_Eval($$) {
 
 =head1 NAME
 
-Data::Dumper::Interp - interpolate Data::Dumper output into strings, with human-oriented options
+Data::Dumper::Interp - interpolate Data::Dumper output into strings for human consumption
 
 =head1 SYNOPSIS
 
@@ -1324,6 +1324,11 @@ Data::Dumper::Interp - interpolate Data::Dumper output into strings, with human-
     my $struct = { debt => 999_999_999_999_999_999.02 };
     say vis $struct;
       # --> {debt => (Math::BigFloat)999999999999999999.02}
+
+    # But if you do want to see object internals
+    say visnew->Objects(0)->vis($struct); 
+    { local $Data::Dumper::Interp::Objects=0; say vis $struct; } #another way
+      # --> {debt => bless({...lots of stuff...},'Math::BigInt')}
   }
 
   # Wide characters are readable
@@ -1351,13 +1356,12 @@ Data::Dumper::Interp - interpolate Data::Dumper output into strings, with human-
 
 =head1 DESCRIPTION
 
-This Data::Dumper wrapper optimizes for human consumption and avoids side-effects.
+This Data::Dumper wrapper optimizes output for human consumption 
+and avoids side-effects which interfere with debugging.
 
 The namesake feature is interpolating Data::Dumper output 
 into strings, but simple functions are also provided
 to visualize a scalar, array, or hash.
-
-Diagnostic and debug messages are primary use cases.
 
 Internally, Data::Dumper is called to visualize (i.e. format) data
 with pre- and post-processing to "improve" the results:
@@ -1369,7 +1373,7 @@ otherwise folded at your terminal width), WITHOUT a trailing newline.
 
 =item * Printable Unicode characters appear as themselves.
 
-=item * Objects like Math:BigInt are stringified
+=item * Object internals are not shown; Math:BigInt etc. are stringified.
 
 =item * "virtual" values behind overloaded array/hash-deref operators are shown
 
@@ -1482,10 +1486,8 @@ return the same string as
 
 These work the same way as variables/methods in Data::Dumper.
 
-For each configuration value, there is a global
-variable in package C<Data::Dumper::Interp> which provides the default,
-and a I<method> of the same name which sets or retrieves a config value
-on a specific object.
+Each configuration method has a corresponding global variable
+in package C<Data::Dumper::Interp> which provides the default.
 
 When a method is called without arguments the current value is returned.
 
@@ -1509,13 +1511,13 @@ Defaults to the terminal width at the time of first use.
 
 =head2 Objects([ list of classnames ])
 
-A I<false> value disables special handling of object refs 
-and internals are shown the same as for ordinary structures.
+A I<false> value disables special handling of objects
+and internals are shown as with Data::Dumper.
 
 A "1" (the default) enables for all objects, otherwise only 
 for the specified class name(s).
 
-If enabled, object internals are never shown.  
+When enabled, object internals are never shown.  
 If the stringification ('""') operator, 
 or array-, hash-, scalar-, or glob- deref operators are overloaded,
 then the first overloaded operator found will be evaluated and the
@@ -1523,9 +1525,10 @@ object replaced by the result, and the check repeated; otherwise
 the I<ref> is stringified in the usual way, so something
 like "Foo::Bar=HASH(0xabcd1234)" appears.
 
-=head2 Overloads(...);
+Beginning with version 5.000 the B<deprecated> C<Overloads> method
+is an alias for C<Objects>.
 
-*DEPRECATED* alias for C<Objects>
+=for Pod::Coverage Overloads
 
 =head2 Sortkeys(subref)
 
@@ -1679,13 +1682,13 @@ the "_" filehandle will not change across calls.
 =head1 DIFFERENCES FROM Data::Dumper
 
 Results differ from plain C<Data::Dumper> output in the following ways
-(most substitutions can be disabled via Config options):
+(most substitutions can be disabled via Config options): 
 
 =over 2
 
 =item *
 
-A final newline I<never> included.
+A final newline is I<never> included.
 
 Everything is shown on a single line if possible, otherwise wrapped to
 your terminal width (or C<$Foldwidth>) with indentation 
@@ -1695,14 +1698,14 @@ appropriate to structure levels.
 
 Printable Unicode characters appear as themselves instead of \x{ABCD}.
 
-Note: If your data contains 'wide characters', you must encode
-the result before displaying it as explained in C<perluniintro>,
-for example with C<< use open IO => ':locale'; >>.  
+Note: If your data contains 'wide characters', you should
+C<< use open IO => ':locale'; >> or otherwise arrange to
+encode the output for your terminal.
 You'll also want C<< use utf8; >> if your Perl source
 contains characters outside the ASCII range.
 
 Undecoded binary octets (e.g. data read from a 'binmode' file)
-will be escaped as individual bytes when necessary.
+will still be escaped as individual bytes when necessary.
 
 =item *
 
@@ -1710,14 +1713,14 @@ will be escaped as individual bytes when necessary.
 
 =item *
 
-Object refs are replaced by the object's stringified representation.
-For example, C<bignum> and C<bigrat> numbers are shown as easily
+The internals of objects are not shown.
+
+If stringifcation is overloaded it is used to obtain the object's
+representation.  For example, C<bignum> and C<bigrat> numbers are shown as easily
 readable values rather than S<"bless( {...}, 'Math::...')">.
 
 Stingified objects are prefixed with "(classname)" to make clear what
 happened.
-
-=item *
 
 The "virtual" value of objects which overload a dereference operator 
 (C<@{}> or C<%{}>) is displayed instead of the object's internals.
