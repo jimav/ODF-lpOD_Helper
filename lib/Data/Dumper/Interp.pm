@@ -210,6 +210,7 @@ sub _vistype {
 #
 # Global variabls in Data::Dumper::Interp are provided for all config options
 # which users may change on Data::Dumper::Interp objects.
+our $initialbang = 999; ###TEMP DEBUG
 sub new {
   croak "No args are allowed for ".__PACKAGE__."::new" if @_ > 1;
   my ($class) = @_;
@@ -217,7 +218,7 @@ sub new {
   
   ###TEMP DEBUGGING
   # Try to catch FreeBSD bug where $! changes somewhere
-  my $initialbang = $!+0;
+  $initialbang = $!+0;
   my $r = (bless $class->SUPER::new([],[]), $class)->_config_defaults();
   Carp::confess blessed($r),"::new(...) changed \$! unexpectedly (was $initialbang, now ",$!+0
     if $! != $initialbang;
@@ -1082,10 +1083,21 @@ sub _Interpolate {
   my ($self, $input, $i_or_d) = @_;
   return "<undef arg>" if ! defined $input;
 
+###TEMP DEBUGGING
+# Try to catch FreeBSD bug where $! changes somewhere
+$initialbang = $!+0;
+  
   &_SaveAndResetPunct;
 
+#say "###III1 ",_dbvis($save_stack[-1]);
+#say "###III2 ",_dbvis($initialbang);
+oops unless $save_stack[-1]->[1] == $initialbang;
+oops unless $!+0 == $initialbang;
+
   my $debug = $self->Debug;
+oops unless $!+0 == $initialbang;
   my $useqq = $self->Useqq;
+oops unless $!+0 == $initialbang;
 
   my $q = $useqq ? "" : "q";
   my $funcname = $i_or_d . "vis" .$q;
@@ -1186,6 +1198,7 @@ sub _Interpolate {
       $_->[0] = 'e';
     }
   } #local $_
+oops unless $!+0 == $initialbang;
 
   @_ = ($self, $funcname, \@pieces);
   goto &DB::DB_Vis_Interpolate
@@ -1204,6 +1217,7 @@ package
 sub DB_Vis_Interpolate {
   my ($self, $funcname, $pieces) = @_;
   #say "###Vis pieces=",Data::Dumper::Interp::_dbvis($pieces);
+Carp::confess() unless $!+0 == $initialbang;
   my $result = "";
   foreach my $p (@$pieces) {
     my ($methname, $arg) = @$p;
@@ -1211,7 +1225,9 @@ sub DB_Vis_Interpolate {
       $result .= $arg;
     }
     elsif ($methname eq 'e') {
+Carp::confess() unless $!+0 == $initialbang;
       $result .= DB::DB_Vis_Eval($funcname, $arg);
+Carp::confess() unless $!+0 == $initialbang;
     } else {
       # Reduce indent before first wrap to account for stuff alrady there
       my $leftwid = length($result) - rindex($result,"\n") - 1;
@@ -1220,11 +1236,15 @@ sub DB_Vis_Interpolate {
       if ($foldwidth) {
         $self->{Foldwidth1} -= $leftwid if $leftwid < $self->{Foldwidth1}
       }
+Carp::confess() unless $!+0 == $initialbang;
       $result .= $self->$methname( DB::DB_Vis_Eval($funcname, $arg) );
+Carp::confess() unless $!+0 == $initialbang;
     }
   }
 
+Carp::confess() unless $!+0 == $initialbang;
   &Data::Dumper::Interp::_RestorePunct;  # saved in _Interpolate
+Carp::confess() unless $!+0 == $initialbang;
   $result
 }# DB_Vis_Interpolate
 
@@ -1753,14 +1773,14 @@ Jim Avera  (jim.avera AT gmail)
 
 =for nobody Foldwidth1 is currently an undocumented experimental method
 =for nobody which sets a different fold width for the first line only.
+=for nobody 
 =for nobody Terse & Indent methods exist to croak; using them is not allowed.
 =for nobody oops is an internal function (called to die if bug detected).
-=for nobody Debug method is for author's debugging, not documented.
+=for nobody The Debug method is for author's debugging, and not documented.
 =for nobody BLK_* CLOSER FLAGS_MASK NOOP OPENER are internal "constants".
 
 =for Pod::Coverage Foldwidth1 Terse Indent oops Debug
 
 =for Pod::Coverage BLK_CANTSPACE BLK_TRIPLE BLK_FOLDEDBACK BLK_HASCHILD BLK_MASK CLOSER FLAGS_MASK NOOP OPENER
-
 
 =cut

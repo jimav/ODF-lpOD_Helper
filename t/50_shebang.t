@@ -93,7 +93,8 @@ sub checkeq_literal($$$) {
         # + for opening « or << in the displayed str
         .(" " x ($posn+length($quotes[0])))."^\n"
         .visFoldwidth()."\n" ) ;
-  goto &Carp::confess;
+  #goto &Carp::confess;
+  Carp::confess @_;
 }
 
 # Convert a literal "expected" string which contains qr/.../ismx sequences
