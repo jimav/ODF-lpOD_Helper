@@ -94,7 +94,7 @@ sub checkeq_literal($$$) {
         .(" " x ($posn+length($quotes[0])))."^\n"
         .visFoldwidth()."\n" ) ;
   #goto &Carp::confess;
-  Carp::confess @_;
+  Carp::confess(@_);
 }
 
 # Convert a literal "expected" string which contains qr/.../ismx sequences

@@ -1198,7 +1198,7 @@ oops unless $!+0 == $initialbang;
       $_->[0] = 'e';
     }
   } #local $_
-oops unless $!+0 == $initialbang;
+oops unless $!+0 == $Data::Dumper::Interp::initialbang;
 
   @_ = ($self, $funcname, \@pieces);
   goto &DB::DB_Vis_Interpolate
@@ -1217,7 +1217,7 @@ package
 sub DB_Vis_Interpolate {
   my ($self, $funcname, $pieces) = @_;
   #say "###Vis pieces=",Data::Dumper::Interp::_dbvis($pieces);
-Carp::confess() unless $!+0 == $initialbang;
+Carp::confess() unless $!+0 == $Data::Dumper::Interp::initialbang;
   my $result = "";
   foreach my $p (@$pieces) {
     my ($methname, $arg) = @$p;
@@ -1225,9 +1225,9 @@ Carp::confess() unless $!+0 == $initialbang;
       $result .= $arg;
     }
     elsif ($methname eq 'e') {
-Carp::confess() unless $!+0 == $initialbang;
+Carp::confess() unless $!+0 == $Data::Dumper::Interp::initialbang;
       $result .= DB::DB_Vis_Eval($funcname, $arg);
-Carp::confess() unless $!+0 == $initialbang;
+Carp::confess() unless $!+0 == $Data::Dumper::Interp::initialbang;
     } else {
       # Reduce indent before first wrap to account for stuff alrady there
       my $leftwid = length($result) - rindex($result,"\n") - 1;
@@ -1236,15 +1236,15 @@ Carp::confess() unless $!+0 == $initialbang;
       if ($foldwidth) {
         $self->{Foldwidth1} -= $leftwid if $leftwid < $self->{Foldwidth1}
       }
-Carp::confess() unless $!+0 == $initialbang;
+Carp::confess() unless $!+0 == $Data::Dumper::Interp::initialbang;
       $result .= $self->$methname( DB::DB_Vis_Eval($funcname, $arg) );
-Carp::confess() unless $!+0 == $initialbang;
+Carp::confess() unless $!+0 == $Data::Dumper::Interp::initialbang;
     }
   }
 
-Carp::confess() unless $!+0 == $initialbang;
+Carp::confess() unless $!+0 == $Data::Dumper::Interp::initialbang;
   &Data::Dumper::Interp::_RestorePunct;  # saved in _Interpolate
-Carp::confess() unless $!+0 == $initialbang;
+Carp::confess() unless $!+0 == $Data::Dumper::Interp::initialbang;
   $result
 }# DB_Vis_Interpolate
 
@@ -1259,37 +1259,50 @@ sub DB_Vis_Eval($$) {
   # Find the closest non-DB caller.  The eval will be done in that package.
   # Find the next caller further up which has arguments (i.e. wasn't doing
   # "&subname;"), and make @_ contain those arguments.
+Carp::confess() unless $!+0 == $Data::Dumper::Interp::initialbang;
   my ($distance, $pkg, $fname, $lno);
   for ($distance = 0 ; ; $distance++) {
     ($pkg, $fname, $lno) = caller($distance);
     last if $pkg ne "DB";
   }
+Carp::confess() unless $!+0 == $Data::Dumper::Interp::initialbang;
+  local *_ = [];
   while() {
     $distance++;
     my ($p, $hasargs) = (caller($distance))[0,4];
     if (! defined $p){
-      @DB::args = ('<@_ is not defined in the outer block>');
+      *_ = [ '<@_ is not defined in the outer block>' ];
       last
     }
-    last if $hasargs;
+    if ($hasargs) {
+      *_ = [ @DB::args ];  # copy in case of recursion
+      last
+    }
   }
-  local *_ = [ @DB::args ];  # copy in case of recursion
 
+Carp::confess() unless $!+0 == $Data::Dumper::Interp::initialbang;
   &Data::Dumper::Interp::_RestorePunct;  # saved in _Interpolate
+Carp::confess() unless $!+0 == $Data::Dumper::Interp::initialbang;
   $Data::Dumper::Interp::user_dollarat = $@; # 'eval' will reset $@
+  $Data::Dumper::Interp::user_bang = $!;     # not sure why this might be changed(!?!)
   my @result = do {
     local @Data::Dumper::Interp::result;
     local $Data::Dumper::Interp::string_to_eval =
       "package $pkg; "
      .' $@ = $Data::Dumper::Interp::user_dollarat; '
+     .' $! = $Data::Dumper::Interp::user_bang; '
      .' @Data::Dumper::Interp::result = '.$evalarg.';'
      .' $Data::Dumper::Interp::user_dollarat = $@; '  # possibly changed by a tie handler
      ;
+Carp::confess() unless $!+0 == $Data::Dumper::Interp::initialbang;
      &DB_Vis_Evalwrapper;
+Carp::confess() unless $!+0 == $Data::Dumper::Interp::initialbang;
      @Data::Dumper::Interp::result
   };
   my $errmsg = $@;
+Carp::confess() unless $!+0 == $Data::Dumper::Interp::initialbang;
   &Data::Dumper::Interp::_SaveAndResetPunct;
+Carp::confess() unless $!+0 == $Data::Dumper::Interp::initialbang;
   $Data::Dumper::Interp::save_stack[-1]->[0] = $Data::Dumper::Interp::user_dollarat;
 
   if ($errmsg) {
@@ -1297,6 +1310,7 @@ sub DB_Vis_Eval($$) {
     Carp::croak("${label_for_errmsg}: Error interpolating '$evalarg':\n$errmsg\n");
   }
 
+Carp::confess() unless $!+0 == $Data::Dumper::Interp::initialbang;
   wantarray ? @result : (do{die "bug" if @result>1}, $result[0])
 }# DB_Vis_Eval
 
