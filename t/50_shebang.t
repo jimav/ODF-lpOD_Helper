@@ -97,20 +97,43 @@ sub checkeq_literal($$$) {
   Carp::confess(@_);
 }
 
-# Convert a literal "expected" string which contains qr/.../ismx sequences
-# into a regex which matches the same string but allows various representations
-# of the regex (which differs among Perl versions).
+# Convert a literal "expected" string which contains things which are
+# represented differently among versions of Perl and/or Data::Dumper
+# into a regex which works with all versions.
+# As of 1/1/23 the input string is expected to be what Perl v5.34 produces.
+our $bs = '\\';  # a single backslash
 sub expstr2re($) {
   local $_ = shift;
   confess "bug" if ref($_);
-  s#/#\\/#g;
+  unless (m#qr/|"::#) {
+    return $_; # doesn't contain variable-representation items
+  }
+  # In \Q *string* \E the *string* may not end in a backslash because
+  # it would be parsed as (\\)(E) instead of (\)(\E).
+  # So change them to a unique token and later replace problematic
+  # instances with ${bs} variable references.
+  s/\\/<BS>/g;
   $_ = '\Q' . $_ . '\E';
   s#([\$\@\%])#\\E\\$1\\Q#g;
-  s#qr\\/([^\/]+)\\/([msixpodualngcer]*)
-   #\\E\(qr\\/$1\\/$2|qr\\/\\(\\?\\^$2:$1\\)\\/\)\\Q#xg
-    or confess "No qr/.../ found in input string";
+
+  if (m#qr/#) {
+    # Canonical: qr/STUFF/MODIFIERS
+    # Alternate: qr/(?^uMODIFIERS:STUFF)/
+    s#qr/([^\/]+)/([msixpodualngcer]*)
+     #\\E\(qr/$1\\/$2|qr/\\(\\?\\^$2:$1\\)\\/\)\\Q#xg
+      or confess "Problem with qr/.../ in input string: $_";
+  }
+  if (m#"::#) {
+    # Canonical: fh=\*{"::\$fh"}
+    # Alternate: fh=\*{"main::\$fh"}
+    s#(=<BS>\*\{")(::<BS>[^"]*")#$1\\E(?:main)?\\Q$2#xg
+      or confess "Problem with filehandle in input string <<$_>>";
+  }
+  s/<BS>\\/\${bs}\\/g;
+  s/<BS>/\\/g;
+
   my $saved_dollarat = $@;
-  my $re = eval "qr/${_}/"; die "$@ " if $@;
+  my $re = eval "qr{${_}}"; die "$@ " if $@;
   $@ = $saved_dollarat;
   $re
 }
@@ -131,7 +154,7 @@ sub check($$@) {
   foreach my $i (0..$#actual) {
     my $actual = $actual[$i];
     my $expected = $expected[$i];
-    if (!ref($expected) && $expected =~ /qr\//) {
+    if (!ref($expected)) {
       # Work around different Perl versions stringifying regexes differently
       $expected = expstr2re($expected);
     }
@@ -381,12 +404,8 @@ $_ = "GroupA.GroupB";
 { my $code = q(my $v = \"abc"; dvis('$v')); check $code, 'v=\\"abc"', eval $code; }
 { my $code = q(my $v = \"abc"; dvisq('$v')); check $code, "v=\\'abc'", eval $code; }
 { my $code = q(my $v = \*STDOUT; dvisq('$v')); check $code, "v=\\*::STDOUT", eval $code; }
-SKIP: {
-  skip "because Data::Dumper too old", 1
-    if version->parse($Data::Dumper::VERSION) <= version->parse(2.179);
-  { my $code = q(open my $fh, "</dev/null" or die; dvis('$fh'));
-    check $code, "fh=\\*{\"::\\\$fh\"}", eval $code; }
-}
+{ my $code = q(open my $fh, "</dev/null" or die; dvis('$fh'));
+  check $code, "fh=\\*{\"::\\\$fh\"}", eval $code; }
 { my $code = q(open my $fh, "</dev/null" or die; dvisq('$fh'));
   check $code, "fh=\\*{'::\$fh'}", eval $code; }
 
@@ -445,7 +464,7 @@ my $ratstr  = '1/9';
   # Some implementations make everything a Math::BigFloat, others make
   # integers a Math::BigInt .
   my $bigi = eval $bigistr // die;
-  die(u(blessed($bigi))," <<$bigistr>> ",u($bigi)," $@") 
+  die(u(blessed($bigi))," <<$bigistr>> ",u($bigi)," $@")
     unless blessed($bigi) =~ /^Math::Big\w*/;
   checklit(sub{eval $_[0]}, $bigi, qr/(?:\(Math::Big\w*[^\)]*\))?${bigistr}/);
 
@@ -518,7 +537,7 @@ EOF
 }
 
 # There was a bug for s/dvis called direct from outer scope, so don't use eval:
-#WAS BUG HERE: On some older platforms qr/.../ can visualize to a different, 
+#WAS BUG HERE: On some older platforms qr/.../ can visualize to a different,
 #longer representation, so forcing wrap to be the same on all platforms.
 check
   'global dvis %toplex_h',
@@ -879,7 +898,7 @@ EOF
         # (except if testing a punctuation var, then don't change it's value)
 
         my ($origAt,$origFs,$origBs,$origComma,$origBang,$origCarE,$origCarW)
-          = ($@, $/, $\, $,, $!, $^E, $^W);
+          = ($@, $/, $\, $,, $!+0, $^E, $^W);
 
         # Don't change a value if being tested in $dvis_input
         my ($fakeAt,$fakeFs,$fakeBs,$fakeCom,$fakeBang,$fake_cE,$fake_cW)
@@ -902,6 +921,7 @@ EOF
         checkspunct('$/',  $/,   $fakeFs);
         checkspunct('$\\', $\,   $fakeBs);
         checkspunct('$,',  $,,   $fakeCom);
+        # In FreeBSD a reference to $& can set errno!  So can't check $! unless we save&restore it in the tests
         checknpunct('$!',  $!+0, $fakeBang);
         checknpunct('$^E', $^E+0,$fake_cE);
         checknpunct('$^W', $^W+0,$fake_cW);
