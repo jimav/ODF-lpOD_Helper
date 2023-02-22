@@ -123,11 +123,18 @@ sub expstr2re($) {
      #\\E\(qr/$1\\/$2|qr/\\(\\?\\^$2:$1\\)\\/\)\\Q#xg
       or confess "Problem with qr/.../ in input string: $_";
   }
-  if (m#"::#) {
-    # Canonical: fh=\*{"::\$fh"}
-    # Alternate: fh=\*{"main::\$fh"}
-    s#(=<BS>\*\{")(::<BS>[^"]*")#$1\\E(?:main)?\\Q$2#xg
-      or confess "Problem with filehandle in input string <<$_>>";
+  if (m#\{"([\w:]+).*"\}#) {
+    # Canonical: fh=\*{"::\$fh"}  or  fh=\*{"Some::Pkg::\$fh"}
+    #   which will be encoded above like ...\Qfh=<BS>*{"::<BS>\E\$\Qfh"}
+    # Alt1     : fh=\*{"main::\$fh"}
+    # Alt2     : fh=\*{'main::$fh'}  or  fh=\*{'main::$fh'} etc.
+    s{(\w+)=<BS>\*\{"(::)<BS>([^"]+)"\}}
+     {$1=<BS>*{\\E(?x: "(?:main::|::) \\Q<BS>$3"\\E | '(?:main::|::) \\Q$3'\\E )\\Q}}xg
+    |
+    s{(\w+)=<BS>\*\{"(\w[\w:]*::)<BS>([^"]+)"\}}
+     {$1=<BS>*{\\E(?x: "\\Q$2<BS>$3"\\E | '\\Q$2$3'\\E )\\Q}}xg
+    or
+      confess "Problem with filehandle in input string <<$_>>";
   }
   s/<BS>\\/\${bs}\\/g;
   s/<BS>/\\/g;
@@ -143,8 +150,8 @@ sub check($$@) {
   my ($desc, $expected_arg, @actual) = @_;
   local $_;  # preserve $1 etc. for caller
   my @expected = ref($expected_arg) eq "ARRAY" ? @$expected_arg : ($expected_arg);
-  die "ARE WE USING THIS FEATURE?" if @actual > 1;
-  die "ARE WE USING THIS FEATURE?" if @expected > 1;
+  die "ARE WE USING THIS FEATURE?" if @actual != 1;
+  die "ARE WE USING THIS FEATURE?" if @expected != 1;
   confess "\nTESTa FAILED: $desc\n"
          ."Expected ".scalar(@expected)." results, but got ".scalar(@actual).":\n"
          ."expected=(@expected)\n"
@@ -167,6 +174,8 @@ sub check($$@) {
               .visFoldwidth()."\n" ) ;
         Carp::confess(@_); #goto &Carp::confess;
       }
+#say "###ACT $actual";
+#say "###EXP $expected";
     } else {
       unless ($expected eq $actual) {
         @_ = ("TESTc FAILED: $desc", $expected, $actual);
@@ -404,9 +413,9 @@ $_ = "GroupA.GroupB";
 { my $code = q(my $v = \"abc"; dvis('$v')); check $code, 'v=\\"abc"', eval $code; }
 { my $code = q(my $v = \"abc"; dvisq('$v')); check $code, "v=\\'abc'", eval $code; }
 { my $code = q(my $v = \*STDOUT; dvisq('$v')); check $code, "v=\\*::STDOUT", eval $code; }
-{ my $code = q(open my $fh, "</dev/null" or die; dvis('$fh'));
+{ my $code = q(open my $fh, "</dev/null" or die $!; dvis('$fh'));
   check $code, "fh=\\*{\"::\\\$fh\"}", eval $code; }
-{ my $code = q(open my $fh, "</dev/null" or die; dvisq('$fh'));
+{ my $code = q(open my $fh, "</dev/null" or die $!; dvisq('$fh'));
   check $code, "fh=\\*{'::\$fh'}", eval $code; }
 
 # Data::Dumper::Interp 2.12 : hex escapes including illegal code points:
