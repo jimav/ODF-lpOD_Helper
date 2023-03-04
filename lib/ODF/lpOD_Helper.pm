@@ -1,4 +1,3 @@
-# $Id: lpOD_Helper.pm,v 1.13 2022/07/15 20:05:51 jima Exp jima $
 # -----------------------------------------------------------------------------
 # Copyright © Jim Avera 2012-2023
 # License: Public Domain or CC0
