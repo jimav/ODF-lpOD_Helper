@@ -196,6 +196,10 @@ The name must be given by [name => "STYLENAME"] somewhere in PROPs.
 
 Generate a new (not currently used) table name of the form "Table<NUM>".
 
+=head2 hashtostring($hashref)
+
+Generates a single string representing the keys and values of a hash
+
 =head2 fmt_node($node)
 
 Format a single node for debug messages.
@@ -236,6 +240,8 @@ is v1.126, released in 2014.
  License for ODF::lpOD_Helper : Public Domain or CC0
  See https://creativecommons.org/publicdomain/zero/1.0/
 
+=for Pod::Coverage oops
+
 =cut
 
 
@@ -248,16 +254,14 @@ use Exporter 'import';
 our @EXPORT = qw(
   my_search
   subst_content
-  disconnected_style
+  __disconnected_style
   automatic_style common_style
   self_or_parent
   fmt_match fmt_node fmt_tree
   gen_table_name
 );
 our @EXPORT_OK = qw(
-  my_get_text_func
   insert_content
-  unabbrev_props
   hashtostring
   $auto_pfx
 );
@@ -359,7 +363,7 @@ my $table_prop_re = qr/^(?:width|together|keep.with.next|display
                         )$/x;
 
 # Translate some single-item abbreviated properties
-sub unabbrev_props($) {
+sub __unabbrev_props($) {
   state $abbr_props = {
     "center"      =>  [align => "center"],
     "left"        =>  [align => "left"],
@@ -389,9 +393,9 @@ sub unabbrev_props($) {
 # Create a style.  Paragraph properties may include recognized text
 # style properties, which are internally segregated and put into the
 # required 'area' property and text style.  Fonts are registered as needed.
-sub disconnected_style($$@) {
+sub __disconnected_style($$@) {
   my ($context, $family, @input_props) = @_;
-  my %props = @{ unabbrev_props(\@input_props) };
+  my %props = @{ __unabbrev_props(\@input_props) };
 
   # Work around ODF::lpOD::odf_create_style bug which deletes {parent} in
   # a cloned style
@@ -452,7 +456,7 @@ sub automatic_style($$@);
 sub automatic_style($$@) {
   my ($context, $family, @input_props) = @_;
   my $doc = $context->get_document // oops;
-  my %props = @{ unabbrev_props(\@input_props) };
+  my %props = @{ __unabbrev_props(\@input_props) };
 
   state %style_caches;  # family => { digest_of_props => stylename }
   state %counters;
@@ -468,7 +472,7 @@ sub automatic_style($$@) {
       $$cache{$existing_key} //= $stylename;
     }
     $$cache{$cache_key} = $stylename;
-    my $object = disconnected_style($context,$family, %props, name=>$stylename);
+    my $object = __disconnected_style($context,$family, %props, name=>$stylename);
     return $doc->insert_style($object, automatic => TRUE);
   } else {
     return $doc->get_style($family, $stylename);
@@ -477,9 +481,9 @@ sub automatic_style($$@) {
 
 sub common_style($$@) {
   my ($context, $family, @input_props) = @_;
-  my %props = @{ unabbrev_props(\@input_props) };
+  my %props = @{ __unabbrev_props(\@input_props) };
   croak "common_style must specify 'name'\n" unless $props{name};
-  my $object = disconnected_style($context, $family, %props);
+  my $object = __disconnected_style($context, $family, %props);
   return $context->get_document->insert_style($object, automatic => FALSE);
 }
 
@@ -507,7 +511,7 @@ sub gen_table_name($) {
 #    return ODF::lpOD::Common::input_conversion( $node->get_text() );
 # ???
 
-sub my_get_text_func($) {
+sub _my_get_text_func($) {
   my $node = shift;
   # Derived from ODF::lpOD::TextElement::get_text
   my $text;
@@ -611,7 +615,7 @@ sub insert_content($$@) {
 sub fmt_match($) { # for debugging
   my $href = shift;
   my %r = %$href;
-  my @segments = map { "$_ with text ".vis(my_get_text_func($_)) } @{$r{segments}};
+  my @segments = map { "$_ with text ".vis(_my_get_text_func($_)) } @{$r{segments}};
   delete $r{segments};
   local $_ = ivis('%r'); s/\)$// or oops;
   return $_.", segments => [".join("\n   ",@segments)."])";
@@ -691,7 +695,7 @@ my $show = $debug || 0; #("@content" =~ /NOTES|OTHER.*INFO/);
       = $para->descendants_or_self(qr/^(#PCDATA|text:tab|text:line-break|text:s)$/);
     foreach my $e (@elements) {
       next if $seen_text_nodes{$e}; # incremented below after possible re-visit
-      my $etext = my_get_text_func($e);
+      my $etext = _my_get_text_func($e);
       push @segments, { obj => $e,
                         offset => length($oldtext),
                         length => length($etext),
