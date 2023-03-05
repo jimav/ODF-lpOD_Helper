@@ -186,6 +186,27 @@ like( Data::Dumper::Interp->new()->Foldwidth(0)
      ->vis(bless do{ \(my $x = []) },"Foo::Bar"), 
      qr/^"Foo::Bar=\S+\(0x[0-9a-f]+\)"$/ );
 
+## Once hit an assertion
+#{ my @data = ( { crc => -1 } );
+#  push @data, \@data;
+#
+#  say "DD normal",
+#    Data::Dumper->new([\@data])
+#    ->Useqq(1)
+#    ->Terse(1)
+#    ->Indent(1)
+#    ->Quotekeys(0)
+#    ->Sparseseen(1)
+#    ->Dump;
+#
+#  my $obj = visnew;
+#  $obj->Values([\@data]);
+#  say "Hybrid: ", &Data::Dumper::Dump($obj);
+#  
+#  say "vis: ", visnew->Debug(1)->Foldwidth(0)->vis(\@data);
+#}
+#die "tex";
+
 #say vis bless( do{ \(my $x = []) } );
 
 is( Data::Dumper::Interp->new()->Foldwidth(4)->vis( [ [ ], 12345 ] ),

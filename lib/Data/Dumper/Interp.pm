@@ -19,8 +19,10 @@ use 5.010;  # say, state
 use 5.018;  # lexical_subs
 use feature qw(say state lexical_subs);
 use feature 'lexical_subs'; no warnings "experimental::lexical_subs";
-package  Data::Dumper::Interp;
 
+package  Data::Dumper::Interp;
+# VERSION from Dist::Zilla::Plugin::OurPkgVersion
+# DATE from Dist::Zilla::Plugin::OurDate
 
 package  # newline prevents Dist::Zilla::Plugin::PkgVersion from adding $VERSION
   DB;
@@ -63,20 +65,25 @@ sub _dbvisq(_) {  # for our internal debugging messages
   $s
 }
 sub _dbavis(@) { "(" . join(", ", map{_dbvis} @_) . ")" }
+
 our $_dbmaxlen = 300;
 sub _dbrawstr(_) { "«".(length($_[0])>$_dbmaxlen ? substr($_[0],0,$_dbmaxlen-3)."..." : $_[0])."»" }
 sub _dbstr($) {
   local $_ = shift;
   s/\n/\N{U+2424}/sg; # a special NL glyph
   s/[\x{00}-\x{1F}]/ chr( ord($&)+0x2400 ) /aseg;
-  _dbrawstr($_) . " (".length().")";
+  $_
+  #_dbrawstr($_) . " (".length().")";
 }
 sub _dbstrposn($$) {
   local $_ = shift;
   my $posn = shift;
-  local $_dbmaxlen = max($_dbmaxlen+2, $posn+2);
-  $_ = _dbstr($_);
-  $_ .= "\n " . (" " x $posn) . "^";
+  #local $_dbmaxlen = max($_dbmaxlen+2, $posn+2);
+  #$_ = _dbstr($_);
+  #$_ .= "\n " . (" " x $posn) . "^";
+  local $_dbmaxlen = max($_dbmaxlen+8, $posn+8);
+  my $visible = _dbstr($_); # non-printables replaced by single-char indicators
+  "posn=$posn shown at '(<<HERE)':". substr($visible, 0, $posn+1)."(<<HERE)".substr($visible,$posn+1)
 }
 sub oops(@) { @_ = ("\n".__PACKAGE__." oops:",@_,"\n  "); goto &Carp::confess }
 
@@ -357,7 +364,7 @@ sub _doedits {
   return undef
     unless defined($item);
   if ($maxstringwidth) {
-    if (ref($item) eq "") { # a scalar
+    if (ref($item) eq "") { # a non-ref scalar
       if (!_show_as_number($item)
           && length($item) > $maxstringwidth + length($truncsuf)) {
         return __COPY_NEEDED if $testonly;
@@ -442,8 +449,9 @@ sub _doedits {
                                         : $magic_numstr_prefix;
     $item = $prefix.$item;
   }
+
   $item
-}
+}#_doedits
 
 sub Dump {
   my $self = $_[0];
@@ -474,7 +482,7 @@ sub Dump {
     my $truncsuf = $self->{Truncsuffix};
     $objects = [ $objects ] unless ref($objects) eq 'ARRAY';
     $objects = undef unless grep{ $_ } @$objects; # all false?
-    my $callback = sub {
+    my $callback = sub { # (item, testonly)
       $self->_doedits(@_, $maxstringwidth, $truncsuf, $objects)
     };
     eval {
@@ -520,11 +528,12 @@ sub Dump {
 
 sub _x_same_items($$) {
   my ($a, $b) = @_;
-  return 0 if ref($a) ne ref($b); # different types or different classes
-  return 1 if !defined($a) and !defined($b);
-  return 0 if !defined($a) or !defined($b);
   # avoid executing any overloads
-  ref($a) ? (refaddr($a)==refaddr($b)) : ($a eq $b)
+  ref($a) ne ""
+    ? (ref($b) ne "" && refaddr($a) == refaddr($b))
+    : !defined($a)
+      ? !defined($b)
+      : defined($b) && ref($b) eq "" && ($a eq $b)
 }
 sub _same_items($$) {
   my ($a, $b) = @_;
@@ -548,7 +557,7 @@ sub __copysubst($$;$$) {
     my $testresult = __copysubst($item, $coderef, $testonly, $seenhash);
     return $item
       if _same_items($item, $testresult)
-         && ref($testresult) || u($testresult) ne __COPY_NEEDED;
+         && (ref($testresult) ne "") || u($testresult) ne __COPY_NEEDED;
     #say "## copy needed!";
     $testonly = 0;
     $seenhash = {};
@@ -565,6 +574,12 @@ sub __copysubst($$;$$) {
   }
   $rt = reftype($item);
   if ($rt) {
+    # FIXME BUG HERE: With a multiply-referenced datum, the first-encountered
+    #   ref is replaced by a ref to a modified value, and other refs are
+    #   left untouched after a seenhash hit.
+    #
+    #   We want some way to replace a multiply-referenced item and make
+    #   all the refs to it point to the single replacement item.
     $seenhash->{ refaddr($item) }++;
     my $class = blessed($item);
 
@@ -578,7 +593,7 @@ sub __copysubst($$;$$) {
       $item = [ map{ __copysubst($_, $coderef, $testonly, $seenhash) }
                    @$item ];
       return __COPY_NEEDED
-        if $testonly && grep {u() eq __COPY_NEEDED} @$item;
+        if $testonly && grep {u($_) eq __COPY_NEEDED} @$item;
     }
     elsif ($rt eq "HASH") {
       $item = {
@@ -588,8 +603,9 @@ sub __copysubst($$;$$) {
                 } %$item
       };
       return __COPY_NEEDED
-        if $testonly && grep {u() eq __COPY_NEEDED} %$item;
+        if $testonly && grep {u($_) eq __COPY_NEEDED} %$item;
     }
+    #??? won't this expose us to overload operators !?! FIXME
     bless $item, $class if $class; # re-create objects
   }
   # Else not a ref, or else a ref we don't know how to handle.
@@ -608,7 +624,7 @@ sub _show_as_number(_) {
   return 0 if !defined $value;
 
   # if the utf8 flag is on, it almost certainly started as a string
-  return 0 if !ref($value) && utf8::is_utf8($value);
+  return 0 if (ref($value) eq "") && utf8::is_utf8($value);
 
   # There was a Perl bug where looks_like_number() provoked a warning from
   # BigRat.pm if it is called under 'use bigrat;' so we must not do that.
@@ -631,7 +647,7 @@ sub _show_as_number(_) {
       };
     }
     no warnings "once";
-    # Use FF so we can see what $value was in debug messages below
+    # Use FF... so we can see what $value was in debug messages below
     my $dummy = ($value & "\x{FF}\x{FF}\x{FF}\x{FF}\x{FF}\x{FF}\x{FF}\x{FF}");
   };
   if ($@) {
@@ -650,8 +666,8 @@ sub _show_as_number(_) {
     # Unknown problem, treat as a string
     return 0;
   }
-  elsif (ref($uand_str_result) && $uand_str_result =~ /NaN|Inf/) {
-    # unary & returned a an object representing Nan or Inf
+  elsif (ref($uand_str_result) ne "" && $uand_str_result =~ /NaN|Inf/) {
+    # unary & returned an object representing Nan or Inf
     # (e.g. Math::BigFloat) so $value must be numberish.
     return 1;
   }
@@ -816,7 +832,10 @@ sub _postprocess_DD_result {
   $linelen = 0;
   $outstr = "";
   $indent_unit = 2; # make configurable?
+{
+  our $_dbmaxlen = INT_MAX;
   say "##RAW ",_dbrawstr($_) if $debug;
+}
 
   # Fit everything in a single line if possible.
   #
@@ -883,7 +902,7 @@ sub _postprocess_DD_result {
       foreach (@stack[$bx+1 .. $#stack]) { $_->[0] += length($spaces) }
       ($reserved -= length($spaces)) >= 0 or oops;
       $stack[$bx]->[1] |= BLK_CANTSPACE;
-      say "#***>space inserted b4 first item in bx $bx" if $debug;
+      say "##***>space inserted b4 first item in bx $bx" if $debug;
     }
     my $indent = ($bx+1) * $indent_unit;
     # Remove any spaces at what will become end of line before a fold
@@ -903,7 +922,7 @@ sub _postprocess_DD_result {
     foreach ($bx+1 .. $#stack) { $stack[$_]->[0] += $delta }
     substr($outstr, $foldposn, $replacelen) = "\n" . (" " x $indent);
     $maxlinelen = $foldwidthN;
-    say "   After fold: stack=${\_fmt_stack()} length(outstr)=${\length($outstr)} llen=$linelen maxllen=$maxlinelen res=$reserved\n",_dbstr($outstr) if $debug;
+    say "##   After fold: stack=${\_fmt_stack()} length(outstr)=${\length($outstr)} llen=$linelen maxllen=$maxlinelen res=$reserved\n",_dbstr($outstr) if $debug;
   }#_fold_block
 
   my ($previtem, $prevflags);
@@ -923,7 +942,7 @@ sub _postprocess_DD_result {
     __subst_controlpics if $controlpics;
     __change_quotechars($qq) if $qq;
 
-say "atom ",_dbrawstr($_),_fmt_flags($flags), "  stack:", _fmt_stack(), " os=",_dbstr($outstr)
+say "##atom(",(caller(0))[2],")(",_dbrawstr($previtem),") ",_dbrawstr($_),_fmt_flags($flags), "  stack:", _fmt_stack(), " os=",_dbstr($outstr)
   if $debug;
 
     return if ($flags & NOOP);
@@ -1014,8 +1033,10 @@ say "atom ",_dbrawstr($_),_fmt_flags($flags), "  stack:", _fmt_stack(), " os=",_
       pop @stack;
     }
   }
-  my sub pushlevel($) { atom( $_[0], OPENER ); }
-  my sub poplevel($) { atom( $_[0], CLOSER ); }
+  #my sub pushlevel($) { atom( $_[0], OPENER ); }
+  #my sub poplevel($) { atom( $_[0], CLOSER ); }
+  my sub pushlevel($) { push @_, OPENER; goto &atom } # so debug trace shows our caller
+  my sub poplevel($)  { push @_, CLOSER; goto &atom }
   my sub triple($) {
     my $item = shift;
     say "##triple '$item'" if $debug;
@@ -1053,14 +1074,14 @@ say "atom ",_dbrawstr($_),_fmt_flags($flags), "  stack:", _fmt_stack(), " os=",_
     elsif (/\G(?:my\s+)?\$(?:${userident_re}|\s*->\s*|${balanced_re})++/gc) { atom($&) }
 
     elsif (/\G\b[A-Za-z_][A-Za-z0-9_]*+\b/gc) { atom($&) } # bareword?
-    elsif (/\G\b-?\d[\deE\.]*+\b/gc)          { atom($&) } # number
+    elsif (/\G-?\d[\deE\.]*+\b/gc)            { atom($&) } # number
     elsif (/\G\s*=>\s*/gc)                    { triple($&) }
     elsif (/\G\s*=(?=[\w\s'"])\s*/gc)         { triple($&) }
     elsif (/\G:*${pkgname_re}/gc)             { atom($&) }
     elsif (/\G[\[\{\(]/gc) { pushlevel($&) }
     elsif (/\G[\]\}\)]/gc) { poplevel($&)  }
     elsif (/\G\s+/sgc)                        {          }
-    else { oops "UNPARSED ",_dbstr(substr($_,pos//0,30)."..."),"\   at pos ",u(pos()), " ",_dbstrposn($_,pos()//0);
+    else { oops "UNPARSED ",_dbstr(substr($_,pos//0,30)."..."),"  ",_dbstrposn($_,pos()//0);
     }
   }
   atom(""); # push through the lookahead item
