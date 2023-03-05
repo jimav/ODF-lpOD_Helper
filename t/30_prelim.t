@@ -183,8 +183,9 @@ is( dvis('\%{}'), '\%{}' );
 
 # Once hit an assertion
 like( Data::Dumper::Interp->new()->Foldwidth(0)
-     ->vis(bless do{ \(my $x = []) },"Foo::Bar"), 
-     qr/^"Foo::Bar=\S+\(0x[0-9a-f]+\)"$/ );
+        ->vis(bless do{ \(my $x = []) },"Foo::Bar"), 
+      qr/^"Foo::Bar=\S+\(0x[0-9a-f]+\)"$/ 
+);
 
 ## Once hit an assertion
 #{ my @data = ( { crc => -1 } );

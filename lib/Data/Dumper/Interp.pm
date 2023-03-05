@@ -358,76 +358,89 @@ my $magic_numstr_prefix = "<NUMSTRMagic$unique>";
 my $COPY_NEEDED = "_CN_$unique";
 sub __COPY_NEEDED() { $COPY_NEEDED }
 
-sub _doedits {
+sub _doedits { 
+  # returns 0 if ok as-is, 
+  #         __COPY_NEEDED with $testonly if changing
+  #         \$replacement if changing
   my $self = shift; oops unless @_ == 5;
   my ($item, $testonly, $maxstringwidth, $truncsuf, $objects) = @_;
-  return undef
+  return 0
     unless defined($item);
   if ($maxstringwidth) {
     if (ref($item) eq "") { # a non-ref scalar
       if (!_show_as_number($item)
           && length($item) > $maxstringwidth + length($truncsuf)) {
         return __COPY_NEEDED if $testonly;
-        $item = substr($item,0,$maxstringwidth).$truncsuf;
+        return \("".substr($item,0,$maxstringwidth).$truncsuf);
       }
     }
   }
   my $overload_depth;
-  while (my $class = blessed($item)) {
-    # Some kind of object reference
-    last unless any { ref() eq "Regexp" ? $class =~ $_
-                                        : ($_ eq "1" || $_ eq $class)
-                    } @$objects;
-    if (overload::Overloaded($item)) {
-      # N.B. Overloaded(...) also returns true if it's a NAME of an
-      # overloaded package; should not happen in this case.
-      warn("Recursive overloads on $item ?\n"),last
-        if $overload_depth++ > 10;
-      # Stringify objects which have the stringification operator
-      if (overload::Method($class,'""')) {
-        return __COPY_NEEDED if $testonly;
-        my $prefix = _show_as_number($item) ? $magic_num_prefix : "";
-        $item = $item.""; # stringify;
-        if ($item !~ /^${class}=REF/) {
-          $item = "${prefix}($class)$item";
-        } else {
-          # The "stringification" looks like Perl's default, so don't prefix it
+  my $changed;
+  CHECK: { 
+    if (my $class = blessed($item)) {
+      # Some kind of object reference
+      last unless any { ref() eq "Regexp" ? $class =~ $_
+                                          : ($_ eq "1" || $_ eq $class)
+                      } @$objects;
+      if (overload::Overloaded($item)) {
+        # N.B. Overloaded(...) also returns true if it's a NAME of an
+        # overloaded package; should not happen in this case.
+        warn("Recursive overloads on $item ?\n"),last
+          if $overload_depth++ > 10;
+        # Stringify objects which have the stringification operator
+        if (overload::Method($class,'""')) {
+          return __COPY_NEEDED if $testonly;
+          my $prefix = _show_as_number($item) ? $magic_num_prefix : "";
+          $item = $item.""; # stringify;
+          if ($item !~ /^${class}=REF/) {
+            $item = "${prefix}($class)$item";
+            $changed = 1;
+          } else {
+            # The "stringification" looks like Perl's default, so don't prefix it
+          }
+          redo CHECK
         }
-        next
+        # Substitute the virtual value behind an overloaded deref operator
+        elsif (overload::Method($class,'@{}')) {
+          return __COPY_NEEDED if $testonly;
+          $item = \@{ $item };
+          $changed = 1;
+          redo CHECK
+        }
+        elsif (overload::Method($class,'%{}')) {
+          return __COPY_NEEDED if $testonly;
+          $item = \%{ $item };
+          $changed = 1;
+          redo CHECK;
+        }
+        elsif (overload::Method($class,'${}')) {
+          return __COPY_NEEDED if $testonly;
+          $item = \${ $item };
+          $changed = 1;
+          redo CHECK;
+        }
+        elsif (overload::Method($class,'&{}')) {
+          return __COPY_NEEDED if $testonly;
+          $item = \&{ $item };
+          $changed = 1;
+          redo CHECK;
+        }
+        elsif (overload::Method($class,'*{}')) {
+          return __COPY_NEEDED if $testonly;
+          $item = \*{ $item };
+          $changed = 1;
+          redo CHECK;
+        }
       }
-      # Substitute the virtual value behind an overloaded deref operator
-      elsif (overload::Method($class,'@{}')) {
+      # No overloaded operator (that we care about); just stringify the ref
+      unless ($class eq "Regexp") {  # unless Perl will handle it nicely
         return __COPY_NEEDED if $testonly;
-        $item = \@{ $item };
-        next
-      }
-      elsif (overload::Method($class,'%{}')) {
-        return __COPY_NEEDED if $testonly;
-        $item = \%{ $item };
-        next
-      }
-      elsif (overload::Method($class,'${}')) {
-        return __COPY_NEEDED if $testonly;
-        $item = \${ $item };
-        next
-      }
-      elsif (overload::Method($class,'&{}')) {
-        return __COPY_NEEDED if $testonly;
-        $item = \&{ $item };
-        next
-      }
-      elsif (overload::Method($class,'*{}')) {
-        return __COPY_NEEDED if $testonly;
-        $item = \*{ $item };
-        next
+        $item = "$item";
+        $changed = 1;
+        redo CHECK;
       }
     }
-    # No overloaded operator (that we care about); just stringify the ref
-    unless ($class eq "Regexp") {  # unless Perl will handle it nicely
-      return __COPY_NEEDED if $testonly;
-      $item = "$item"
-    }
-    last
   }
   # Prepend a "magic prefix" (later removed) to items which Data::Dumper is
   # likely to represent wrongly or anyway not how we want:
@@ -448,9 +461,10 @@ sub _doedits {
     my $prefix = _show_as_number($item) ? $magic_num_prefix
                                         : $magic_numstr_prefix;
     $item = $prefix.$item;
+    $changed = 1;
   }
 
-  $item
+  return $changed ? \$item : 0
 }#_doedits
 
 sub Dump {
@@ -515,9 +529,11 @@ sub Dump {
 # is returned).
 #
 # A "testonly" parameter to the callback indicates that the callback
-# may return __COPY_NEEDED as soon as it determines that a substitute
-# value will probably be provided; the callback may ignore this parameter and
-# always just return the substitute value, if that is easier.
+# may return __COPY_NEEDED as soon as it determines that a substitution
+# will probably be needed.  The callback may ignore the "testonly" parameter.
+#
+# Otherwise the callback must return 1 if the value is ok as-is, or
+# a reference to a substitute value.
 #
 # Substitute values may not use tied variables or overloads because the
 # copy-and-substitute process may cause tie handlers to encounter unexpected
@@ -526,89 +542,111 @@ sub Dump {
 # overload is desired, the callback must perform the overloaded operation(s)
 # and return the virtual content as a substition value.
 
-sub _x_same_items($$) {
-  my ($a, $b) = @_;
-  # avoid executing any overloads
-  ref($a) ne ""
-    ? (ref($b) ne "" && refaddr($a) == refaddr($b))
-    : !defined($a)
-      ? !defined($b)
-      : defined($b) && ref($b) eq "" && ($a eq $b)
-}
-sub _same_items($$) {
-  my ($a, $b) = @_;
-  my $r = _x_same_items($a,$b);
-  #say "# _same_items ",_dbvis($a)," ",_dbvis($b)," = ", _dbvis($r);
-  $r
-}
+sub __mods_needed($$$);
+sub __mods_needed($$$) { # returns False if ok as-is, i.e. no modificaiton needed
+  no warnings 'recursion';
+  my ($item, $coderef, $seenhash) = @_;
 
+  my $r = $coderef->($item, 1); # "testonly"
+  return(1) if reftype($r) || $r eq __COPY_NEEDED;
+
+  my $rt = reftype($item);
+  if (!$rt) {
+    # Not a reference
+    return 0
+  }
+  
+  # It is a ref to something
+  return 0 if $seenhash->{ refaddr($item) }++;
+
+  if ($rt eq "REF" || $rt eq "SCALAR") {
+    return __mods_needed(${ $item }, $coderef, $seenhash);
+  }
+  elsif ($rt eq "ARRAY") {
+    foreach (@$item) {
+      return 1 if __mods_needed($_, $coderef, $seenhash);
+    }
+    return 0
+  }
+  elsif ($rt eq "HASH") {
+    while (my($k, $v) = each %$item) {
+      return 1 if __mods_needed($k, $coderef, $seenhash);
+      return 1 if __mods_needed($v, $coderef, $seenhash);
+    }
+    return 0
+  }
+  # Else it's a ref we don't know how to handle.
+  return 0
+}
 sub __copysubst($$;$$);
 sub __copysubst($$;$$) {
-  my ($item, $coderef, $testonly, $seenhash) = @_;
   no warnings 'recursion';
-  $seenhash //= {};
-  my $rt = reftype($item);
-  if ($rt) {
-    return $item if $seenhash->{ refaddr($item) }; # increment only below
-  }
-  if (! defined $testonly) {
-    #say "## testing ", _dbvis($item);
-    $testonly = 1;
-    my $testresult = __copysubst($item, $coderef, $testonly, $seenhash);
-    return $item
-      if _same_items($item, $testresult)
-         && (ref($testresult) ne "") || u($testresult) ne __COPY_NEEDED;
-    #say "## copy needed!";
-    $testonly = 0;
+  my ($item, $coderef, $seenhash) = @_;
+
+  if (! defined $seenhash) { # the outer call
+    return $item 
+      if !__mods_needed($item, $coderef, {});
     $seenhash = {};
   }
-
+  # Changes are needed. 
+  # Copy everything, replacing as controlled by the callback.
+  # Refs to possibly-tied variables are always replaced by not-tied copies.
+  
+  # If the thing passed as $item has already been replaced, 
+  # return the replacement item.
+  my $addr_of_arg = refaddr(\$_[0]);
+  my $ref_arg_repl = $seenhash->{$addr_of_arg};
+  return $$ref_arg_repl if $ref_arg_repl;
+  
+  # Register the address of the thing passed as $item so deeper refs to it
+  # will be replaced with refs to the $item we will return
+  $seenhash->{ $addr_of_arg } = \$item;
+  
   my $count;
-  for(;;) {
-    my $nitem = $coderef->($item, $testonly);
-    last if _same_items($item, $nitem);
-    return __COPY_NEEDED
-      if $testonly && u($nitem) eq __COPY_NEEDED;
-    $item = $nitem;
-    oops "Too many repeated substitutions" if ++$count > 10;
-  }
-  $rt = reftype($item);
-  if ($rt) {
-    # FIXME BUG HERE: With a multiply-referenced datum, the first-encountered
-    #   ref is replaced by a ref to a modified value, and other refs are
-    #   left untouched after a seenhash hit.
-    #
-    #   We want some way to replace a multiply-referenced item and make
-    #   all the refs to it point to the single replacement item.
-    $seenhash->{ refaddr($item) }++;
-    my $class = blessed($item);
 
-    if ($rt eq "REF" || $rt eq "SCALAR") {
-      my $copy = __copysubst(${ $item }, $coderef, $testonly, $seenhash);
-      return __COPY_NEEDED
-        if $testonly && u($copy) eq __COPY_NEEDED;
-      $item = \$copy;
+  TEST: 
+  {
+    my $rt = reftype($item);
+    my $refaddr;
+    if ($rt) {
+      # If $item is a ref to something which has been replaced,
+      # return a ref to the replacement
+      my $ref_repl = $seenhash->{ $refaddr = refaddr($item) };
+      return $ref_repl if $ref_repl;
+    }    
+
+    # Replace value of $item if the callback says to
+    my $r = $coderef->($item, 0); # not testonly 
+    if (refaddr($r)) {
+      oops "Too many repeated substitutions" if ++$count > 10;
+      $item = $$r;
+      redo TEST;
     }
-    elsif ($rt eq "ARRAY") {
-      $item = [ map{ __copysubst($_, $coderef, $testonly, $seenhash) }
-                   @$item ];
-      return __COPY_NEEDED
-        if $testonly && grep {u($_) eq __COPY_NEEDED} @$item;
+    oops if $r eq __COPY_NEEDED;
+
+    if ($rt) {
+      my $class = blessed($item);
+
+      # Descend into containers
+      if ($rt eq "REF" || $rt eq "SCALAR") {
+        $item = \__copysubst(${ $item }, $coderef, $seenhash);
+      }
+      elsif ($rt eq "ARRAY") {
+        $item = [ map{ __copysubst($_, $coderef, $seenhash) } @$item ];
+      }
+      elsif ($rt eq "HASH") {
+        $item = {
+          pairmap { ( __copysubst($a, $coderef, $seenhash)
+                      =>
+                      __copysubst($b, $coderef, $seenhash) )
+                  } %$item
+        };
+      }
+      #??? won't this expose us to overload operators !?! FIXME
+      bless $item, $class if $class; # re-create objects
     }
-    elsif ($rt eq "HASH") {
-      $item = {
-        pairmap { ( __copysubst($a, $coderef, $testonly, $seenhash)
-                    =>
-                    __copysubst($b, $coderef, $testonly, $seenhash) )
-                } %$item
-      };
-      return __COPY_NEEDED
-        if $testonly && grep {u($_) eq __COPY_NEEDED} %$item;
-    }
-    #??? won't this expose us to overload operators !?! FIXME
-    bless $item, $class if $class; # re-create objects
+
   }
-  # Else not a ref, or else a ref we don't know how to handle.
   $item
 }#__copysubst
 
