@@ -1,10 +1,9 @@
-#!/usr/bin/perl
-use strict; use warnings  FATAL => 'all'; use feature qw(state say); use utf8;
-#use open IO => ':locale';
-use open ':std', ':encoding(UTF-8)';
-STDOUT->autoflush();
-STDERR->autoflush();
-select STDERR;
+#!/usr/bin/env perl
+use FindBin qw($Bin);
+use lib $Bin;
+use t_Setup qw/bug :silent/; # strict, warnings, Test::More, Carp etc.
+
+use Data::Dumper::Interp;
 
 # Verify evaluation of overloaded deref operators.
 
@@ -50,10 +49,6 @@ use overload  '*{}' => sub { \*{Global} },
 ######################### MAIN IS HERE #####################3
 
 package main;
-
-use Test::More;
-use Data::Dumper::Interp;
-use Carp;
 
 $Data::Dumper::Interp::Foldwidth = 0; # disable wrap
 

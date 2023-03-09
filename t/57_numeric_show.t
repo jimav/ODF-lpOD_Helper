@@ -1,20 +1,15 @@
-#!/usr/bin/perl
-use strict; use warnings  FATAL => 'all'; use feature qw(state say); use utf8;
-#use open IO => ':locale';
-use open ':std', ':encoding(UTF-8)';
-STDOUT->autoflush();
-STDERR->autoflush();
-select STDERR;
+#!/usr/bin/env perl
+use FindBin qw($Bin);
+use lib $Bin;
+use t_Setup qw/bug silent/; # strict, warnings, Test::More, Carp etc.
 
 #
 # Verify that internal function _show_as_number() distinguishes numerics
 # from strings which look like numbers, e.g. "0", and various corner cases.
 #
 
-use Test::More;
 use Data::Dumper::Interp;
 use Scalar::Util qw(blessed);
-use Carp;
 
 use Math::BigInt;
 use Math::BigFloat;
@@ -60,6 +55,14 @@ sub check_numeric($$) { # calls ok(...)
       if u($san2) ne u($san);
     diag @msgs;
   }
+#FUTURE
+#  if ($ok && defined($value)) {
+#    my $str = visnew->Useqq(1)->vis($value);
+#    if ( (!$expected) ne !!($str =~ /^"/) ) {
+#      diag "$desc value=",u($value)," not formatted accordingly:$str";
+#      $ok = 0;
+#    }
+#  }
   @_ = ($ok, $desc);
   goto &Test::More::ok;  # so caller's line number is shown on failure
 }

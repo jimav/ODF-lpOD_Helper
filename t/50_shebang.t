@@ -1,14 +1,18 @@
-#!/usr/bin/perl
-use strict; use warnings  FATAL => 'all'; use feature qw(state say);
-srand(42);  # so reproducible
-use feature 'lexical_subs'; no warnings "experimental::lexical_subs";
-use version 0.77;
-#use open IO => ':locale';
-use open ':std', ':encoding(UTF-8)';
-use utf8;
-select STDERR; $|=1; select STDOUT; $|=1;
+#!/usr/bin/env perl
+
+# Compile this before anything is modified by t_Setup
+our $test_sub;
+BEGIN {
+  local ${^WARNING_BITS} = 0; # undo -w flag
+  $test_sub = sub{ my $x = 42; };
+}
+
+use FindBin qw($Bin);
+use lib $Bin;
+use t_Setup qw/bug :silent/; # strict, warnings, Test::More, Carp etc.
+
 use Scalar::Util qw(blessed reftype looks_like_number);
-use Carp;
+
 $SIG{__WARN__} = sub { confess "warning trapped; @_" };
 use English qw( -no_match_vars );;
 use Data::Compare qw(Compare);
@@ -289,19 +293,20 @@ foreach (
   foreach my $value (@values) {
     foreach my $base (qw(vis avis hvis alvis hlvis dvis ivis)) {
       foreach my $q ("", "q") {
-        my $dumper = $base . $q . "(42";
-         $dumper .= ", 43" if $base =~ /^[ahl]/;
-         $dumper .= ")";
+        my $codestr = $base . $q . "(42";
+         $codestr .= ", 43" if $base =~ /^[ahl]/;
+         $codestr .= ")";
         {
           my $v = eval "{ local \$Data::Dumper::Interp::$confname = \$value;
                           my \$obj = Data::Dumper::Interp->new();
-                          \$obj->$dumper ;   # discard dump result
-                          \$obj->$confname() # fetch effective setting
+                          \$obj->$codestr ;   # discard dump result
+                          \$obj->$confname()  # fetch effective setting
                         }";
         confess "bug:$@ " if $@;
-        confess "\$Data::Dumper::Interp::$confname value is not preserved by $dumper\n",
+        confess "\$Data::Dumper::Interp::$confname value is not preserved by $codestr\n",
             "(Set \$Data::Dumper::Interp::$confname=",u($value)," but new()...->$confname() returned ",u($v),")\n"
-         unless (! defined $v and ! defined $value) || ($v eq $value);
+          unless (! defined($v) and ! defined($value))
+                 || (defined($v) and defined($value) and $v eq $value);
         }
       }
     }
@@ -437,8 +442,7 @@ $_ = "GroupA.GroupB";
   check $code, 'a vv=123 b', eval $code; }
 
 # Check Deparse support
-{ my $data = eval 'BEGIN{ ${^WARNING_BITS} = 0 } no strict; no feature;
-                   sub{ my $x = 42; };';
+{ my $data = $test_sub;
   { my $code = 'vis($data)'; check $code, 'sub { "DUMMY" }', eval $code; }
   local $Data::Dumper::Interp::Deparse = 1;
   { my $code = 'vis($data)'; check $code, qr/sub \{\s*my \$x = 42;\s*\}/, eval $code; }
@@ -530,12 +534,13 @@ EOF
   my $orig_data  = eval $orig_str; die "bug" if $@;
   foreach my $MSw (1..9) {
     # hand-truncate to create "expected result" data
-    (my $exp_str = $orig_str) =~ s{("?)([a-zA-Z]{$MSw})([a-zA-Z]*+)(\1)}{
+    (my $exp_str = $orig_str) =~ s{(")([a-zA-Z]{$MSw})([a-zA-Z]*+)(\1)}{
                                     local $_ = $1
                                              . $2
                                              . (length($3) > 3 ? "..." : $3)
                                              . $4 ;
-                                    $_ = "\"$_\"" if m{^\w.*\.\.\.$}; #bareword
+                                    # v5.005: hash keys are no longer substituted
+                                    #$_ = "\"$_\"" if m{^\w.*\.\.\.$}; #bareword
                                     $_
                                   }segx;
     local $Data::Dumper::Interp::MaxStringwidth = $MSw;

@@ -1,12 +1,7 @@
-#!/usr/bin/perl
-use strict; use warnings  FATAL => 'all'; use feature qw(state say); use utf8;
-srand(42);  # so reproducible
-#use open IO => ':locale';
-use open ':std', ':encoding(UTF-8)';
-select STDERR; $|=1; select STDOUT; $|=1;
-use Carp;
-
-use Test::More;
+#!/usr/bin/env perl
+use FindBin qw($Bin);
+use lib $Bin;
+use t_Setup qw/bug :silent/; # strict, warnings, Test::More, Carp etc.
 
 use Data::Dumper::Interp;
 
@@ -121,10 +116,9 @@ like( Data::Dumper::Interp->new()->Foldwidth(72)
   EEEEEEEEEEEEEEEEEEEEEEEEEE => \42,F => \\\43,G => qr/foo.*bar/six
 }
 EOF
-
-
+  
 is( vis [12345678,4], '[12345678,4]' );
-
+  
 is( vis [123456789,4], do{chomp(local $_=<<'EOF'); $_} );
 [ 123456789,
   4
@@ -218,7 +212,6 @@ is( Data::Dumper::Interp->new()->Foldwidth(4)->vis( [ [ ], 12345 ] ),
   12345
 ]
 EOF
-
 
 done_testing();
 

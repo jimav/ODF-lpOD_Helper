@@ -1,4 +1,7 @@
-#!/usr/bin/perl
+#!/usr/bin/env perl
+use FindBin qw($Bin);
+use lib $Bin;
+use t_Setup qw/bug silent/; # strict, warnings, Test::More, Carp etc.
 
 unless (($ENV{PERL_PERTURB_KEYS}//"") eq "2") {
   $ENV{PERL_PERTURB_KEYS} = "2"; # deterministic
