@@ -423,7 +423,6 @@ say "##repl (truncate...) at ",__LINE__ if $debug;
         if (overload::Method($class,'""')) {
 say "##repl (stringify...) at ",__LINE__ if $debug;
           my $prefix = _show_as_number($item) ? $magic_num_prefix : "";
-say "**BUG with _show_as_number and BigInt...";
 say "##repl prefix='$prefix' at ",__LINE__ if $debug;
           $item = $item.""; # stringify;
           if ($item !~ /^${class}=REF/) {
