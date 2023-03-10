@@ -72,6 +72,7 @@ $Data::Dumper::Interp::Objects = 0;
 is (vis \@$hvobj, '[0,1,2,3,4,5,6,7,8,9]', "\@{HVObj}");
 is (vis \%$hvobj, '{a => 111,b => 222,c => 333}', "\%{HVObj}");
 is (vis $hvobj, q!bless(do{\(my $o = [[0,1,2,3,4,5,6,7,8,9],{a => 111,b => 222,c => 333}])},'main::HVObj')!, "HVObj: Objects handling disabled");
+
 is (vis $hobj, q<bless(do{\(my $o = \42)},'main::HObj')>, "HObj: Objects handling disabled");
 is (vis \%$hobj, '{a => 111,b => 222,c => 333}', "\%{HObj}");
 is (vis $sobj, q<bless({},'main::SObj')>, "SObj: Objects handling disabled");
@@ -89,7 +90,7 @@ is (vis $hobj, '{a => 111,b => 222,c => 333}', "HObj: Objects handling enabled")
 is (hvis(%$hobj), '(a => 111,b => 222,c => 333)', "\%HObj: Objects handling enabled");
 is (vis $sobj, q<\\"virtual value">, "SObj: Objects handling enabled");
 is (vis $$sobj, q<"virtual value">, "\$SObj: Objects handling enabled");
-like(Data::Dumper::Interp->new()->Deparse(1)->vis($cobj), 
+like(Data::Dumper::Interp->new()->Deparse(1)->vis($cobj),
      qr/^sub\s*{.*['"]from virtual coderef['"]\s*;?\s*}$/,
      "Cobj: Objects handling enabled");
 is(vis $gobj, q!\*::GObj::Global! , "Gobj: Objects handling enabled");

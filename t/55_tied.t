@@ -4,6 +4,8 @@ use lib $Bin;
 use t_Setup qw/bug :silent/; # strict, warnings, Test::More, Carp etc.
 
 use Data::Dumper::Interp;
+use Scalar::Util qw(blessed reftype refaddr looks_like_number);
+use Clone qw/clone/;
 
 #
 # Verify handling of tied items (basically: Do no clone & substitute
@@ -54,7 +56,7 @@ our @ISA = ('Tie::StdHandle');
 use Carp;
 sub _checkwrite {
   my ($self, @args) = @_;
-  my ($methname) = ((caller(1))[3]); 
+  my ($methname) = ((caller(1))[3]);
   $methname =~ s/.*:://;
   confess "Write to tied filehandle" unless $main::Initializing;
   eval "\$self->SUPER::${methname}(\@args)"; die $@ if $@;
@@ -70,35 +72,45 @@ package main;
 
 our $Initializing = 1;
 
-sub specified_bignum($) { 
+sub specified_bignum($) {
   my $value = shift;
-  use bignum; 
+  use bignum;
   return ($value+0);
 }
-sub sample_bignum($) { 
+sub sample_bignum($) {
   my $addon = shift;
-  use bignum; 
-  return (999999999999999999999990000.123450000000007 + $addon);
+  use bignum;
+  return (999999999999999999543210000.123450000000007 + $addon);
 }
 
-my ($scal, @ary, %hash);
-my ($tscal, @tary, %thash);
+my ($scal, $scal0, @ary, %hash);
 
-tie $tscal, 'main::TieScalar'; 
-tie @tary,  'main::TieArray';  
-tie %thash, 'main::TieHash';   
+my $tscal0 = "PRE-TIED tscal0";
+my $tscal = "PRE-TIED tscal";
+my @tary = ("PRE-TIED tary[0]", "PRE-TIED tary[1]");
+my %thash= (k1 => "PRE-TIED thash{k1}", k2 => "PRE-TIED thash{k2}");
 
-# I don't know how to test this, but probably not relevant
-#tie *FH, 'main::TieHandle', ">", "/dev/null" or die $!;
+tie $tscal0, 'main::TieScalar';
+
+tie $tscal,  'main::TieScalar';
+tie @tary,   'main::TieArray';
+tie %thash,  'main::TieHash';
+
+# I don't know how to test this, but probably not that important:
+#   tie *FH, 'main::TieHandle', ">", "/dev/null" or die $!;
+#   ...
 
 $scal  = specified_bignum(123);
-$tscal = specified_bignum(456);
+$scal0 = 888;
+$tscal0 = 1999;
+
+$tscal = specified_bignum(1123);
 
 @ary  = (0..9, 3.14, sample_bignum(1));
-@tary = (0..9, 3.14, sample_bignum(2));
+@tary = (1000..1009, 1003.14, sample_bignum(1001));
 
-%hash  = (a => 111, b => 3.14, c => sample_bignum(3)); 
-%thash = (a => 111, b => 3.14, c => sample_bignum(4));
+%hash  = (a => 111, b => 3.14, c => sample_bignum(3));
+%thash = (a => 1111, b => 1003.14, c => sample_bignum(1003));
 
 $Initializing = 0;  # writes to tied items will now throw
 
@@ -111,11 +123,17 @@ is( vis(\"abc"), "\\\"abc\"", "\\\"abc\"" );
 
 foreach (
          ['$scal',  qr/^\Q(Math::Big\E\w+\Q)123\E$/],
-         ['$tscal', qr/^\Q(Math::Big\E\w+\Q)456\E$/],
-         ['\@ary', qr/^\Q[0,1,2,3,4,5,6,7,8,9,3.14,(Math::Big\E\w+\Q)999999999999999999999990001.123450000000007]\E$/ ],
-         ['\@tary', qr/^\Q[0,1,2,3,4,5,6,7,8,9,3.14,(Math::Big\E\w+\Q)999999999999999999999990002.123450000000007]\E$/ ],
-         ['\%hash', qr/^\Q{a => 111,b => 3.14,c => (Math::Big\E\w+\Q)999999999999999999999990003.123450000000007}\E$/ ],
-         ['\%thash', qr/^\Q{a => 111,b => 3.14,c => (Math::Big\E\w+\Q)999999999999999999999990004.123450000000007}\E$/ ],
+         ['$tscal', qr/^\Q(Math::Big\E\w+\Q)1123\E$/],
+
+         ['[ $scal ]', qr/^\Q[(Math::Big\E\w+\Q)123]\E$/],
+         ['[ $tscal ]', qr/^\Q[(Math::Big\E\w+\Q)1123]\E$/],
+
+         ['\@ary', qr/^\Q[0,1,2,3,4,5,6,7,8,9,3.14,(Math::Big\E\w+\Q)999999999999999999543210001.123450000000007]\E$/ ],
+         ['\@tary', qr/^\Q[1000,1001,1002,1003,1004,1005,1006,1007,1008,1009,1003.14,(Math::BigFloat)999999999999999999543211001.123450000000007]\E$/ ],
+
+         ['\%hash', qr/^\Q{a => 111,b => 3.14,c => (Math::Big\E\w+\Q)999999999999999999543210003.123450000000007}\E$/ ],
+         ['\%thash', qr/^\Q{a => 1111,b => 1003.14,c => (Math::Big\E\w+\Q)999999999999999999543211003.123450000000007}\E$/ ],
+
         )
 {
   my ($expr, $exp_re) = @$_;

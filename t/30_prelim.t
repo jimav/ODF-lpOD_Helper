@@ -110,15 +110,15 @@ EOF
 }
 
 like( Data::Dumper::Interp->new()->Foldwidth(72)
-     ->vis({ "" => "Emp", A=>111,BBBBB=>222,C=>{d=>888,e=>999},D=>{},EEEEEEEEEEEEEEEEEEEEEEEEEE=>\42,F=>\\\43, G=>qr/foo.*bar/xsi}), 
+     ->vis({ "" => "Emp", A=>111,BBBBB=>222,C=>{d=>888,e=>999},D=>{},EEEEEEEEEEEEEEEEEEEEEEEEEE=>\42,F=>\\\43, G=>qr/foo.*bar/xsi}),
     expstr2re(do{chomp($_=<<'EOF'); $_}) );
 { "" => "Emp",A => 111,BBBBB => 222,C => {d => 888,e => 999},D => {},
   EEEEEEEEEEEEEEEEEEEEEEEEEE => \42,F => \\\43,G => qr/foo.*bar/six
 }
 EOF
-  
+
 is( vis [12345678,4], '[12345678,4]' );
-  
+
 is( vis [123456789,4], do{chomp(local $_=<<'EOF'); $_} );
 [ 123456789,
   4
@@ -177,8 +177,8 @@ is( dvis('\%{}'), '\%{}' );
 
 # Once hit an assertion
 like( Data::Dumper::Interp->new()->Foldwidth(0)
-        ->vis(bless do{ \(my $x = []) },"Foo::Bar"), 
-      qr/^"Foo::Bar=\S+\(0x[0-9a-f]+\)"$/ 
+        ->vis(bless do{ \(my $x = []) },"Foo::Bar"),
+      qr/^"Foo::Bar=\S+\(0x[0-9a-f]+\)"$/
 );
 
 ## Once hit an assertion
@@ -197,7 +197,7 @@ like( Data::Dumper::Interp->new()->Foldwidth(0)
 #  my $obj = visnew;
 #  $obj->Values([\@data]);
 #  say "Hybrid: ", &Data::Dumper::Dump($obj);
-#  
+#
 #  say "vis: ", visnew->Debug(1)->Foldwidth(0)->vis(\@data);
 #}
 #die "tex";

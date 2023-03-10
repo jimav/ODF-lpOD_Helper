@@ -1,16 +1,15 @@
-# Copyright © Jim Avera 2012-2023.  This software may be distributed,
-# at your option, under the GNU General Public License version 1 or
-# any later version, or the Perl "Artistic License".
-#
-# The above license restrictions apply solely because this library contains
-# code snippets extracted from perl5db.pl and JSON::PP, which are marked
-# as such in adjacent comments in the code.  Those items are distributed
-# under the license terms given above.  The author of this library, Jim Avera,
-# has dedicated the remaining portions of this library to the Public Domain
-# per Creative Commons CC0 (http://creativecommons.org/publicdomain/zero/1.0/).
-# You may use portions other than the above-mentioned extracts without any
-# restriction, but the library as a whole (or any portion containing those
-# extracts) may only be distributred under the said software licenses.
+# License: Public Domain or CC0
+# See https://creativecommons.org/publicdomain/zero/1.0/
+# The author, Jim Avera (jim.avera at gmail) has waived all copyright and
+# related or neighboring rights.  Attribution is requested but is not required.
+
+# Previous versions of this module were licensed under GPL or Perl's
+# "Artistic License" (at the user's option) because this module contained
+# significant snippets of code copied from those modules.  However at this
+# point I've rewritten those bits completely, and while this modules still uses
+# ideas from those other modules, any remaining copied fragments are
+# incidental and clearly Fair Use.  Therefore I feel free to relicense this
+# file in the way I prefer, which is to place it in the Public Domain.
 
 ##FIXME: Blessed structures are not formatted because we treat bless(...) as an atom
 
@@ -87,7 +86,8 @@ sub _dbshow(_) {
 }
 sub _dbvis(_) {
   my $v = shift;
-  chomp( my $s = Data::Dumper->new([$v])->Useqq(1)->Terse(1)->Indent(0)->Sortkeys(\&__sortkeys)->Dump );
+  chomp( my $s = Data::Dumper->new([$v])
+                   ->Useqq(1)->Terse(1)->Indent(0)->Sortkeys(\&__sortkeys)->Dump );
   $s
 }
 sub _dbvisq(_) {
@@ -248,9 +248,9 @@ sub Foldwidth1 {  # experimental
 sub Terse  { confess "Terse() may not be called on ", __PACKAGE__, " objects" }
 sub Indent { confess "Indent() may not be called on ", __PACKAGE__, " objects" }
 
-sub _vistype {
+sub _Vistype {
   my($s, $v) = @_;
-  @_ >= 2 ? (($s->{_vistype} = $v), return $s) : $s->{_vistype};
+  @_ >= 2 ? (($s->{_Vistype} = $v), return $s) : $s->{_Vistype};
 }
 
 # Our new() takes no parameters and returns a default-initialized object,
@@ -275,6 +275,9 @@ sub new {
   my ($class) = @_;
   #(bless $class->SUPER::new([],[]), $class)->_config_defaults()
 
+  # FIXME? Stop being ISA(Data::Dumper) and make us "contain" a D::D object;
+  #   that way any carps from Data::Dumper will point into us instead
+  #   of our caller.
   my $r = (bless $class->SUPER::new([],[]), $class)->_config_defaults();
   $r
 }
@@ -301,12 +304,12 @@ sub __getobj_h {
 sub visnew()  { __PACKAGE__->new() }  # shorthand
 
 # These can be called as *FUNCTIONS* or as *METHODS*
-sub vis(_)    { &__getobj_s ->_vistype('s' )->Dump; }
-sub visq(_)   { &__getobj_s ->_vistype('s' )->Useqq(0)->Dump; }
-sub avis(@)   { &__getobj_a ->_vistype('a' )->Dump; }
-sub avisq(@)  { &__getobj_a ->_vistype('a' )->Useqq(0)->Dump; }
-sub hvis(@)   { &__getobj_h ->_vistype('h' )->Dump; }
-sub hvisq(@)  { &__getobj_h ->_vistype('h' )->Useqq(0)->Dump; }
+sub vis(_)    { &__getobj_s ->_Vistype('s')->Dump; }
+sub visq(_)   { &__getobj_s ->_Vistype('s')->Useqq(0)->Dump; }
+sub avis(@)   { &__getobj_a ->_Vistype('a')->Dump; }
+sub avisq(@)  { &__getobj_a ->_Vistype('a')->Useqq(0)->Dump; }
+sub hvis(@)   { &__getobj_h ->_Vistype('h')->Dump; }
+sub hvisq(@)  { &__getobj_h ->_Vistype('h')->Useqq(0)->Dump; }
 sub alvis(@)  { substr &avis,  1, -1 }  # bare List without parenthesis
 sub alvisq(@) { substr &avisq, 1, -1 }
 sub hlvis(@)  { substr &hvis,  1, -1 }
@@ -391,8 +394,8 @@ sub _replacement($) { # returns undef if ok as-is, otherwise a replacement value
   my ($self, $item) = @_;
   my ($maxstringwidth, $truncsuffix, $objects, $debug)
     = @$self{qw/MaxStringwidth Truncsuffix Objects Debug/};
-  
-say "##repl ENTRY item=$item=",_dbvis($item)," rt=",u(reftype($item))," at ",__LINE__ if $debug;
+
+say "@##repl START item=$item=",_dbvis($item)," rt=",u(reftype($item))," at ",__LINE__ if $debug;
 
   my $changed;
 
@@ -400,7 +403,7 @@ say "##repl ENTRY item=$item=",_dbvis($item)," rt=",u(reftype($item))," at ",__L
     if ($maxstringwidth) {
       if (!_show_as_number($item)
           && length($item) > $maxstringwidth + length($truncsuffix)) {
-say "##repl (truncate...) at ",__LINE__ if $debug;
+say "@##repl (truncate...) at ",__LINE__ if $debug;
         $item = "".substr($item,0,$maxstringwidth).$truncsuffix;
         $changed = 1
       }
@@ -421,9 +424,9 @@ say "##repl (truncate...) at ",__LINE__ if $debug;
           if $overload_depth++ > 10;
         # Stringify objects which have the stringification operator
         if (overload::Method($class,'""')) {
-say "##repl (stringify...) at ",__LINE__ if $debug;
+say "@##repl (stringify...) at ",__LINE__ if $debug;
           my $prefix = _show_as_number($item) ? $magic_num_prefix : "";
-say "##repl prefix='$prefix' at ",__LINE__ if $debug;
+say "@##repl prefix='$prefix' at ",__LINE__ if $debug;
           $item = $item.""; # stringify;
           if ($item !~ /^${class}=REF/) {
             $item = "${prefix}($class)$item";
@@ -435,31 +438,31 @@ say "##repl prefix='$prefix' at ",__LINE__ if $debug;
         }
         # Substitute the virtual value behind an overloaded deref operator
         if (overload::Method($class,'@{}')) {
-say "##repl (overload...) at ",__LINE__ if $debug;
+say "@##repl (overload...) at ",__LINE__ if $debug;
           $item = \@{ $item };
           $changed = 1;
           redo CHECK
         }
         if (overload::Method($class,'%{}')) {
-say "##repl (overload...) at ",__LINE__ if $debug;
+say "@##repl (overload...) at ",__LINE__ if $debug;
           $item = \%{ $item };
           $changed = 1;
           redo CHECK;
         }
         if (overload::Method($class,'${}')) {
-say "##repl (overload...) at ",__LINE__ if $debug;
+say "@##repl (overload...) at ",__LINE__ if $debug;
           $item = \${ $item };
           $changed = 1;
           redo CHECK;
         }
         if (overload::Method($class,'&{}')) {
-say "##repl (overload...) at ",__LINE__ if $debug;
+say "@##repl (overload...) at ",__LINE__ if $debug;
           $item = \&{ $item };
           $changed = 1;
           redo CHECK;
         }
         if (overload::Method($class,'*{}')) {
-say "##repl (overload...) at ",__LINE__ if $debug;
+say "@##repl (overload...) at ",__LINE__ if $debug;
           $item = \*{ $item };
           $changed = 1;
           redo CHECK;
@@ -468,7 +471,7 @@ say "##repl (overload...) at ",__LINE__ if $debug;
       # No overloaded operator (that we care about); just stringify the ref
       # except for refs to a regex which Data::Dumper formats nicely by itself.
       unless ($class eq "Regexp") {
-say "##repl (Regexp...) at ",__LINE__ if $debug;
+say "@##repl (Regexp...) at ",__LINE__ if $debug;
         $item = "$item";
         $changed = 1;
         redo CHECK;
@@ -492,14 +495,14 @@ say "##repl (Regexp...) at ",__LINE__ if $debug;
   #     to appear as unquoted numbers.
   #
   if (!reftype($item) && looks_like_number($item) && $item !~ /^0\d/) {
-say "##repl (prepend num*_prefix ...) item=$item at ",__LINE__ if $debug;
+say "@##repl (prepend num*_prefix ...) item=$item at ",__LINE__ if $debug;
     my $prefix = _show_as_number($item) ? $magic_num_prefix
                                         : $magic_numstr_prefix;
     $item = $prefix.$item;
     $changed = 1;
   }
 
-say( ($changed ? ("  repl CHANGED item=",_dbvis($item)) : ("  repl no-change"))," at ",__LINE__ ) if $debug;
+say( ($changed ? ("@  repl CHANGED item=",_dbvis($item)) : ("@  repl no-change"))," at ",__LINE__ ) if $debug;
   return $changed ? $item : undef
 }#_replacement
 
@@ -534,16 +537,17 @@ sub Dump {
   # tied variables, although it might contain cloned objects (with any
   # internal tied vars substituted).
 
-  say "##ORIG Values=",_dbavis($self->Values) if $debug;
 
-  { my @values = $self->Values;
-    croak "No Values set" if @values == 0;
-    croak "Only a single scalar value is allowed" if @values > 1;
+  my @orig_values = $self->Values;
+  say "##ORIG Values=",_dbavis(@orig_values) if $debug;
+  {
+    croak "No Values set" if @orig_values == 0;
+    croak "Only a single scalar value is allowed" if @orig_values > 1;
 
-    $values[0] = Clone::clone($values[0]);
+    my $value = Clone::clone($orig_values[0]);
     $self->{Seenhash} = {};
-    $self->_preprocess(\$values[0]);
-    $self->Values(\@values);
+    $self->_preprocess(\$value);
+    $self->Values([$value]);
   }
   say "##DD-IN_Values=",_dbavis($self->Values) if $debug;
 
@@ -552,16 +556,40 @@ sub Dump {
   # and insert the user's Pad before each line.
   my $pad = $self->Pad();
   $self->Pad("");
+
+  # Data::Dumper occasionally aborts and returns a partially-complete
+  # result which we may not be able to parse.
+  # In such cases D::D will print a warning before returning.
+  #
+  # Unless Debug is enabled, we detect this situation we return the
+  # result from Data::Dumper run on the arguments.
+  # N.B. Absent a warning from Data::Dumper, this should never happen.
+  my $dd_warning;
+  my $dd_result;
   {
     my ($sAt, $sQ) = ($@, $?); # Data::Dumper corrupts these
-    $_ = $self->SUPER::Dump;
+    if ($debug) {
+      $dd_result = $self->SUPER::Dump;
+    } else {
+      local $SIG{__WARN__} = sub{ $dd_warning = $_[0] };
+      $dd_result = $self->SUPER::Dump;
+    }
     ($@, $?) = ($sAt, $sQ);
   }
   $self->Pad($pad);
-  $_ = $self->_postprocess_DD_result($_);
 
+  my $our_result;
+  if ($dd_warning) {
+    eval { $our_result = $self->_postprocess_DD_result($dd_result) };
+    if ($@) {
+      $self->Values(\@orig_values);
+      $our_result = $self->SUPER::Dump;
+    }
+  } else {
+    $our_result = $self->_postprocess_DD_result($dd_result);
+  }
   &_RestorePunct;
-  $_
+  $our_result;
 }
 
 sub _preprocess { # modifies an item by ref
@@ -570,80 +598,89 @@ sub _preprocess { # modifies an item by ref
   my ($debug, $seenhash) = @$self{qw/Debug Seenhash/};
 
 say "##pp AAA ",_dbrefvis($itemref)," -> ",_dbvis($$itemref)," at ",__LINE__ if $debug;
-  
+
   # Pop back if this item was visited previously
-  return if $seenhash->{ refaddr($itemref) }++;
-
-  # About TIED VARIABLES:
-  # We must never modify a tied variable because of user-defined side-effects.
-  # Therefore when we about to (or possibly) change a tied variable, it
-  # must first be made to be not tied.   N.B. the whole structure was
-  # cloned beforehand, so this does not untie the user's variables.
-
-
-  # The item is only ever a scalar, either the top-level item from the user
-  # or a member of a container we unroll below.  In either case the scalar
-  # could be either a ref to something, or a non-ref value.
-  
-  if (my $repl_item = $self->_replacement($$itemref)) {
-    say "##pp HAVE repl_item" if $debug;
-    if (tied($$itemref)) {
-      untie $$itemref;
-      say "##pp item was tied (will use repl_item)" if $debug;
-    }
-    $$itemref = $repl_item;
-  } else {
-    if (tied($$itemref)) {
-      my $copy = $$itemref;
-      untie $$itemref;
-      $$itemref = $copy;
-      say "##pp item was tied (no repl_item)" if $debug;
-    }
-  }
-
-say "##pp BBB ",_dbrefvis($itemref)," -> ",_dbvis($$itemref)," at ",__LINE__ if $debug;
-  if (ref($itemref) eq "SCALAR") {
-    say "##pp item is non-ref scalar at ",__LINE__ if $debug;
-    oops($$itemref) if defined reftype($$itemref);
+  if ($seenhash->{ refaddr($itemref) }++) {
+    say "     Seen already" if $debug;
     return
   }
 
-  # The item (or it's replacement) is some kind of ref
-  oops("got ",u(reftype($itemref))) unless reftype($itemref) eq "REF";
-  my $rt = reftype($$itemref) // oops;
+  # About TIED VARIABLES:
+  # We must never modify a tied variable because of user-defined side-effects.
+  # Therefore before (possibly) changing a tied variable, the variable must
+  # first be made to be not tied.   N.B. the whole structure was cloned
+  # beforehand, so this does not untie the user's variables.
+
+    # Side note: Saving refs to members of tied containers is a user error
+    # because such refs point to a temporary rather than the actual storage
+    # in the container (which in general is not possible because tied data
+    # may be stored externally).  Perl seems to re-use the temporaries,
+    # so bad things can happen if you save such a ref and use it later, and
+    # even-more-subtle strangeness (refcount problems?) I don't understand.
+    #
+    # Data::Dumper will abort with warning "cannot handle ref type 10"
+    # if called with \$tiedhash{key} [why?]
+
+  # Our Item is only ever a scalar, either the top-level item from the user
+  # or a member of a container we unroll below.  In either case the scalar
+  # could be either a ref to something, or a non-ref value.
+
+  if (tied($$itemref)) {
+    say "     Item itself is tied" if $debug;
+    my $copy = $$itemref;
+    untie $$itemref;
+    $$itemref = $copy; # n.b. $copy might be a ref to a tied variable
+    oops if tied($$itemref);
+  }
+
+  if (defined(my $repl = $self->_replacement($$itemref))) {
+    say "##pp Item REPLACED by ",_dbvis($repl)," at ",__LINE__ if $debug;
+    $$itemref = $repl;
+    return
+  }
+
+  my $rt = reftype($$itemref) // ""; # "" if item is not a ref
+  if (reftype($itemref) eq "SCALAR") {
+    oops if $rt;
+    say "##pp item is non-ref scalar; stop. at ",__LINE__ if $debug;
+    return
+  }
+
+  # Item is some kind of ref
+  oops unless reftype($itemref) eq "REF";
 
   if ($rt eq "SCALAR" || $rt eq "LVALUE" || $rt eq "REF") {
-say "##pp ref-to-scalarish $rt at ",__LINE__ if $debug;
-    if (tied($$itemref)) {
-      say "     item is a tied scalar (containing a $rt ref) at ", __LINE__ if $debug;
-      my $copy = $$itemref;
-      untie $$itemref;
-      $$itemref = $copy;
-    }
+    say "##pp dereferencing ref-to-scalarish $rt at ",__LINE__ if $debug;
     $self->_preprocess($$itemref);
   }
   elsif ($rt eq "ARRAY") {
-say "##pp ARRAY ref at ",__LINE__ if $debug;
-    if (tied(@$$itemref)) {
-      say "     item is a tied array at ", __LINE__ if $debug;
-      my $copy = [ @$$itemref ];
-      untie $$itemref;
-      $$itemref = $copy;
+    say "##pp ARRAY ref at ",__LINE__ if $debug;
+    if (tied @$$itemref) {
+      say "     aref to *tied* ARRAY at ", __LINE__ if $debug;
+      my $copy = [ @$$itemref ]; # only 1 level
+      untie @$$itemref;
+      @$$itemref = @$copy;
     }
     for (@$$itemref) {
       $self->_preprocess(\$_);
     }
-  }  
+  }
   elsif ($rt eq "HASH") {
 say "##pp HASH ref at ",__LINE__ if $debug;
-    if (tied(%$$itemref)) {
-      say "     item is a tied array at ", __LINE__ if $debug;
-      my $copy = { %$$itemref };
-      untie $$itemref;
-      $$itemref = $copy;
+    if (tied %$$itemref) {
+      say "     href to *tied* HASH at ", __LINE__ if $debug;
+      my $copy = { %$$itemref }; # only 1 level
+      untie %$$itemref;
+      %$$itemref = %$copy;
+      die if tied %$$itemref;
     }
-    for (values %$$itemref) {
-      $self->_preprocess(\$_);
+    #for (values %$$itemref) {
+    #  $self->_preprocess(\$_);
+    #}
+    #For easier debugging, do in sorted order
+    say "   #### iterating hash values... at ", __LINE__ if $debug;
+    for my $key (sort keys %$$itemref) {
+      $self->_preprocess(\$$itemref->{$key});
     }
   }
 }
@@ -857,7 +894,7 @@ sub __unmagic($) {
 sub _postprocess_DD_result {
   (my $self, local $_) = @_;
   my ($debug, $vistype, $foldwidth, $foldwidth1)
-    = @$self{qw/Debug _vistype Foldwidth Foldwidth1/};
+    = @$self{qw/Debug _Vistype Foldwidth Foldwidth1/};
   my $useqq = $self->Useqq();
   my $unesc_unicode = $useqq =~ /utf|unic/;
   my $controlpics   = $useqq =~ /pic/;
@@ -870,7 +907,7 @@ sub _postprocess_DD_result {
   $indent_unit = 2; # make configurable?
 {
   our $_dbmaxlen = INT_MAX;
-  say "##RAW ",_dbrawstr($_) if $debug;
+  say "##RAW DD result: ",_dbrawstr($_) if $debug;
 }
 
   # Fit everything in a single line if possible.
@@ -1291,7 +1328,7 @@ sub DB_Vis_Interpolate {
 sub DB_Vis_Eval($$) {
   my ($label_for_errmsg, $evalarg) = @_;
   Carp::confess("Data::Dumper::Interp bug:empty evalarg") if $evalarg eq "";
-  # Many ideas here taken from perl5db.pl
+  # Inspired perl5db.pl but at this point has been rewritten
 
   # Find the closest non-DB caller.  The eval will be done in that package.
   # Find the next caller further up which has arguments (i.e. wasn't doing

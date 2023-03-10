@@ -1,5 +1,11 @@
+# License: Public Domain or CC0
+# See https://creativecommons.org/publicdomain/zero/1.0/
+# The author, Jim Avera (jim.avera at gmail) has waived all copyright and 
+# related or neighboring rights to the content of this file.  
+# Attribution is requested but is not required.
+
 use strict; use warnings  FATAL => 'all'; use feature qw/say/;
-use v5.16; # must have PerlIO for in-memory strings, see ':silent' below
+use v5.16; # must have PerlIO for in-memory files for 'silent';
 
 package t_Setup;
 
@@ -7,45 +13,58 @@ require Exporter;
 use parent 'Exporter';
 our @EXPORT = qw/bug silent/;
 
-# N.B. It appears, experimentally, that output from ok(), like() and friends 
+# N.B. It appears, experimentally, that output from ok(), like() and friends
 # is not written to the test process's STDOUT or STDERR, so we do not need
-# to worry about ignoring those normal outputs.
-# Somehow the test infrastructure output gets merged into the final STDOUT/ERR
-# streams at the right points.
+# to worry about ignoring those normal outputs (somehow everything is
+# merged at the right spots, presumably by a supervisory process).
 #
-# The upshot is that an entire set of tests can be wrapped in a single silent {...}
-# however the "Silence expected..." diagnostics will occur at the end of the block,
-# possibly long after the specific test which caused the undesired output.
+# Therefore tests can be simply wrapped in silent{...} or the entire
+# program via the ':silent' tag; however any "Silence expected..." diagnostics
+# will appear at the end, perhaps long after the specific test case which
+# emitted the undesired output.
 my ($orig_stdOUT, $orig_stdERR);
 my ($inmem_stdOUT, $inmem_stdERR) = ("", "");
 my $silent_mode;
-use Encode qw/decode FB_CROAK LEAVE_SRC/;
+use Encode qw/decode FB_WARN FB_PERLQQ FB_CROAK LEAVE_SRC/;
 use Carp;
 sub _start_silent() {
   confess "nested silent treatments not supported" if $silent_mode;
+
+  my @OUT_layers = grep{ $_ ne "unix" } PerlIO::get_layers(*STDOUT, output=>1);
   open($orig_stdOUT, ">&", \*STDOUT) or die "dup STDOUT: $!";
   close STDOUT;
   open(STDOUT, ">", \$inmem_stdOUT) or die "redir STDOUT: $!";
+  binmode(STDOUT); binmode(STDOUT, ":utf8");
+
+  my @ERR_layers = grep{ $_ ne "unix" } PerlIO::get_layers(*STDERR, output=>1);
   open($orig_stdERR, ">&", \*STDERR) or die "dup STDERR: $!";
   close STDERR;
   open(STDERR, ">", \$inmem_stdERR) or die "redir STDERR: $!";
+  binmode(STDERR); binmode(STDERR, ":utf8");
+
   $silent_mode = 1;
 }
 sub _finish_silent() {
   confess "not in silent mode" unless $silent_mode;
-  close STDOUT;
-  open(STDOUT, ">>&", $orig_stdOUT) or do{ warn "return to STDOUT: $!"; exit 198; };
   close STDERR;
-  open(STDERR, ">>&", $orig_stdERR) or do{ warn "return to STDERR: $!"; exit 198; };
+  open(STDERR, ">>&", $orig_stdERR) or exit(198);
+  close STDOUT;
+  open(STDOUT, ">>&", $orig_stdOUT) or die "orig_stdOUT: $!";
   $silent_mode = 0;
-  # The in-memory files are stored as octets, so decode before writing to
-  # the STD* files (which will re-encode).
-  print STDOUT decode("utf8", $inmem_stdOUT, FB_CROAK|LEAVE_SRC);
-  print STDERR decode("utf8", $inmem_stdERR, FB_CROAK|LEAVE_SRC);
-  # Can we call Test::More::ok(0, "..."); here?
-  # Just dying produces "END failed--call queue aborted."
-  die "Silence was expected on STDOUT\n" if $inmem_stdOUT ne "";
-  die "Silence was expected on STDERR\n" if $inmem_stdERR ne "";
+  # The in-memory files hold octets; decode them before printing
+  # them out (when they will be re-encoded for the user's terminal).
+  my $errmsg;
+  if ($inmem_stdOUT ne "") {
+    print STDOUT "--- saved STDOUT ---\n";
+    print STDOUT decode("utf8", $inmem_stdOUT, FB_PERLQQ|LEAVE_SRC);
+    $errmsg //= "Silence expected on STDOUT";
+  }
+  if ($inmem_stdERR ne "") {
+    print STDERR "--- saved STDERR ---\n";
+    print STDERR decode("utf8", $inmem_stdERR, FB_PERLQQ|LEAVE_SRC);
+    $errmsg = $errmsg ? "$errmsg and STDERR" : "Silence expected on STDERR";
+  }
+  $errmsg
 }
 sub silent(&) {
   my $wantarray = wantarray;
@@ -58,7 +77,9 @@ sub silent(&) {
     $code->();
     my $dummy_result; # so previous call has null context
   };
-  _silent_finish();
+  my $errmsg = _finish_silent();
+  local $Test::Builder::Level = $Test::Builder::Level + 1;
+  Test::More::ok(! defined($errmsg), $errmsg);
   wantarray ? @result : $result[0]
 }
 
@@ -69,7 +90,7 @@ sub import {
   strict->import::into($target);
   warnings->import::into($target, FATAL => 'all');
   feature->import::into($target, qw/say state/);
-  
+
   # Unicode support
   # Must be done before loading Test::More
   confess "too late" if defined( &Test::More::ok );
@@ -83,16 +104,17 @@ sub import {
   STDOUT->autoflush(1);
 
   # die if obsolete or dangerous syntax is used
-  require indirect; 
-  indirect->unimport::out_of($target); 
+  require indirect;
+  indirect->unimport::out_of($target);
 
   require multidimensional;
   multidimensional->unimport::out_of($target);
 
   require autovivification;
   autovivification->unimport::out_of($target);
-  
-  require Carp; 
+
+  # import things I always use into the test case
+  require Carp;
   Carp->import::into($target);
 
   require Test::More; Test::More->VERSION('0.98'); # see UNIVERSAL
@@ -104,26 +126,17 @@ sub import {
     _start_silent();
   }
 
-  # chain to Exporter to export our local definitions
+  # chain to Exporter to export any other importable items
   goto &Exporter::import
 }
 
 END{
-  _finish_silent() if $silent_mode;
+  if ($silent_mode) {
+    my $errmsg = _finish_silent();
+    die $errmsg if $errmsg;
+  }
 }
-
-1;
-
-use Capture::Tiny qw/capture/;
-use Carp;
 
 sub bug(@) { @_=("BUG:",@_); goto &Carp::confess }
-
-our $num_silence_violations = 0;
-
-END {
-  die "$num_silence_violations silence violations occurred\n"
-    if $num_silence_violations;
-}
 
 1;
