@@ -15,6 +15,7 @@ nytprof/
 
 cover_db/
 
+.~*
 *.bak
 *.old
 *~
@@ -28,6 +29,6 @@ cover_db/
 
 MYMETA.*
 
-/Data-Dumper-Interp-*
+/ODF-lpOD_Helper-*
 
 .gitnxtver_cache
