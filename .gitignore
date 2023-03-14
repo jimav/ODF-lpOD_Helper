@@ -9,6 +9,7 @@
 /carton.lock
 /.carton/
 /local/
+/tmp
 
 nytprof.out
 nytprof/
