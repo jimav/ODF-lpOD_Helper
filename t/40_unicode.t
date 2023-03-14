@@ -11,49 +11,92 @@ use Encode qw/encode decode/;
 
 my $skel_path = "$Bin/Skel.odt";
 
-my $doc = odf_get_document($skel_path);
-my $body = $doc->get_body;
-
-
-{ my $match = my_search($body, qr/This.*Paragraph.*has.*Unicode/) // bug;
-  like($match->{match}, qr/This «Paragraph» has ☺Unicode/, "my_search with unicode");
-}
+my $ascii_only_re= qr/This.*Para.*has.*characters./;
 
 my $smiley_char = "☺"; 
+my $justsmiley_re = qr/${smiley_char}/;
 my $full_char_re = qr/This.*Para.*${smiley_char}.*characters./;
 
 my $smiley_octets = encode("UTF-8", $smiley_char, Encode::LEAVE_SRC);
 my $justsmiley_octet_re = qr/${smiley_octets}/;
 my $full_octet_re = qr/This.*Para.*${smiley_octets}.*characters./;
 
-{ # The paragraph is fragments, so we can not search for the whole text
-  my $m0 = $body->search(qr/$full_octet_re/);
-  ok(!defined($m0->{segment}), "native search can not span segments");
-}
-{ # But we can always search for a single character, whose octets will
-  # be stored within a single segment
-  my $m1 = $body->search(qr/${smiley_octets}/);
-  ok($m1, "native search for just smiley");
+bug unless length($ascii_only_re) == do{ use bytes; my $x=length($ascii_only_re) };
 
-  my $p = $m1->{segment}->get_parent_paragraph;
+my $doc = odf_get_document($skel_path);
+
+#my $content = $doc->get_part(CONTENT);
+#my $body = $content->get_body;  # NOT the same as doc->get_body (why??)
+my $body = $doc->get_body;
+
+{ # search() for a wide char results in a "wide character" error from decode()
+  # inside ODF::lpOD
+  my $m = eval { $body->search($smiley_char) };
+  ok(!defined($m) && $@ =~ /wide char/i, "default: search(wide char) blows up (string)");
+  $m = eval{ $body->search(qr/$justsmiley_re/) };
+  ok(!defined($m) && $@ =~ /wide char/i, "default: search(wide char) blows up (regex)");
+}
+{ # But search() works with octets by default
+  my $m = $body->search(${smiley_octets});
+  ok($m->{segment}, "default: search(octets) works (string)");
+  $m = $body->search(qr/${smiley_octets}/);
+  ok($m->{segment}, "default: search(octets) works (regex)");
+  my $p = $m->{segment}->get_parent_paragraph;
   my $p_text = $p->get_text();  # the full text of the para
-  like($p_text, qr/$full_octet_re/, "octet search found whole paragraph");
+  like($p_text, qr/$full_octet_re/, "default: get_text() returns octets");
+  bug unless $p_text =~ qr/$ascii_only_re/;
+}
+{ # Hsearch for a wide char does not work by default
+  my @m = $body->Hsearch($smiley_char);
+  ok(@m==0, "default: Hsearch(wide char) fails (string)");
+  @m = $body->Hsearch(qr/$justsmiley_re/);
+  ok(@m==0, "default: Hsearch(wide char) fails (regex)");
 }
 
+{ # The paragraph is fragmented, so we can not search for the whole text
+  my $m = $body->search(qr/$full_octet_re/);
+  ok(!defined($m->{segment}), "search(octets) can not span segments");
+  $m = $body->search(qr/$ascii_only_re/);
+  ok(!defined($m->{segment}), "search(ascii only) can not span segments");
+}
+{ 
+  my @m = $body->Hsearch(qr/$full_octet_re/);
+  ok(@m && $m[0]->{match} =~ qr/$full_octet_re/, "Hsearch(octets) CAN span segments");
+  @m = $body->Hsearch(qr/$ascii_only_re/);
+  ok(@m && $m[0]->{match} =~ qr/$full_octet_re/, "Hsearch(ascii only) CAN span segments");
+}
+
+#-----------------------------------------------------------------
 # Now enable character params by default, no encode/decode needed
-lpod_helper->enable_unicode_text();
+lpod->Huse_character_strings();
+#-----------------------------------------------------------------
 
-{ # Now the octets are treated as single-byte characters and 
-  my $octets_as_chars = join "", map{ chr(ord($_)) } split //,$smiley_octets;
-  my $m2 = $body->search(qr/${octets_as_chars}/);
-  ok(!defined($m2->{segment}), "octests treated as chars after enable_unicode_text");
+{ # search() for a wide char should work now
+  my $m = $body->search($smiley_char);
+  ok($m->{segment}, "After Huse_character_strings: search(wide char) works (string)");
+  $m = $body->search(qr/$justsmiley_re/);
+  ok($m->{segment}, "After Huse_character_strings: search(wide char) works (regex)"); 
+  my $p = $m->{segment}->get_parent_paragraph;
+  my $p_text = $p->get_text();  # the full text of the para
+  like($p_text, qr/$full_char_re/, "After Huse_character_strings: get_text() returns characters");
 }
-{ # But we can not search for the Unicode character explicitly
-  my $m3 = $body->search(qr/${smiley_char}/);
-  ok($m3->{segment}, "native serach for Unicode after enable_unicode_text");
-  my $p = $m3->{segment}->get_parent_paragraph;
-  my $p_text = $p->get_text(); 
-  like($p_text, qr/$full_char_re/);
+{ # But search() with octets now fails
+  my $m = $body->search(${smiley_octets});
+  ok(!($m && $m->{segment}), "After Huse_character_strings: search(octets) fails (string)");
+  $m = $body->search(qr/${smiley_octets}/);
+  ok(!($m && $m->{segment}), "After Huse_character_strings: search(octets) fails (regex)");
+}
+{
+  my @m = $body->Hsearch($smiley_char);
+  ok(@m>0 && $m[0]->{match} eq $smiley_char, "After Huse_character_strings: Hsearch(wide char) works (string)");
+  @m = $body->Hsearch(qr/$justsmiley_re/);
+  ok(@m>0 && $m[0]->{match} eq $smiley_char, "After Huse_character_strings: Hsearch(wide char) works (regex)");
+}
+
+{ my $match = $body->Hsearch(qr/$full_char_re/);
+  ok( @{$match->{segments}} > 1 
+        && $match->{match} =~ qr/$full_char_re/, 
+      "After Huse_character_strings: Hsearch(unicode) matches multiple segments" );
 }
 
 done_testing();

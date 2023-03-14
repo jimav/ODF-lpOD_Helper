@@ -92,7 +92,7 @@ sub import {
   feature->import::into($target, qw/say state/);
 
   # Unicode support
-  # Must be done before loading Test::More
+  # This must be done before loading Test::More
   confess "too late" if defined( &Test::More::ok );
   use open ':std', ':encoding(UTF-8)';
   "open"->import::into($target, ':std', ':encoding(UTF-8)');

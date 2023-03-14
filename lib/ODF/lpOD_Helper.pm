@@ -4,7 +4,16 @@
 # related or neighboring rights to the content of this file.  
 # Attribution is requested but is not required.
 # -----------------------------------------------------------------------------
-use strict; use warnings FATAL => 'all'; use feature qw(switch state say);
+# Please note that ODF::lpOD v1.126 has a more restrictive license 
+# (your choice of GPL 3 or Apache 2.0).
+# -----------------------------------------------------------------------------
+
+use strict; use warnings; use feature qw(switch state say);
+
+# We only call ODF::lpOD (and hence XML::Twig).  If we get warnings from
+# them, or we have left-over debug printouts, we want to die to force
+# immediate resolution. 
+use warnings FATAL => 'all'; 
 
 =encoding utf8
 
@@ -15,14 +24,14 @@ ODF::lpOD_Helper - ease-of-use wrapper for ODF::lpOD
 =head1 SYNOPSIS
 
   use ODF::LpOD;
-  use ODF::LpOD_Helper;
+  use ODF::LpOD_Helper qw/:chars :DEFAULT/;
 
   Sorry, no examples yet... TODO TODO FIXME
 
   The following APIs are exported by default:
 
-    my_search -- find a possibly-segmented string
-    subst_content -- find and replace strings
+    Hsearch -- find a possibly-segmented string
+    Hsubstitute -- find and replace strings
     fmt_match fmt_node fmt_tree -- debug utilities for "match" data structures
     self_or_parent
     gen_table_name
@@ -64,10 +73,11 @@ C<ODF::lpOD_Helper>
 also works around a bug causing S<"Unknown method DESTROY"> warnings
 (see L<https://rt.cpan.org/Public/Bug/Display.html?id=97977>)
 
-=head1 PRIMARY FUNCTIONS
+=head1 PRIMARY METHODS
 
-Note: This documentation was written several years after the code;
-a few uncertain details are denoted by "??" in the description.
+The "Hxxx" methods are installed into the appropriate ODF::lpOD packages
+so they can be called on the same objects as related native methods
+(the 'B<H>' in the names denote extensions supplied by ODF::lpOD_B<H>elper).  
 
 =cut
 
@@ -76,11 +86,7 @@ package ODF::lpOD_Helper;
 # VERSION
 # DATE
 
-use Exporter 'import';
 our @EXPORT = qw(
-  lpod_helper
-  my_search
-  subst_content
   __disconnected_style
   automatic_style common_style
   self_or_parent
@@ -88,10 +94,29 @@ our @EXPORT = qw(
   gen_table_name
 );
 our @EXPORT_OK = qw(
-  insert_content
   hashtostring
   $auto_pfx
 );
+
+use ODF::lpOD;
+BEGIN {
+  # https://rt.cpan.org/Public/Bug/Display.html?id=97977
+  no warnings 'once';
+  no strict 'refs';
+  *{"ODF::lpOD::Element::DESTROY"} = sub {}
+    unless defined &ODF::lpOD::Element::DESTROY;
+}
+
+require Exporter;
+use parent 'Exporter';
+sub import {
+  my $class = shift;
+  if (grep{$_ eq ":chars"} @_) {
+    @_ = grep{$_ ne ":chars"} @_;
+    lpod->Huse_character_strings();
+  }
+  __PACKAGE__->export_to_level(1, $class, @_);
+}
 
 use constant lpod_helper => 'ODF::lpOD_Helper';
 
@@ -99,19 +124,11 @@ our $auto_pfx = "auto";  # used for style & table names
 
 use Carp;
 sub oops(@) { unshift @_, "oops! "; goto &Carp::confess; }
-use ODF::lpOD;
-BEGIN {
-  # https://rt.cpan.org/Public/Bug/Display.html?id=97977
-  no warnings 'once';
-  no strict 'refs';
-  *{"ODF::lpOD::Element::DESTROY"} = sub {}
-    unless defined &ODF::lpOD::Element::DESTROY
-}
-use Data::Dumper::Interp;
+use Data::Dumper::Interp qw/ivis ivisq vis visq dvis/;
 
-sub fmt_node($;$); # forward
-sub fmt_tree($@);
-sub fmt_match($);
+sub fmt_node(_;$); # forward
+sub fmt_tree(_@);
+sub fmt_match(_);
 sub self_or_parent($$);
 sub hashtostring($);
 
@@ -238,7 +255,7 @@ sub __disconnected_style($$@) {
 sub _my_get_text_func($) {
   my $node = shift;
   ##local $ODF::lpOD::Common::INPUT_CHARSET = undef;
-  local $ODF::lpOD::Common::OUTPUT_CHARSET = undef;
+  #local $ODF::lpOD::Common::OUTPUT_CHARSET = undef;
   
   # Derived from ODF::lpOD::TextElement::get_text
   my $text;
@@ -266,55 +283,21 @@ sub _my_get_text_func($) {
 
 ###############################################################
 
-=head2 lpod_helper->enable_unicode_text()
+=head2 lpod->Huse_character_strings()   # or import the :chars tag
 
-Patch ODF::lpOD so it's native methods accept and return 
-Perl character strings rather than encoded binary octets.  
+Make all methods accept and return 
+Perl character strings rather than encoded binary octets
+(see "UNICODE ISSUES" below).  The :chars import tag has the same effect.
 
 You will B<always> want to use this unless your application really, really 
 needs to pass un-decoded octets directly between file/network resources
-and ODF::lpOD without your code looking at the data along the way.
+and ODF::lpOD without your Perl script looking at the data along the way.
 In that exceptional situation, see the "Character sets handling"
-section of C<ODF::lpOD::Common>.
-
-The usual Perl paradigm is to *decode* character data immediately upon 
-fetching it from the outside world, process the data as Perl character 
-strings, and *encode* results just before sending them out.
-Often decode & encode can be done automatically by calling 
-C<open> or C<binmode> with an ":encoding()" specification. 
-
-ODF::lpOD is incompatible with this paradigm out of the box
-because it always encodes result strings (into UTF-8 by default) before 
-returning them to you, and attempts to decode strings you pass in before
-using them.  As a result, you may not safely perform regex matching, 
-call substr(), length(), etc. or write to an encoding file handle using data 
-going in or out of ODF:lpOD unless only ASCII characters are present 
-(ASCII slides by because the UTF-8 representation of ASCII characters
-matches how Perl stores those code points internally, so a missing or redundant
-encode/decode doesn't cause any harm).
-
-C<enable_unicode_text> uses an undocumented feature 
-to disable ODF::lpOD's internal encodes and decodes, 
-so that characters pass unmolested between your code and 
-the internals of ODF::lpOD.
-
-If the above discussion seems bewildering, you are not alone; start with
-'man perlunicode' and keep reading until the concepts are clear.  
-It's a tricky subject but essential to making reliable I<i18n>.
-
-Note: The C<< lpod->set_input_charset() >> 
-and C<< lpod->set_output_charset() >> documented in C<ODF::lpOD::Common>
-undo the effect of this patch.
-
-Note2: Currently ODF::lpOD_Helper functions already
-expect/return character strings rather than
-octets, so C<enable_unicode_text> need not be called unless you
-are directly using text-oriented methods defined by ODF::lpOD.
-THIS IS LIKELY TO CHANGE.
+section of C<ODF::lpOD::Common>. 
 
 =cut
 
-sub enable_unicode_text() {
+sub ODF::lpOD::Common::Huse_character_strings() {
   $ODF::lpOD::Common::INPUT_CHARSET = undef;
   $ODF::lpOD::Common::OUTPUT_CHARSET = undef;
 }
@@ -328,15 +311,14 @@ sub disable_unicode_text() {
 
 ###############################################################
 
-=head2 my_search($context, $expr)
+=head2 $context->Hsearch($expr)   # method of ODF::lpOD::Element
 
-Locates all occurences of C<$expr> in the specified C<$context>, returning
+Locates all occurences of C<$expr> in the given C<$context>, returning
 a match hash for each.
 
-<$expr> may be a qr/regex/ or plain string.
-Unlike with C<ODF::lpOD::Element::search>, C<$expr> may 
+<$expr> may be a qr/regex/ or plain string, which may
 match text which spans segments within the same paragraph
-and may include spaces, tabs and/or newlines.
+and may include repeated spaces, tabs and/or newlines.
 
 RETURNS: 
 
@@ -353,31 +335,22 @@ Each match hash contains:
     lseg_end_offset => offset of end+1 of the match in the last node
   }
 
-=head2 subst_content($context, [OPTIONS], @content)
+=head2 $context->Hsubstitute([content], [OPTIONS]) # ODF::lpOD::Element method
 
-Change some or all of the text in an object, optionally inserting new
+Replace all or some the text in or below an object, optionally inserting new
 character style spans.  Elements which end up with empty text are removed.
 
-The 1st arg is the context of the text, either a leaf (#PCDATA) or a
-container or an ancestor (paragraph, table cell, or even the document body).
+$context may be a leaf (#PCDATA) or a container 
+or ancestor (paragraph, table cell, or even the document body)
+of the node(s) to search.
+
 Leaves are always deleted and possibly replaced with other nodes.
 
-The 2nd arg is an array ref [list of options] which may contain:
-
-   Chomp => TRUE
-     Remove any trailing newline from the last new text string
-
-   Search => string or qr/regex/
-     Find an existing string and replace it, preserving existing spans.
-     The string must be contained within one paragraph but may be segmented.
-
-   Without 'Search' the entire text content is replaced (??**VERIFY THIS**).
-
-The remaining arguments specify the new content which may
-include formatting specified in a "high level" form
+[content] is a (ref to a) list of items which specifies the new content,
+which may include formatting specified in a "high level" form
 (an example is in the SYNOPSIS).
 
-Each content argument is either 
+Each C<content> element is either 
 
 =over
 
@@ -391,7 +364,7 @@ Each [list of format PROPs] specifies a I<character style>
 which will be applied only to the immediately-following text string.
 
 Each PROP is itself either a [key => value] sublist,
-or a string holding one of the following an abbreviations:
+or a string holding one of the following abbreviations:
 
   "center"      means  [align => "center"]
   "left"        means  [align => "left"]
@@ -412,31 +385,55 @@ Internally, an ODF "automatic" Style is created for
 each unique [list of format PROPs], re-using styles when possible.
 Fonts are automatically registered.
 
+An existing (or to-be-created) ODF Style may be used by specifying 
+a single PROP of the form
+
+  [style-name => (name of style)]
+
+[OPTIONS] may contain:
+
+=over 2
+
+=item Search => string or qr/regex/
+
+=over 2
+
+Find an existing string and replace it, preserving existing spans.
+The string must be contained within one paragraph but may be segmented.
+(Without 'Search' the entire text content is replaced) (??**VERIFY THIS**)
+
+=back
+
+=item Chomp => TRUE
+
+=over 2
+
+Remove any trailing newline from the last new text string
+
+=back
+
+=back
+
 RETURNS:
 
-  In list context:   A list of 0 or more match hashrefs (see my_search)
+  In list context:   A list of 0 or more match hashrefs (see Hsearch)
   In scalar context: A match hashref; dies if there was not exactly one match
   In null context:   Nothing, but dies if there was not exactly one match
 
-Note: C<subst_content> is conceptually like a 
+Note: C<Hsubstitute> is conceptually like a
 combination of ODF::lpOD's C<search()>
-and C<replace()> or C<set_text()>, and C<set_span()>,
-except that those APIs do not support segmented text and/or consecutive
-spaces/tabs/newlines when searching, or inserting character styles,
-and can can not generally be invoked directly on a leaf node.
+and C<replace()> or C<set_text()>, and C<set_span()>
+but the search can match segmented text including spaces/tabs/newlines
+and may be invoked directly on a leaf node.
 
 =cut
 
-sub subst_content($$@) {
-  my ($context, $opts_aref, @content) = @_;
-  my %opts    = @$opts_aref;
-  oops unless ref($context);
-  while (@content and !ref($content[$#content]) and $content[$#content] eq "") {
-    pop @content;
-  }
-  if ($opts{Chomp} and @content and !ref $content[$#content]) {
-    $content[$#content] =~ s/\n\z//s;
-  }
+# $context->Hsubstitute([content], [OPTIONS])
+sub ODF::lpOD::Element::Hsubstitute {
+  #local $ODF::lpOD::Common::INPUT_CHARSET = undef;
+  my ($context, $content_arg, $options_arg) = @_;
+  my @content = @$content_arg;
+  my %opts    = @$options_arg;
 
   my $Chomp        = delete $opts{Chomp};
   my $Search_only  = delete $opts{Search_only};
@@ -444,7 +441,14 @@ sub subst_content($$@) {
   my $Starting_pos = delete $opts{Starting_pos};
   my $debug        = delete $opts{debug};
   # my $Onceonly    = delete $opts{Onceonly}; # future
-  croak "Invalid opt ",avis(keys %opts) if %opts;
+  croak "Invalid option ",avis(keys %opts) if %opts;
+
+  while (@content and !ref($content[$#content]) and $content[$#content] eq "") {
+    pop @content;
+  }
+  if ($Chomp and @content and !ref $content[$#content]) {
+    $content[$#content] =~ s/\n\z//s;
+  }
 
   $Search = qr/\Q${Search}\E/s unless ref($Search) eq 'Regexp';
 
@@ -530,12 +534,11 @@ if ($show) {
     warn ivisq "     segments[$i] = \%h\n";
   }
 }
+
         $r{segments} = [
-            insert_content(undef, $segments[$fsi]->{obj},
-                           $before,
-                           @content,
-                           $after
-                          )
+          $segments[$fsi]->{obj}->Hinsert_multi(
+                                    [$before, @content, $after],
+                                    [position => NEXT_SIBLING] )
         ];
         for my $i (reverse $fsi .. $lsi) {
           $segments[$i]->{obj}->delete;
@@ -571,21 +574,32 @@ if ($show) {
   return $rlist[0];
 }
 
-sub my_search($$;@) {
+# $context->Hsearch($expr, OPTIONS...)
+# $context->Hsearch($expr, [OPTIONS...]) # for solidarity with Hsubstutute
+sub ODF::lpOD::Element::Hsearch {
   my ($context, $expr, @opts) = @_;
-  subst_content($context, [ @opts, Search_only=>$expr ]);
+  @opts = @{$opts[0]} if (@opts==1 && ref($opts[0]) eq "ARRAY");
+  $context->Hsubstitute([], [Search_only => $expr, @opts]);
 }
 
 ###############################################################
 
-=head2 insert_content($parent, $prev_sibling, @content)
+=head2 $context->Hinsert_multi([content...], [OPTIONS])
 
-Insert new content using multiple nodes.  The new node(s) are inserted
-after C<$prev_sibling> if it is defined, 
-otherwise as new first child(ren) of C<$parent>.
+Insert the I<content> at the location relative to C<$context> given by
 
-@content is a list of character strings and [PROP...] styles as described
-for C<subst_content()>.
+=over 6
+
+=item position => <location>
+
+=back
+
+in I<OPTIONS>.  C<< <location> >> is one of the constants
+used by C<ODF::lpOD::Element::insert_element>, 
+for example B<FIRST_CHILD>, or B<NEXT_SIBLING>.
+
+The I<content> is specified as a list of character strings 
+and [PROP...] styles as described for C<Hsubstitute()>.  
 
 Nothing is inserted if all text is "".
 
@@ -593,44 +607,52 @@ RETURNS: List of node(s) inserted
 
 =cut
 
-sub insert_content($$@) {
-  my ($parent, $prev_sib) = (shift, shift);
-  my $root = ($parent//$prev_sib)->get_root;
+# $context->Hinsert_multi([content...], [options...])
+sub ODF::lpOD::Element::Hinsert_multi($$) {
+  #local $ODF::lpOD::Common::INPUT_CHARSET = undef;
+  my ($context, $content_arg, $options_arg) = @_;
+  my @content = @$content_arg;
+  my %opts = (
+    position => FIRST_CHILD,  # the default
+    @$options_arg
+  );
+  my $position = $opts{position};
 
-  # Ignore extraneous initial ""
-  while (@_ and ! ref $_[0] and $_[0] eq "") { shift }
+  my $root = $context->get_root;
+
+  # Ignore extraneous initial ""s
+  while (@content and ! ref $content[0] and $content[0] eq "") { 
+    shift @content 
+  }
 
   my @nodes;
-  while (@_) {
-    local $_ = shift;
+  while (@content) {
+    local $_ = shift @content;
     if (ref) {
       my $tprops = $_;
-      my $text = shift
+      my $text = shift @content
         // croak "[text style] not followed by a string\n";
       ! ref($text)
-        // croak "consecutive [text style]s (no string inbetween)\n";
+        // croak "consecutive [text style]s (no strings inbetween)\n";
 
-      my $tsname;
+      my $stylename;
       if (@$tprops == 2 && $tprops->[0] =~ /^style[-_ ]name$/) {
-        $tsname = $tprops->[1];
+        $stylename = $tprops->[1];
       } else {
         my $ts = automatic_style($root, 'text', @$tprops) // oops;
-        $tsname = $ts->get_name;
+        $stylename = $ts->get_name;
       }
 
       my $node = ODF::lpOD::Element->create('text:span')->set_class;
-      $node->set_attributes({style => $tsname});
-      $node->set_text( ODF::lpOD::Common::output_conversion($text) );
-      if (defined $prev_sib) {
-        $prev_sib->insert_element($node, position => NEXT_SIBLING);
-      } else {
-        $parent->insert_element($node, position => FIRST_CHILD);
-      }
-      $prev_sib = $node // oops;
+      $node->set_attributes({style => $stylename});
+      $node->set_text($text);
+      $context->insert_element($node, position => $position);
+      $context = $node; 
+      $position = NEXT_SIBLING; 
       push @nodes, $node;
     } else {
-      while (@_ && ! ref $_[0]) {
-        $_ .= shift;  # combine adjacent texts
+      while (@content && ! ref $content[0]) {
+        $_ .= shift @content;  # concatenate adjacent texts
       }
       while ($_ ne "") {
         my $node;
@@ -646,16 +668,13 @@ sub insert_content($$@) {
         }
         elsif (s/^((?:[^\t\n ]|(?<! ) (?! ))+)//s) {
           $node = ODF::lpOD::Element->create('#PCDATA')->set_class;
-          $node->set_text( ODF::lpOD::Common::output_conversion($1) );
+          $node->set_text($1);
         }
         else { oops }
-        if (defined $prev_sib) {
-          $prev_sib->insert_element($node, position => NEXT_SIBLING);
-        } else {
-          $parent->insert_element($node, position => FIRST_CHILD);
-        }
         oops unless $node;
-        $prev_sib = $node;
+        $context->insert_element($node, position => $position);
+        $context = $node; 
+        $position = NEXT_SIBLING; 
         push @nodes, $node;
       }
     }
@@ -695,7 +714,7 @@ Find or create an 'automatic' (i.e. functionally anonymous) style and
 return the object.  Styles are re-used when possible, so a style should
 not be modified because it might be shared.
 
-PROPs are as described for C<subst_content>.
+PROPs are as described for C<Hsubstitute>.
 
 =head2 common_style($context, $family, PROP...)
 
@@ -744,7 +763,7 @@ sub common_style($$@) {
 
 =head2 gen_table_name($context)
 
-Generate a new (not currently used) table name of the form "Table<NUM>".
+Generate a table name not currently used of the form "Table<NUM>".
 
 =cut
 
@@ -763,7 +782,7 @@ sub gen_table_name($) {
 
 =head2 hashtostring($hashref)
 
-Generates a single string representing the keys and values of a hash
+Returns a single string representing the keys and values of a hash
 
 =cut
 
@@ -776,21 +795,20 @@ sub hashtostring($) {
 
 =head2 fmt_node($node)
 
-Format a single node for debug messages.
-Returns a string without a final newline.
+Format a single node for debug messages, without a final newline.
 
 =head2 fmt_tree($top)
 
-Format a node and all of it's children, for debug messages.
+Format a node and all of it's children for debug messages.
 
 =head2 fmt_match($matchhash)
 
-Format a match hash (ref) for debug messages.
+Format a match hashreffor debug messages.
 
 =cut
 
-sub fmt_node($;$) {  # for debug prints
-  my ($node,$tailtextonly) = @_;
+sub fmt_node(_;$) {  # for debug prints
+  my ($node, $tailtextonly) = @_;
   if (! ref $node) {
     return "(invalid node: ".vis($node).")";
   }
@@ -822,7 +840,7 @@ sub _fmt_tree($$$) {
     _fmt_tree($e,$indent+1,$sref);
   }
 }
-sub fmt_tree($@) { # for debugging
+sub fmt_tree(_@) { # for debugging
   my $top = shift;
   my %opts = (indent => 0, @_);
   my $indent = $opts{indent};
@@ -840,7 +858,7 @@ sub fmt_tree($@) { # for debugging
   return "------------\n".$string."------------\n";
 }
 
-sub fmt_match($) { # for debugging
+sub fmt_match(_) { # for debugging
   my $href = shift;
   my %r = %$href;
   my @segments = map { "$_ with text ".vis(_my_get_text_func($_)) } @{$r{segments}};
@@ -851,6 +869,41 @@ sub fmt_match($) { # for debugging
 
 ###################################################
 
+=head1 UNICODE ISSUES
+
+The usual Perl paradigm is to *decode* character data immediately when
+fetching it from the outside world, process the data as Perl character 
+strings, and finally *encode* results while sending them out.
+Often this can done automatically by calling
+C<open> or C<binmode> with an ":encoding()" specification. 
+
+For historical reasons
+ODF::lpOD is incompatible with the above paradigm out of the box
+because it's methods encode result strings (into UTF-8 by default) before 
+returning them to you, and attempts to decode strings you pass in before
+using them.  Therefore your program must work with encoded binary and not
+normal character strings, and can not use regex matching, 
+substr(), length(), etc. unless only ASCII characters are present
+(ASCII slides by because C<encode> and C<decode> are essentially no-ops
+for those code-points).
+An additional gotcha is that C<get_text> (for example) is implemented 
+by C<XML::Twig> and always works with character strings, 
+unlike ODF::lpOD methods.
+
+This messy situation goes awy after calling
+B<C<Huse_character_strings>>, which uses an undocumented feature 
+to disable ODF::lpOD's internal encodes and decodes.
+Then all methods speak and listen in characters, not octets.
+
+If the above discussion seems bewildering, you are not alone; start with
+'man perlunicode' and keep reading until the concepts are clear.  
+It's a tricky subject but essential to making your programs work
+with international characters.
+
+Note: The C<< lpod->set_input_charset() >> 
+and C<< lpod->set_output_charset() >> documented in C<ODF::lpOD::Common>
+conflict with C<< lpod->Huse_character_strings >>.
+
 =head1 BUGS
 
 Only one document can ever be processed (per run) because of the use
@@ -860,6 +913,8 @@ and information used to construct unique names.
 This may someday be fixed by keeping separate state for each
 unique value of C<< $context->get_document() >>.
 
+Note: This manual was written several years after the code, and
+a few uncertain details are denoted by "??" in the descriptions.
 
 =head1 HISTORY
 
@@ -870,15 +925,25 @@ text search over segmented strings and white-space.
 
 As of this writing (Feb 2023), 
 ODF::lpOD seems to be no longer maintained (the most recent
-version is 1.126 from 2014).
-However ODF::lpOD_Helper works well enough with it.
+release is v1.126 from 2014).  
+Changes to Perl in the interim have made ODF::lpOD unusable as-is 
+because S<"Unknown method DESTROY"> warnings appear
+(L<https://rt.cpan.org/Public/Bug/Display.html?id=97977>).
+However with C<ODF::lpOD_Helper> ODF::lpOD is once again a
+useful tool.
 
-=head1 AUTHOR / LICENSE
+=head1 AUTHOR
 
 Jim Avera  (jim.avera AT gmail dot com)
 
-License for ODF::lpOD_Helper : Public Domain or CC0,
-See S<< L<https://creativecommons.org/publicdomain/zero/1.0/> >>
+=head1 LICENSE
+
+ODF::lpOD (v1.126) may be used under your choice of the GPL 3 or Apache 2.0
+license.
+
+ODF::lpOD_Helper itself is in the Public Domain (or CC0 license) but
+it requires ODF::lpOD to function and so as a practical matter usage
+is restricted to ODF::lpOD's license.
 
 =for Pod::Coverage oops
 
