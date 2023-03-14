@@ -8,7 +8,7 @@ use Data::Dumper::Interp qw/visnew ivis dvis vis hvis avis u/;
 use ODF::lpOD;
 use ODF::lpOD_Helper qw/:DEFAULT :chars/;
 
-my $skel_path = "$Bin/Skel.odt";
+my $skel_path = "$Bin/../tlib/Skel.odt";
 my $doc = odf_get_document($skel_path);
 my $body = $doc->get_body;
 

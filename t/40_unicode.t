@@ -9,7 +9,7 @@ use ODF::lpOD;
 use ODF::lpOD_Helper qw/:DEFAULT fmt_node fmt_match fmt_tree/;
 use Encode qw/encode decode/;
 
-my $skel_path = "$Bin/Skel.odt";
+my $skel_path = "$Bin/../tlib/Skel.odt";
 
 my $ascii_only_re= qr/This.*Para.*has.*characters./;
 

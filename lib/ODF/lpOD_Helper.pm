@@ -302,13 +302,6 @@ sub ODF::lpOD::Common::Huse_character_strings() {
   $ODF::lpOD::Common::OUTPUT_CHARSET = undef;
 }
 
-sub disable_unicode_text() {
-  # Resume encoding/decoding strings when returning/receiving to/from the app
-  lpod->set_input_charset('utf8');
-  lpod->set_output_charset('utf8');
-}
-
-
 ###############################################################
 
 =head2 $context->Hsearch($expr)   # method of ODF::lpOD::Element
