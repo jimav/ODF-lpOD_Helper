@@ -176,10 +176,10 @@ EOF
 is( dvis('\%{}'), '\%{}' );
 
 # Once hit an assertion
-like( Data::Dumper::Interp->new()->Foldwidth(0)
-        ->vis(bless do{ \(my $x = []) },"Foo::Bar"),
-      qr/^"Foo::Bar=\S+\(0x[0-9a-f]+\)"$/
-);
+{ my $obj = bless do{ \(my $x = []) },"Foo::Bar";
+  like( Data::Dumper::Interp->new()->Foldwidth(0)->vis($obj),
+        qr/^\Q$obj\E$/ );
+}
 
 ## Once hit an assertion
 #{ my @data = ( { crc => -1 } );

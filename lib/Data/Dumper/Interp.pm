@@ -387,8 +387,8 @@ sub __set_default_Foldwidth() {
 }
 
 my $unique = refaddr \&new;
-my $magic_num_prefix    = "<NUMMagic$unique>";
-my $magic_numstr_prefix = "<NUMSTRMagic$unique>";
+my $magic_noquotes_pfx = "<NQMagic$unique>";
+my $magic_keepquotes_pfx = "<KQMagic$unique>";
 
 sub _replacement($) { # returns undef if ok as-is, otherwise a replacement value
   my ($self, $item) = @_;
@@ -425,7 +425,7 @@ say "@##repl (truncate...) at ",__LINE__ if $debug;
         # Stringify objects which have the stringification operator
         if (overload::Method($class,'""')) {
 say "@##repl (stringify...) at ",__LINE__ if $debug;
-          my $prefix = _show_as_number($item) ? $magic_num_prefix : "";
+          my $prefix = _show_as_number($item) ? $magic_noquotes_pfx : "";
 say "@##repl prefix='$prefix' at ",__LINE__ if $debug;
           $item = $item.""; # stringify;
           if ($item !~ /^${class}=REF/) {
@@ -471,8 +471,9 @@ say "@##repl (overload...) at ",__LINE__ if $debug;
       # No overloaded operator (that we care about); just stringify the ref
       # except for refs to a regex which Data::Dumper formats nicely by itself.
       unless ($class eq "Regexp") {
-say "@##repl (Regexp...) at ",__LINE__ if $debug;
-        $item = "$item";
+say "@##repl (not overloaded, not Regexp) at ",__LINE__ if $debug;
+        #$item = "$item";  # will show with "quotes"
+        $item = "${magic_noquotes_pfx}$item"; # show without "quotes"
         $changed = 1;
         redo CHECK;
       }
@@ -496,8 +497,8 @@ say "@##repl (Regexp...) at ",__LINE__ if $debug;
   #
   if (!reftype($item) && looks_like_number($item) && $item !~ /^0\d/) {
 say "@##repl (prepend num*_prefix ...) item=$item at ",__LINE__ if $debug;
-    my $prefix = _show_as_number($item) ? $magic_num_prefix
-                                        : $magic_numstr_prefix;
+    my $prefix = _show_as_number($item) ? $magic_noquotes_pfx
+                                        : $magic_keepquotes_pfx ;
     $item = $prefix.$item;
     $changed = 1;
   }
@@ -531,10 +532,10 @@ sub Dump {
 
   # Do desired substitutions in a copy of the data.
   #
-  # (This used to just Clone:clone the whole thing and then walk and modify
+  # (This used to just Clone::clone the whole thing and then walk and modify
   # the copy; but cloned tied variables could blow up if their handlers
-  # got confused by our changes in the copy.  Now our copy never contains
-  # tied variables, although it might contain cloned objects (with any
+  # got confused by our changes in the copy.  Now our copy has tied variables
+  # removed (or untied), although it might contain cloned objects (with any
   # internal tied vars substituted).
 
 
@@ -544,10 +545,10 @@ sub Dump {
     croak "No Values set" if @orig_values == 0;
     croak "Only a single scalar value is allowed" if @orig_values > 1;
 
-    my $value = Clone::clone($orig_values[0]);
+    my $cloned_value = Clone::clone($orig_values[0]);
     $self->{Seenhash} = {};
-    $self->_preprocess(\$value);
-    $self->Values([$value]);
+    $self->_preprocess(\$cloned_value, \$orig_values[0]);
+    $self->Values([$cloned_value]);
   }
   say "##DD-IN_Values=",_dbavis($self->Values) if $debug;
 
@@ -594,30 +595,30 @@ sub Dump {
 
 sub _preprocess { # modifies an item by ref
   no warnings 'recursion';
-  my ($self, $itemref) = @_;
+  my ($self, $cloned_itemref, $orig_itemref) = @_;
   my ($debug, $seenhash) = @$self{qw/Debug Seenhash/};
 
-say "##pp AAA ",_dbrefvis($itemref)," -> ",_dbvis($$itemref)," at ",__LINE__ if $debug;
+say "##pp AAA cloned=",_dbrefvis($cloned_itemref)," -> ",_dbvis($$cloned_itemref) if $debug;
+say "##         orig=",_dbrefvis($orig_itemref)," -> ",_dbvis($$orig_itemref)," at ",__LINE__ if $debug;
 
   # Pop back if this item was visited previously
-  if ($seenhash->{ refaddr($itemref) }++) {
+  if ($seenhash->{ refaddr($cloned_itemref) }++) {
     say "     Seen already" if $debug;
     return
   }
 
   # About TIED VARIABLES:
   # We must never modify a tied variable because of user-defined side-effects.
-  # Therefore before (possibly) changing a tied variable, the variable must
+  # Therefore before we might modify a tied variable, the variable must
   # first be made to be not tied.   N.B. the whole structure was cloned
   # beforehand, so this does not untie the user's variables.
 
     # Side note: Saving refs to members of tied containers is a user error
-    # because such refs point to a temporary rather than the actual storage
-    # in the container (which in general is not possible because tied data
-    # may be stored externally).  Perl seems to re-use the temporaries,
-    # so bad things can happen if you save such a ref and use it later, and
-    # even-more-subtle strangeness (refcount problems?) I don't understand.
-    #
+    # because such refs point to a magic temporary rather than the actual 
+    # storage in the container (which in general is impossible because tied 
+    # data may be stored externally).  Perl seems to re-use the temporaries,
+    # and bad things (refcount problems?) happen if you store such a ref 
+    # inside a tied container and then untie the container.
     # Data::Dumper will abort with warning "cannot handle ref type 10"
     # if called with \$tiedhash{key} [why?]
 
@@ -625,62 +626,60 @@ say "##pp AAA ",_dbrefvis($itemref)," -> ",_dbvis($$itemref)," at ",__LINE__ if 
   # or a member of a container we unroll below.  In either case the scalar
   # could be either a ref to something, or a non-ref value.
 
-  if (tied($$itemref)) {
+  if (tied($$cloned_itemref)) {
     say "     Item itself is tied" if $debug;
-    my $copy = $$itemref;
-    untie $$itemref;
-    $$itemref = $copy; # n.b. $copy might be a ref to a tied variable
-    oops if tied($$itemref);
+    my $copy = $$cloned_itemref;
+    untie $$cloned_itemref;
+    $$cloned_itemref = $copy; # n.b. $copy might be a ref to a tied variable
+    oops if tied($$cloned_itemref);
   }
 
-  if (defined(my $repl = $self->_replacement($$itemref))) {
+  if (defined(my $repl = $self->_replacement($$orig_itemref))) {
     say "##pp Item REPLACED by ",_dbvis($repl)," at ",__LINE__ if $debug;
-    $$itemref = $repl;
+    $$cloned_itemref = $repl;
     return
   }
 
-  my $rt = reftype($$itemref) // ""; # "" if item is not a ref
-  if (reftype($itemref) eq "SCALAR") {
+  my $rt = reftype($$cloned_itemref) // ""; # "" if item is not a ref
+  if (reftype($cloned_itemref) eq "SCALAR") {
     oops if $rt;
     say "##pp item is non-ref scalar; stop. at ",__LINE__ if $debug;
     return
   }
 
   # Item is some kind of ref
-  oops unless reftype($itemref) eq "REF";
+  oops unless reftype($cloned_itemref) eq "REF";
+  oops unless reftype($orig_itemref) eq "REF";
 
   if ($rt eq "SCALAR" || $rt eq "LVALUE" || $rt eq "REF") {
     say "##pp dereferencing ref-to-scalarish $rt at ",__LINE__ if $debug;
-    $self->_preprocess($$itemref);
+    $self->_preprocess($$cloned_itemref, $$orig_itemref);
   }
   elsif ($rt eq "ARRAY") {
     say "##pp ARRAY ref at ",__LINE__ if $debug;
-    if (tied @$$itemref) {
+    if (tied @$$cloned_itemref) {
       say "     aref to *tied* ARRAY at ", __LINE__ if $debug;
-      my $copy = [ @$$itemref ]; # only 1 level
-      untie @$$itemref;
-      @$$itemref = @$copy;
+      my $copy = [ @$$cloned_itemref ]; # only 1 level
+      untie @$$cloned_itemref;
+      @$$cloned_itemref = @$copy;
     }
-    for (@$$itemref) {
-      $self->_preprocess(\$_);
+    for my $ix (0..$#{$$cloned_itemref}) {
+      $self->_preprocess(\$$cloned_itemref->[$ix], \$$orig_itemref->[$ix]);
     }
   }
   elsif ($rt eq "HASH") {
 say "##pp HASH ref at ",__LINE__ if $debug;
-    if (tied %$$itemref) {
+    if (tied %$$cloned_itemref) {
       say "     href to *tied* HASH at ", __LINE__ if $debug;
-      my $copy = { %$$itemref }; # only 1 level
-      untie %$$itemref;
-      %$$itemref = %$copy;
-      die if tied %$$itemref;
+      my $copy = { %$$cloned_itemref }; # only 1 level
+      untie %$$cloned_itemref;
+      %$$cloned_itemref = %$copy;
+      die if tied %$$cloned_itemref;
     }
-    #for (values %$$itemref) {
-    #  $self->_preprocess(\$_);
-    #}
     #For easier debugging, do in sorted order
     say "   #### iterating hash values... at ", __LINE__ if $debug;
-    for my $key (sort keys %$$itemref) {
-      $self->_preprocess(\$$itemref->{$key});
+    for my $key (sort keys %$$cloned_itemref) {
+      $self->_preprocess(\$$cloned_itemref->{$key}, \$$orig_itemref->{$key});
     }
   }
 }
@@ -887,8 +886,10 @@ sub _fmt_stack() { @stack ? (join ",", map{ _fmt_block($_) } @stack) : "()" }
 
 sub __unmagic($) {
   ${$_[0]} =~ s/(['"])([^'"]*?)
-                (?:\Q$magic_numstr_prefix\E|\Q$magic_num_prefix\E)
+                (?:\Q$magic_noquotes_pfx\E)
                 (.*?)(\1)/$2$3/xgs;
+
+  ${$_[0]} =~ s/\Q$magic_keepquotes_pfx\E//gs;
 }
 
 sub _postprocess_DD_result {
