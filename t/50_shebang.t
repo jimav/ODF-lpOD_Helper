@@ -122,16 +122,21 @@ sub expstr2re($) {
 
   if (m#qr/#) {
     # Canonical: qr/STUFF/MODIFIERS
+    # Alternate: qr/STUFF/uMODIFIERS
+    # Alternate: qr/(?^MODIFIERS:STUFF)/
     # Alternate: qr/(?^uMODIFIERS:STUFF)/
+#say "#XX qr BEFORE: $_"; 
     s#qr/([^\/]+)/([msixpodualngcer]*)
-     #\\E\(qr/$1\\/$2|qr/\\(\\?\\^$2:$1\\)\\/\)\\Q#xg
+     #\\E\(\\Qqr/$1/\\Eu?\\Q$2\\E|\\Qqr/(?^\\Eu?\\Q$2:$1)/\\E\)\\Q#xg
       or confess "Problem with qr/.../ in input string: $_";
+#say "#XX qr AFTER : $_"; 
   }
   if (m#\{"([\w:]+).*"\}#) {
     # Canonical: fh=\*{"::\$fh"}  or  fh=\*{"Some::Pkg::\$fh"}
     #   which will be encoded above like ...\Qfh=<BS>*{"::<BS>\E\$\Qfh"}
     # Alt1     : fh=\*{"main::\$fh"}
     # Alt2     : fh=\*{'main::$fh'}  or  fh=\*{'main::$fh'} etc.
+#say "#XX fh BEFORE: $_"; 
     s{(\w+)=<BS>\*\{"(::)<BS>([^"]+)"\}}
      {$1=<BS>*{\\E(?x: "(?:main::|::) \\Q<BS>$3"\\E | '(?:main::|::) \\Q$3'\\E )\\Q}}xg
     |
@@ -139,9 +144,11 @@ sub expstr2re($) {
      {$1=<BS>*{\\E(?x: "\\Q$2<BS>$3"\\E | '\\Q$2$3'\\E )\\Q}}xg
     or
       confess "Problem with filehandle in input string <<$_>>";
+#say "#XX fh AFTER : $_"; 
   }
   s/<BS>\\/\${bs}\\/g;
   s/<BS>/\\/g;
+#say "#XX    FINAL : $_"; 
 
   my $saved_dollarat = $@;
   my $re = eval "qr{${_}}"; die "$@ " if $@;

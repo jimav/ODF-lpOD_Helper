@@ -89,7 +89,11 @@ sub import {
 
   strict->import::into($target);
   warnings->import::into($target, FATAL => 'all');
-  feature->import::into($target, qw/say state/);
+
+  use 5.010;  # say, state
+  use 5.018;  # lexical_subs
+  feature->import::into($target, qw/lexical_subs say state/);
+  warnings->unimport::out_of($target, "experimental::lexical_subs");
 
   # Unicode support
   # Must be done before loading Test::More

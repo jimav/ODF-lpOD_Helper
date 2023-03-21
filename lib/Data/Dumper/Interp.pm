@@ -17,7 +17,8 @@ use strict; use warnings FATAL => 'all'; use utf8;
 use 5.010;  # say, state
 use 5.018;  # lexical_subs
 use feature qw(say state lexical_subs);
-use feature 'lexical_subs'; no warnings "experimental::lexical_subs";
+use feature 'lexical_subs'; 
+no warnings "experimental::lexical_subs";
 
 package  Data::Dumper::Interp;
 # VERSION from Dist::Zilla::Plugin::OurPkgVersion
