@@ -124,7 +124,7 @@ use Carp;
 sub oops(@) { unshift @_, "oops! "; goto &Carp::confess; }
 use Data::Dumper::Interp qw/ivis ivisq vis visq dvis u/;
 use Scalar::Util qw/refaddr blessed reftype weaken isweak/;
-use List::Util qw/first any all none reduce max sum0/;
+use List::Util qw/min max first any all none reduce max sum0/;
 
 # State information for generating & reusing styles is stored per-document.
 # A weakened ref to the doc object is saved; it will become undef automatically
@@ -317,7 +317,7 @@ strings rather than encoded binary.
 You will B<always> want this unless
 your application really, really needs to pass un-decoded octets
 directly between file/network resources and ODF::lpOD without
-looking at the data along the way.  See "UNICODE ISSUES".
+looking at the data along the way.  See C<ODF::lpOD_Helper::Unicode>.
 Not enabled by default to avoid breaking old programs.
 
 Currently B<:chars> has global effect but might someday become
@@ -504,7 +504,7 @@ sub ODF::lpOD::Common::Huse_character_strings() {
 ##  # [Mar2023: **what does this mean? Example?]
 ##  # TODO: Re-write this to explicitly traverse the tree using XML::Twig
 ##  #   and directly visit text nodes only once.
-##  my %seen_text_nodes;
+##  my %seen;
 ##  PARA:
 ##  foreach my $para ($context->descendants_or_self(qr/text:(p|h)/)) {
 ##    my @segments;
@@ -513,7 +513,7 @@ sub ODF::lpOD::Common::Huse_character_strings() {
 ##    my @elements
 ##      = $para->descendants_or_self(qr/^(#PCDATA|text:tab|text:line-break|text:s)$/);
 ##    foreach my $e (@elements) {
-##      next if $seen_text_nodes{$e}; # incremented below after possible re-visit
+##      next if $seen{$e}; # incremented below after possible re-visit
 ##      my $etext = __element2vtext($e);
 ##      if (length($oldtext)==0
 ##            && ($skipped_chars + length($etext) <= $Starting_pos)) {
@@ -616,7 +616,7 @@ sub ODF::lpOD::Common::Huse_character_strings() {
 ##      }
 ##      push @rlist, \%r;
 ##    }
-##    foreach my $e (@elements) { ++$seen_text_nodes{$e} }
+##    foreach my $e (@elements) { ++$seen{$e} }
 ##  }
 ##
 ##  return @rlist if wantarray;
@@ -647,8 +647,8 @@ the paragraph, treating the special tab, newline, and space objects
 as if they stored normal text.
 
 Each match must be contained within a paragraph,
-but may encompass some or all of it's leaf nodes
-including leaves under different spans.
+but may span segments arbitrarily.  
+A match may encompass leaves under different spans.
 
 <$expr> may be a plain string or qr/regex/s 
 (the /s option allows '.' to match \n).
@@ -662,8 +662,8 @@ OPTIONS may be
 
   multi  => BOOL    # Allow multiple matches? (FALSE by default)
 
-  offset => NUMBER  # Starting position within the concatenation
-                    # of all virtual texts in C<$context>
+  offset => NUMBER  # Starting position within the combined virtual
+                    # texts of all paragraphs in C<$context>
 
 A hash is returned for each match:
 
@@ -672,8 +672,8 @@ A hash is returned for each match:
    segments => [ nodes containing the match ]
    offset   => Offset of match in the first segment
    end      => Offset+1 of end of match in the last segment
-   voffset  => Offset of match in the paragraph's "virtual text"
-   vend     => Offset+1 of match-end in paragraph's "virtual text"
+   voffset  => Offset of match in the combined virtual texts
+   vend     => Offset+1 of match-end in the combined virtual texts
  }
 
 If the last segment is a C<text:tab> or C<text:newline> object 
@@ -685,8 +685,8 @@ consecutive spaces), 'end' will be the number of spaces included in the match.
    entirely║  within the 'offset' option       │
    ignored ║                                   │
            ║                                   │
-           ║---------voffset--►┊               │
-           ║-----vend-----------------------►  │
+   ------------------voffset--►┊               │
+   --------------vend-----------------------►  │
            ║                   ┊            ┊  │
            ║              match┊     match  ┊  │
            ║             ║-off►┊  ║---end---►  │
@@ -703,6 +703,147 @@ In array context, zero or more hashrefs.
 In scalar context, a hashref or undef if there was no match,
 and croaks if there were multiple matches.
 
+=head2 $context->Hreplace($expr, [content], OPTIONS)
+
+=head2 $context->Hreplace($expr, sub{...},  OPTIONS)
+
+Search and replace. C<$expr> is a string or qr/regex/s as with C<Hsearch>.
+
+In the first form, each matched substring in the virtual text is
+replaced with C<[content]>.
+
+In the second form, the specified sub is called for each match, passing
+a I<match hashref> as the only argument (see C<Hsearch> for details).
+
+The sub must return one of the following ways:
+
+  return(REPL_CONTINUE) 
+  return(REPL_CONTINUE, expr => $newexpr)
+
+    Nothing is done to the matched text; searching continues,
+    optionally with a new search target.
+
+  return(REPL_SUBST_CONTINUE, [content]) or
+  return(REPL_SUBST_CONTINUE, [content], expr => $newexpr)
+    
+    The matched text is replaced by [content] and searching continues.
+  
+  return(REPL_SUBST_STOP, [content], optRESULTS)
+
+    The matched text is replaced with [content] and then "Hreplace"
+    terminates, returning optRESULTS if provided.
+    
+  return(REPL_STOP, optRESULTS) 
+    
+    "Hreplace" just terminates.
+
+B<[content]> is specified as described for C<Hinsert>.
+
+
+=head2 $context->Hinsert([content], OPTIONS)
+
+OPTIONS may contain:
+
+The new content is inserted at a position relative to C<$context>
+given by a 'position' argument in OPTIONS (default is FIRST_CHILD).
+Possible 'position' values are the same as with C<insert_element()>
+as described in C<ODF::lpOD::Element>.
+
+=head3 Content Specification
+
+The C<[content]> argument is a list of zero or more elements, 
+each of which is either
+
+=over
+
+=item * A text string which may include spaces, tabs and newlines, or
+
+-item * A reference to [list of format PROPs] 
+
+=back
+
+Each [list of format PROPs] describes a I<character style>
+which will be applied only to the immediately-following text string(s).
+
+Each PROP is itself either a [key => value] sublist,
+or a string holding one of the following abbreviations:
+
+  "center"      means  [align => "center"]
+  "left"        means  [align => "left"]
+  "right"       means  [align => "right"]
+  "bold"        means  [weight => "bold"]
+  "italic"      means  [style => "italic"]
+  "oblique"     means  [style => "oblique"]
+  "normal"      means  [style => "normal", weight => "normal"]
+  "roman"       means  [style => "normal"]
+  "small-caps"  means  [variant => "small-caps"]
+  "normal-caps" means  [variant => "normal"], #??
+
+  <NUM>         means  [size => "<NUM>pt],   # bare number means point size
+  "<NUM>pt"     means  [size => "<NUM>pt],
+  "<NUM>%"      means  [size => "<NUM>%],
+
+Internally, an ODF "automatic" Style is created for
+each unique combination of PROPs, re-using styles when possible.
+Fonts are automatically registered.
+
+An ODF Style which already exists (or will be created) may be indicated
+by a list containing a single PROP like this:
+
+  [ [style-name => (name of style)] ]
+
+=head3 Spans
+
+In ODF, character styles are applied to text segments by storing the
+text segments as children of a B<span> object which specifies the style.
+
+C<Hreplace> will "replicate and flatten" any existing styles so that any
+newly inserted styles appear at the top level.  For example, consider
+a document which initially looks like this:
+
+  ┌─────┐  ┌─────┐  ┌─────┐   ┌─────┐
+  │AAAAA├─►│BBBBB├─►│Span1├──►│CCCCC│
+  └─────┘  └─────┘  └──┬──┘   └─────┘
+                       │
+              ┌────────┘
+              ▼
+           ┌─────┐  ┌─────┐  ┌─────┐
+           │ddddd├─►│eeeee├─►│fffff│
+           └─────┘  └─────┘  └─────┘
+
+If the text "eeeee" is replaced by "ZZZ" but covered by a new style,
+the following might result from a naive implementation:
+  
+  ┌─────┐  ┌─────┐  ┌─────┐   ┌─────┐
+  │AAAAA├─►│BBBBB├─►│Span1├──►│CCCCC│
+  └─────┘  └─────┘  └──┬──┘   └─────┘
+                       │
+              ┌────────┘
+              ▼
+           ┌─────┐  ┌─────┐  ┌─────┐
+           │ddddd├─►│Span2├─►│fffff│
+           └─────┘  └──┬──┘  └─────┘
+                       │
+                       ▼
+                     ┌───┐
+                     │ZZZ│
+                     └───┘
+
+However the nested spans are undesirable.  After "replicate and flatten",
+this is the result:
+  
+  ┌─────┐  ┌─────┐  ┌──────┐  ┌─────┐  ┌──────┐  ┌─────┐
+  │AAAAA├─►│BBBBB├─►│Span1a├─►│Span2├─►│Span1b├─►│CCCCC│
+  └─────┘  └─────┘  └──┬───┘  └──┬──┘  └──┬───┘  └─────┘
+                       │         │        │
+                       ▼         ▼        ▼
+                    ┌─────┐   ┌─────┐   ┌─────┐
+                    │ddddd│   │(new)│   │fffff│
+                    └─────┘   └─────┘   └─────┘
+
+The original C<Span1> was replicated and the new span (C<Span2>) floated
+up to the top level.
+
 =cut
 
 sub ODF::lpOD::Element::Hsearch {
@@ -713,127 +854,127 @@ sub ODF::lpOD::Element::Hsearch {
   my $offset = delete $opts{offset} // 0;
   my $multi  = delete $opts{multi};
   my $debug  = delete $opts{debug};
+say "at ",__LINE__ if $debug;
   croak "Invalid option ",avis(keys %opts) if %opts;
 
   my $regex = ref($expr) eq 'Regexp' ? $expr : qr/\Q${expr}\E/s;
 
+  #  $vtext holds the virtual text from the *current* paragraph
+  #  excluding any initial segments which were skipped because
+  #  they lie entirely before 'offset' in the combined virtual text:
+  # 
+  #         ║                                   ║ ║
+  #  Para(s)║           Paragraph 'x'           ║ ║   later Paragraph
+  #   before║                                   ║ ║
+  # ------------------voffset---►┊              ║ ║
+  # --------------vend-----------------------►┊ ║ ║
+  #         ║                    ┊            ┊ ║ ║
+  #         ║              match ┊    match   ┊ ║ ║ match           ║match
+  #         ║             ║-off-►┊ ║--end----►┊ ║ ║offset-►┊        ║end►┊
+  # ╓──╥────╥──╥────╥─────╥──────┬─╥──────────┴─╖ ╓────────┬──╥─────╥────┴──╖
+  # ║XX║XXXX║XX║XXXX║XX   ║      MA║TCHED TEXT┊ ║ ║        MAT║CHED ║TEXT┊  ║
+  # ║XX║XXXX║XX║XXXX║XXsea║rched te║xt..........║ ║searched te║xt...║.......║
+  # ╙──╨────╨──╨────╨─────╨────────╨────────────╜ ╙───────────╨─────╨───────╜
+  #  ─── offset───────►┊         ┊            ┊ ║ ║                         ║
+  #         ║skipped║....$vtext (para 'x')......║ ║...$vtext (later para)...║
+  #         ║ _chars║            ┊            ┊ ║ ║                         ║
+  #         ║       ║─$vtoffset─►┊            ┊ ║ ║                         ║
+  #         ║       ║───────────────$vtend───►┊ ║ ║                         ║
+  #                                             ║                           ║
+  #  ────$totlen_sofar (@end of para x)────────►║                           ║
+  #  -----------------------------------$totlen_sofar (para #N)------------►║
   my @matches;
-  my %seen_text_nodes;
+  my %seen;
   my $totlen_sofar = 0;
-  my $vtext_pos = $offset;
   PARA:
   foreach my $para ($context->descendants_or_self(qr/text:(p|h)/)) {
+say dvis '##Hs START PARA $offset $totlen_sofar $regex $para at ',__LINE__ if $debug;
     my $vtext = "";
     my ($vtoffset, $vtend);
-    my $totlen_sofar  = 0;
     my $skipped_chars = 0;
+    my $vtext_pos;
     my @seginfo;
-say dvis '##Hs START $regex $para at ',__LINE__ if $debug;
-
     my @input_segs = $para->descendants_or_self(
                               qr/^(#PCDATA|text:tab|text:line-break|text:s)$/);
-    # Add segments to $vtext until a match occurs, then keep adding until
-    # the match fails when anchored to the end of $vtext.
-    # This gets us the longest possible match.
-    while (@input_segs) {
-      # Add a segment
-      my $e = shift @input_segs;
-      oops if $seen_text_nodes{$e}++; # are looping references possible?
+    
+    # Add segments (while any remain) to $vtext until a match occurs which
+    # ends before the end of $vtext.  This allows the regex to match as much
+    # as it can.  
+    # N.B. The last seg might be entirely beyond the match.
+    SEG:
+    while (my $e = shift @input_segs) {
+      oops if $seen{$e}++;  # sanity check
       my $etext = __element2vtext($e);
       $totlen_sofar += length($etext);
       if ($totlen_sofar <= $offset) {
         # Don't save text we will not search
         oops unless length($vtext)==0;
-say dvis '##Hs skipping text before $offset $etext at ',__LINE__ if $debug;
         $skipped_chars += length($etext);
-        $vtext_pos -= length($etext);
-        oops if $vtext_pos < 0;
+say dvis '##Hs SKIPPING SEG: $offset $etext $skipped_chars $totlen_sofar at ',__LINE__ if $debug;
+        next SEG;
+      }
+      push @seginfo, { obj    => $e,
+                       vtoff  => length($vtext),
+                       seglen => length($etext),
+                       ix     => scalar(@seginfo),
+                     };
+      $vtext .= $etext;
+      my $starting_offset = $totlen_sofar - length($vtext);
+      if ($starting_offset <= $offset) {
+        # we are in the paragraph $offset points into
+        $vtext_pos = $offset - $starting_offset;
       } else {
-        push @seginfo, { obj    => $e,
-                         vtoff  => length($vtext),
-                         seglen => length($etext),
-                         ix     => scalar(@seginfo),
-                       };
-        $vtext .= $etext;
-say dvis '##Hs $seginfo[-1]\n     $vtext\n  at ',__LINE__ if $debug;
+        $vtext_pos = 0;
       }
-      # Partial match?
-      pos($vtext) = $vtext_pos;
-      if ($vtext =~ /\G.*?(${regex})/s) {
-        $vtoffset = $-[1];
-        $vtend    = $+[1];
-say dvis '##Hs partial match ($vtext_pos) $vtoffset $vtend at ',__LINE__ if $debug;
-      }
-      else { 
-        oops if defined $vtoffset;
-say '##Hs no match yet ($vtext_pos); pos=',u(pos($vtext)),dvis(' $vtext $regex at '),__LINE__ if $debug;
-      }
-      # If yes, stop when search anchored to end fails
-      if (defined $vtoffset) {
-        #last unless ($vtext =~ /\G(${regex})\z/);
-        if ($vtext =~ /\G(${regex})\z/) {
-say dvis '##Hs anchored search (still) succeeds at ',__LINE__ if $debug;
-        } else {
-say dvis '##Hs anchored search fails at ',__LINE__ if $debug;
-          last
+say ivis '##Hs SEG $seginfo[-1]',dvis '\n     $vtext $vtext_pos $offset $starting_offset $skipped_chars $totlen_sofar  at ',__LINE__ if $debug;
+      oops if $vtext_pos < 0;
+      oops if $vtext_pos >= length($vtext);
+      next SEG
+        if @seginfo==0;  # skipped all segments so far
+      CURR_SEG: {
+        pos($vtext) = $vtext_pos;
+        if ($vtext =~ /\G.*?(${regex})/s
+             && ($+[1] < length($vtext) || @input_segs==0)) {
+          # MATCHED
+          $vtoffset = $-[1];
+          $vtend    = $+[1];
+          my ($fsi, $lsi);
+          for(my $ix = 0; !defined($fsi) or !defined($lsi); ++$ix) {
+            oops(dvis '$fsi $lsi $vtoffset $vtend $vtext_pos $vtext $regex @seginfo\n', fmt_tree($para)) if $ix > $#seginfo;
+            my $s = $seginfo[$ix];
+            $fsi = $ix if !defined($fsi)
+                          && $s->{vtoff} <= $vtoffset
+                          && $s->{vtoff}+$s->{seglen} > $vtoffset;
+            $lsi = $ix, if !(defined $lsi)
+                          && ($s->{vtoff} < $vtend || $vtend==0)
+                          && $s->{vtoff}+$s->{seglen} >= $vtend;
+          }
+          push @matches,
+            {
+               match           => substr($vtext, $vtoffset, $vtend-$vtoffset),
+               segments        => [ map{$_->{obj}} @seginfo[$fsi..$lsi] ],
+               offset          => $vtoffset - $seginfo[$fsi]->{vtoff},
+               end             => $vtend - $seginfo[$lsi]->{vtoff},
+               voffset         => $starting_offset + $vtoffset,
+               vend            => $starting_offset + $vtend,
+               paragraph       => $para,
+            };
+    say '##Hs match #',$#matches,dvis ' $skipped_chars $offset $totlen_sofar $vtext_pos $vtoffset $vtend at ',__LINE__,"\n",fmt_match($matches[-1]) if $debug;
+          last PARA unless $multi;
+          $offset = $totlen_sofar - (length($vtext) - $vtend);
+          if ($vtend < length($vtext)) {
+            $vtext_pos = $vtend;
+            redo CURR_SEG
+          } # else start on next seg
+        }#matched
+        else { 
+          say dvis '[nomatch] $vtext_pos $regex $vtext' if $debug; 
         }
       }
-    }
-    next PARA unless defined $vtoffset;
-    # We have a match
-
-# $vtext holds the virtual text from the *current* paragraph
-# excluding any initial segments which were skipped because
-# they lie entirely before 'offset' in the combined virtual text:
-#
-#        ║                                   │ │
-# Para(s)║           Paragraph 'x'           │ │   later Paragraph
-#  before║                                   │ │
-#        ║---------voffset--►│               │ │
-#        ║-----vend-----------------------►  │ │
-#        ║                   ┊               │ │
-#        ║              match┊     match     │ │ match            match
-#        ║             ║-off►┊  ║---end---►  │ │offset►┊         ║-end►
-#╓──╥────╥──╥────╥─────╥────────╥─────────┴──╖ ╓───────┴─────────╥────┴──╖
-#║XX║XXXX║XX║XXXX║XX   ║     ┊MA║TCH******┊  ║ ║       ┊MATCH****║****┊  ║
-#║XX║XXXX║XX║XXXX║XX┊se║arched t║ext.........║ ║..searc hed text.║.......║
-#╙──╨────╨──╨────╨──┼──╨────────╨────────────╜ ╙─────────────────╨───────╜
-# ─── offset───────►┊        ┊            ┊  │ │                         │
-#        ║skipped║$vtoffset-►┊    $vtend-►┊  │ │                         │
-#        ║ _chars║                           │ │                         │
-#        ║       ║----$vtext (para 'x')------│ │----$vtext (later para)--│
-#                                            │                           │
-# ──────────$totlen_sofar (para #1)─────────►│                           │
-# -----------------------------------$totlen_sofar (para #N)------------►│
-#
-    my ($fsi, $lsi);
-    for my $ix (0..$#seginfo) {
-      my $si = $seginfo[$ix];
-      $fsi = $ix if !defined($fsi)
-                    && $si->{vtoff} <= $vtoffset
-                    && $si->{vtoff}+$si->{seglen} > $vtoffset;
-      $lsi = $ix, last if !(defined $lsi)
-                    && $si->{vtoff} < $vtend
-                    && $si->{vtoff}+$si->{seglen} >= $vtend;
-    }
-    oops unless defined($fsi) and defined($lsi);
-    push @matches,
-      {
-         match           => substr($vtext, $vtoffset, $vtend-$vtoffset),
-         segments        => [ map{$_->{obj}} @seginfo[$fsi..$lsi] ],
-         offset          => $vtoffset - $seginfo[$fsi]->{vtoff},
-         end             => $vtend - $seginfo[$lsi]->{vtoff},
-         voffset         => $skipped_chars + $vtoffset,
-         vend            => $skipped_chars + $vtend,
-         paragraph       => $para,
-      };
-    last
-      unless $multi;
-
-    # Look for another match in this same paragrah
-    $vtext_pos = $vtend;
-    redo PARA
-  }
+      say '##Hs advancing to next SEG.  at ',__LINE__ if $debug;
+    }#while input_segs remain in current paragraph
+  }#PARA
+  say "##Hs FINISHED, found ",scalar(@matches)," matches  at ",__LINE__ if $debug;
 
   return @matches
     if wantarray;

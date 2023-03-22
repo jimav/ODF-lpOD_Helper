@@ -117,4 +117,6 @@ See "UTF8 flag" in C<perlunifaq>.
 But these are invisible details of how Perl works internally, which
 your program should not take into account if it follows the rules outlined here.
 
+(END)
+
 =cut
