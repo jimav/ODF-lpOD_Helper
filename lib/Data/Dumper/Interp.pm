@@ -14,7 +14,8 @@
 ##FIXME: Blessed structures are not formatted because we treat bless(...) as an atom
 
 use strict; use warnings FATAL => 'all'; use utf8;
-use 5.010;  # say, state
+#use 5.010;  # say, state
+use 5.011;  # cpantester gets warning that 5.11 is the minimum acceptable
 use 5.018;  # lexical_subs
 use feature qw(say state lexical_subs);
 use feature 'lexical_subs'; 
