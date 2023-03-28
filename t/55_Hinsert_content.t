@@ -1,8 +1,10 @@
 #!/usr/bin/perl
 use FindBin qw($Bin);
 use lib $Bin;
-use t_Setup qw/bug oops :silent/; # strict, warnings, Test::More, Carp etc.
-use t_Utils qw/check_match check_nomatch ok_with_lineno like_with_lineno/;
+#use t_Setup qw/bug :silent/; # strict, warnings, Test::More, Carp etc.
+use t_Setup; # strict, warnings, Test::More, Carp etc.
+use t_Utils qw/check_match check_nomatch ok_with_lineno like_with_lineno
+               bug oops mydump/;
 
 use ODF::lpOD;
 use ODF::lpOD_Helper qw/:DEFAULT :chars fmt_node fmt_tree fmt_match/;
@@ -13,6 +15,15 @@ my $input_path = "$Bin/../tlib/Skel.odt";
 my $doc = odf_get_document($input_path);
 my $body = $doc->get_body;
  
+{ my $m = $body->Hsearch(qr/Front Stuff/) // bug;
+  my $para = $m->{paragraph};
+  note "BEFORE:\n", mydump($para, {return_only => 1});
+  #$para->Hinsert_content(["NEW999"], position => FIRST_CHILD);
+  $para->Hreplace(qr/Front Stuff/, ["NEW999"], debug => 1);
+  note "AFTER :\n", mydump($para, {return_only => 1});
+  die "Tex";
+}
+
 check_match( $body->Hsearch(qr/Front/s),
              "Hsearch match start of first paragraph (regex)",
              { num_segs=>1, offset=>0, end=>5, voffset=>0, vend=>5 } );
@@ -123,7 +134,7 @@ for my $n (1..6) {
 check_match( $body->Hsearch(qr/.*Unicode characters.*/s),
              "Hsearch match variety para",
              { offset=>0, 
-               voffset=>758,
+               voffset=>708,
                match => 'This «Paragraph» has ☺Unicode characters and bold and italic and underlined and larger text.'
              } );
       
@@ -211,16 +222,16 @@ ok_with_lineno(1, "Hsearch with qr//s or qr// and many offsets");
 { #Multi-match ADDR{1,2,3} in different table cells 
   my @m = $body->Hsearch(qr/ADDR./, multi => 1, debug => 0);
   check_match($m[0], "multi-match finding ADDR1",
-              { voffset=>906, match => 'ADDR1' });
+              { voffset=>856, match => 'ADDR1' });
   check_match($m[1], "multi-match finding ADDR2",
-              { voffset=>915, match => 'ADDR2' });
+              { voffset=>865, match => 'ADDR2' });
   check_match($m[2], "multi-match finding ADDR3",
-              { voffset=>924, match => 'ADDR3' });
+              { voffset=>874, match => 'ADDR3' });
   ok_with_lineno(@m==3, "No extraneous matches");
 }
 { #Multi-match in same paragraph
   # Using offset to start with the last table cell containing **ADDR3**
-  my $off = 922;
+  my $off = 872;
   my @m = $body->Hsearch(qr/(?:AD|R3|.)/s, multi => 1, offset => $off);
   
   my $ix = 0;

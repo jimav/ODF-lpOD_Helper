@@ -11,7 +11,7 @@ package t_Setup;
 
 require Exporter;
 use parent 'Exporter';
-our @EXPORT = qw/bug silent/;
+our @EXPORT = qw/silent/;
 
 # N.B. It appears, experimentally, that output from ok(), like() and friends
 # is not written to the test process's STDOUT or STDERR, so we do not need
@@ -89,13 +89,16 @@ sub import {
 
   strict->import::into($target);
   warnings->import::into($target, FATAL => 'all');
-  feature->import::into($target, qw/say state/);
+  #use 5.10.0; # for features say, state
+  use 5.16.0; # for feature current_sub
+  feature->import::into($target, qw/say state current_sub/);
 
   # Unicode support
   # This must be done before loading Test::More
   confess "too late" if defined( &Test::More::ok );
   use open ':std', ':encoding(UTF-8)';
-  "open"->import::into($target, ':std', ':encoding(UTF-8)');
+  #"open"->import::into($target, ':std', ':encoding(UTF-8)');
+  "open"->import::into($target, IO => ':utf8', ':std');
   use utf8;
   utf8->import::into($target);
 
@@ -111,14 +114,32 @@ sub import {
   multidimensional->unimport::out_of($target);
 
   require autovivification;
-  autovivification->unimport::out_of($target);
+  autovivification->unimport::out_of($target,
+                warn => qw/fetch store exists delete/);
 
-  # import things I always use into the test case
+  require Test::More; 
+  Test::More->VERSION('0.98'); # see UNIVERSAL
+  Test::More->import::into($target);
+
+  # import things I frequently use into the test case
   require Carp;
   Carp->import::into($target);
 
-  require Test::More; Test::More->VERSION('0.98'); # see UNIVERSAL
-  Test::More->import::into($target);
+  require File::Basename;
+  File::Basename->import::into($target, qw/basename dirname/);
+
+  require List::Util;
+  List::Util->import::into($target, qw/reduce min max first/);
+
+  require File::Spec;
+
+  require Cwd;
+  Cwd->import::into($target, qw/getcwd abs_path/);
+
+  require Data::Dumper::Interp;
+  Data::Dumper::Interp->import::into($target, 
+                       qw/visnew ivis dvis vis hvis avis u/);
+  $Data::Dumper::Interp::Useqq = 'unicode'; # omit 'controlpic' to get \t etc.
 
   if (grep{ $_ eq ':silent' } @_) {
     @_ = grep{ $_ ne ':silent' } @_;
@@ -136,7 +157,5 @@ END{
     die $errmsg if $errmsg;
   }
 }
-
-sub bug(@) { @_=("BUG:",@_); goto &Carp::confess }
 
 1;

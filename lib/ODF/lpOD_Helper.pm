@@ -35,6 +35,7 @@ ODF::lpOD_Helper - ease-of-use wrapper for ODF::lpOD
 
     Hsearch -- find a possibly-segmented string
     Hreplace -- find and replace strings with high-level style specs
+    Hinsert_content
     automatic_style
     common_style
     self_or_parent
@@ -69,7 +70,7 @@ match tab, newline or multiple spaces.
 =item 3.
 
 I<replace()> can not replace text stored in multiple segments, and
-will illegally store \t, \n, or consecutive spaces
+will store \t, \n, or consecutive spaces
 embedded in a single #PCDATA node rather then using the special
 ODF objects.
 
@@ -92,11 +93,19 @@ our @EXPORT = qw(
   self_or_parent
   fmt_match fmt_node fmt_tree
   gen_table_name
+  REPL_CONTINUE REPL_SUBST_CONTINUE REPL_SUBST_STOP REPL_STOP
 );
 our @EXPORT_OK = qw(
   hashtostring
   $auto_pfx
 );
+
+use constant {
+  REPL_CONTINUE => "REPL_CONTINUE",
+  REPL_SUBST_CONTINUE => "REPL_SUSBST_CONTINUE",
+  REPL_SUBST_STOP => "REPL_SUBST_STOP",
+  REPL_STOP => "REPL_STOP",
+};
 
 use ODF::lpOD;
 BEGIN {
@@ -122,6 +131,8 @@ use constant lpod_helper => 'ODF::lpOD_Helper';
 
 use Carp;
 sub oops(@) { unshift @_, "oops! "; goto &Carp::confess; }
+#sub btw(@) { local $_=join("",@_); s/\n\z//s; say "$_  \@ ".(caller(0))[2]; }
+sub btw(@) { local $_=join("",@_); s/\n\z//s; say "[".(caller(0))[2]."]$_"; }
 use Data::Dumper::Interp qw/ivis ivisq vis visq dvis u/;
 use Scalar::Util qw/refaddr blessed reftype weaken isweak/;
 use List::Util qw/min max first any all none reduce max sum0/;
@@ -273,26 +284,27 @@ sub __element2vtext($) {
 
   # Derived from ODF::lpOD::TextElement::get_text
   my $text;
-  if ($node->get_tag eq 'text:tab')
+  my $tag = $node->get_tag;
+  if ($tag eq 'text:tab')
           {
           $text = $ODF::lpOD::Common::TAB_STOP;
           }
-  elsif ($node->get_tag eq 'text:line-break')
+  elsif ($tag eq 'text:line-break')
           {
           $text = $ODF::lpOD::Common::LINE_BREAK;
           }
-  elsif ($node->get_tag eq 'text:s')
+  elsif ($tag eq 'text:s')
           {
           $text = "";
           my $c = $node->get_attribute('c') // 1;
           $text .= " " while $c-- > 0;
           }
-  elsif ($node->get_tag eq '#PCDATA')
+  elsif ($tag eq '#PCDATA')
           {
           $text = $node->get_text();
           }
   else    {
-          confess "not a leaf";
+          confess "not a leaf: $tag";
           }
   return $text;
 }
@@ -359,282 +371,6 @@ sub ODF::lpOD::Common::Huse_character_strings() {
 
 ###############################################################
 
-##=head2 @matches = $context->Hsearch($expr)
-##
-##=head2 $match = $context->Hsearch($expr, OPTIONS)
-##
-##Locates occurences of C<$expr> in the "virtual text" in C<$context>.
-##<$expr> may be a qr/regex/ or plain string, and may contain spaces,
-##tabs, and/or newlines.
-##
-##The "virtual text" is the combined text as if spaces, tabs, and newlines were
-##stored internally as text rather than special objects.
-##
-##C<$context> may be a leaf (#PCDATA) or a container
-##or ancestor (paragraph, table cell, or even the document body)
-##of the node(s) to search.
-##
-##OPTIONS may be
-##
-##  Starting_pos => offset  # start searching that far in
-##
-##RETURNS:
-##
-##  In array context: A list of zero or more match hashrefs
-##
-##  In scalar context: undef or the match hashref
-##                     (dies if there were multiple matches)
-##
-##Each match hash contains:
-##
-##  {
-##    match           => The matched text
-##    offset          => Offset in the virtual string (including \t etc.)
-##    segments        => [ list of text nodes containing the match ]
-##    fseg_offset     => offset into the first node of the start of match
-##    lseg_end_offset => offset of end+1 of the match in the last node
-##  }
-##
-##=head2 $context->Hsubstitute([content], [OPTIONS]) # ODF::lpOD::Element method
-##
-##Replace some or all of the "virtual text" in or below C<$context>,
-##optionally inserting new character style spans.
-##Elements which end up with empty text are removed.
-##
-##Leaves are always deleted and possibly replaced with other nodes.
-##
-##[content] is a (ref to a) list of items which specifies the new content,
-##which may include formatting specifiers.
-##
-##Each C<content> element is either
-##
-##=over
-##
-##=item * A reference to a [format PROPs]
-##
-##=item * A text string which may include spaces, tabs and newlines.
-##
-##=back
-##
-##Each [format PROPs] specifies a I<character style>
-##which will be applied only to the immediately-following text string(s).
-##
-##Each PROP is itself either a [key => value] sublist,
-##or a string holding one of the following abbreviations:
-##
-##  "center"      means  [align => "center"]
-##  "left"        means  [align => "left"]
-##  "right"       means  [align => "right"]
-##  "bold"        means  [weight => "bold"]
-##  "italic"      means  [style => "italic"]
-##  "oblique"     means  [style => "oblique"]
-##  "normal"      means  [style => "normal", weight => "normal"]
-##  "roman"       means  [style => "normal"]
-##  "small-caps"  means  [variant => "small-caps"]
-##  "normal-caps" means  [variant => "normal"], #??
-##
-##  <NUM>         means  [size => "<NUM>pt],   # bare number means point size
-##  "<NUM>pt"     means  [size => "<NUM>pt],
-##  "<NUM>%"      means  [size => "<NUM>%],
-##
-##Internally, an ODF "automatic" Style is created for
-##each unique combination of PROPs, re-using styles when possible.
-##Fonts are automatically registered.
-##
-##An ODF Style which already exists (or will be created) may be specified
-##by a list containing a single PROP like this:
-##
-##  [ [style-name => (name of style)] ]
-##
-##[OPTIONS] may contain:
-##
-##  Search => string or qr/regex/
-##
-##=over 2
-##
-##Find an existing string and replace it, preserving existing spans.
-##The string must be contained within one paragraph but may be segmented.
-##(Without 'Search' the entire text content is replaced.)
-##
-##=back
-##
-##  Chomp => TRUE            # Remove \n from the end of content
-##
-##  Starting_pos => offset   # As in Hsearch
-##
-##
-##RETURNS: Match hashref(s), the same as C<Hsearch>.
-##
-##Note: C<Hsubstitute> is conceptually like a
-##combination of ODF::lpOD's C<search()>
-##and C<replace()> or C<set_text()>, and C<set_span()>
-##but the search can match segmented text including spaces/tabs/newlines
-##and may be invoked directly on a leaf node.
-##
-##=cut
-##
-### $context->Hsubstitute([content], [OPTIONS])
-##sub ODF::lpOD::Element::Hsubstitute {
-##  my ($context, $content_arg, $options_arg) = @_;
-##  my @content = @$content_arg;
-##  my %opts    = @$options_arg;
-##
-##  my $Chomp        = delete $opts{Chomp};
-##  my $Search_only  = delete $opts{Search_only};
-##  my $Search       = delete $opts{Search} // $Search_only // qr/.+/s;
-##  my $Starting_pos = delete $opts{Starting_pos} // 0;
-##  my $debug        = delete $opts{debug};
-##  # my $Onceonly    = delete $opts{Onceonly}; # future
-##  croak "Invalid option ",avis(keys %opts) if %opts;
-##
-##  while (@content and !ref($content[$#content]) and $content[$#content] eq "") {
-##    pop @content;
-##  }
-##  if ($Chomp and @content and !ref $content[$#content]) {
-##    $content[$#content] =~ s/\n\z//s;
-##  }
-##
-##  $Search = qr/\Q${Search}\E/s unless ref($Search) eq 'Regexp';
-##
-##my $show = $debug || 0; #("@content" =~ /NOTES|OTHER.*INFO/);
-##
-##  my @rlist;
-##  # N.B. Paragraphs can be indirectly nested (via frames), so we
-##  # need to avoid visiting the same leaf text node more than once.
-##  # [Mar2023: **what does this mean? Example?]
-##  # TODO: Re-write this to explicitly traverse the tree using XML::Twig
-##  #   and directly visit text nodes only once.
-##  my %seen;
-##  PARA:
-##  foreach my $para ($context->descendants_or_self(qr/text:(p|h)/)) {
-##    my @segments;
-##    my $oldtext = "";
-##    my $skipped_chars = 0;
-##    my @elements
-##      = $para->descendants_or_self(qr/^(#PCDATA|text:tab|text:line-break|text:s)$/);
-##    foreach my $e (@elements) {
-##      next if $seen{$e}; # incremented below after possible re-visit
-##      my $etext = __element2vtext($e);
-##      if (length($oldtext)==0
-##            && ($skipped_chars + length($etext) <= $Starting_pos)) {
-##        # Don't store text we will not search
-##        $skipped_chars += length($etext);
-##      } else {
-##        push @segments, { obj => $e,
-##                          offset => length($oldtext),
-##                          length => length($etext),
-##                          ix     => scalar(@segments),
-##                        };
-##        $oldtext .= $etext;
-##      }
-##    }
-##    next unless @segments;
-##
-##    my $prev_repl;
-##
-##    oops("Starting_pos > length of text") if $Starting_pos > length($oldtext);
-##    pos($oldtext) = $Starting_pos;
-##
-##    while ($oldtext =~ /\G.*?(${Search})/mgsc) {
-##      my $start_off = $-[1];
-##      my $end_off   = $+[1];
-##      my ($fsi, $lsi);
-##      foreach (@segments) {
-##        $fsi = $_->{ix} if (! defined $fsi) &&
-##          $_->{offset} <= $start_off && $start_off < $_->{offset}+$_->{length};
-##        $lsi = $_->{ix} if (! defined $lsi) &&
-##          $_->{offset} < $end_off && $end_off <= $_->{offset}+$_->{length};
-##      }
-##      oops unless defined $fsi and defined $lsi;
-##      my %r = (
-##               match           => $1,
-##               offset          => $start_off + $skipped_chars,
-##               segments        => [ map{$_->{obj}} @segments[$fsi..$lsi] ],
-##               fseg_offset     => $start_off - $segments[$fsi]->{offset},
-##               lseg_end_offset => $end_off - $segments[$lsi]->{offset},
-##              );
-##      unless ($Search_only) {
-##        if ($prev_repl) {
-##          # This is the second match within the same paragraph...
-##          # @segments may have become invalid when we inserted replacement
-##          # content for the previous match; so re-get the text anew and
-##          # search again, starting immediately after the replaced content
-##          # from the previous match.
-##          my $repl_length = 0;
-##          foreach(@content) { $repl_length += length($_) if ! ref }
-##          $Starting_pos = $rlist[$#rlist]->{offset} + $repl_length;
-##          redo PARA;
-##        }
-##        # Insert all the new content (possibly multiple nodes) in place of
-##        # the segment containing the start of the match, and delete the
-##        # other segments as well.
-##        # Anything before or after the match in the deleted segments is
-##        # saved and put back with the new content.
-##        my $before = substr($oldtext,
-##                            $segments[$fsi]->{offset},
-##                            $r{fseg_offset});
-##        my $after  = substr($oldtext,
-##                            $end_off,
-##                            $segments[$lsi]->{length} - $r{lseg_end_offset});
-##
-##if ($show) {
-##  warn dvis('### BEFORE: $Search @content $fsi $lsi $start_off $end_off $before $after $oldtext\n');
-##  for my $i (0..$#segments) {
-##    my %h = %{ $segments[$i] };
-##    $h{obj} = fmt_node($h{obj});
-##    warn ivisq "     segments[$i] = \%h\n";
-##  }
-##}
-##
-##        $r{segments} = [
-##          $segments[$fsi]->{obj}->Hinsert_multi(
-##                                    [$before, @content, $after],
-##                                    [position => NEXT_SIBLING] )
-##        ];
-##        for my $i (reverse $fsi .. $lsi) {
-##          $segments[$i]->{obj}->delete;
-##        }
-##        if (@{$r{segments}} == 0) {
-##          # No content - the node was deleted with no replacement.
-##          # Return the containing paragraph so the caller can use it to
-##          # find the context, e.g. a containing table cell.
-##          #
-##          # However if the paragraph is now completely empty, delete it
-##          # too and return *its* parent.
-##          if (($para->get_text//"") ne "") {
-##            @{$r{segments}} = ( $para // oops );
-##          } else {
-##            @{$r{segments}} = ( $para->parent // oops );
-##            $para->delete;
-##          }
-##        }
-##if ($show) {
-##  warn "### AFTER :",
-##  map{ " segment: ".fmt_node($_)."\n" } @{ $r{segments} };
-##}
-##        $prev_repl = 1;
-##      }
-##      push @rlist, \%r;
-##    }
-##    foreach my $e (@elements) { ++$seen{$e} }
-##  }
-##
-##  return @rlist if wantarray;
-##  if (!defined wantarray) {
-##    croak "'$Search' did not match anything" if @rlist==0;
-##  }
-##  croak "'$Search' matched ",scalar(@rlist)," times\n" unless @rlist==1;
-##  return $rlist[0];
-##}
-##
-### $context->Hsearch($expr, OPTIONS...)
-### $context->Hsearch($expr, [OPTIONS...]) # for solidarity with Hsubstutute
-##sub ODF::lpOD::Element::Hsearch {
-##  my ($context, $expr, @opts) = @_;
-##  @opts = @{$opts[0]} if (@opts==1 && ref($opts[0]) eq "ARRAY");
-##  $context->Hsubstitute([], [Search_only => $expr, @opts]);
-##}
-
 =head2 @matches = $context->Hsearch($expr)
 
 =head2 $match = $context->Hsearch($expr, OPTIONS)
@@ -668,33 +404,33 @@ OPTIONS may be
 A hash is returned for each match:
 
  {
-   match    => The matched text
-   segments => [ nodes containing the match ]
-   offset   => Offset of match in the first segment
-   end      => Offset+1 of end of match in the last segment
+   match    => The matched virtual text
+   segments => [ leaf nodes containing the match ]
+   offset   => Offset of match in the first segment's virtual text
+   end      => Offset+1 of end of match in the last segment's v.t.
    voffset  => Offset of match in the combined virtual texts
    vend     => Offset+1 of match-end in the combined virtual texts
  }
+
+        Para.#1 ║ Paragraph #2 containing a match  │
+        (ignord)║  spread over several segments    │
+                ║                                  │
+                ║                                  │
+        ------------match voffset---►┊             │
+        --------match vend---------------------►┊  │
+                ║                    ┊          ┊  │
+                ║              match ┊   match  ┊  │
+                ║             ║-off-►┊ ║--end--►┊  │
+        ╓──╥────╥──╥────╥─────╥──────┬─╥────────┬──╖
+        ║xx║xxxx║xx║xxxx║xx...║......**║*MATCH**...║
+        ║xx║xxxx║xx║xxxx║xxSEA║RCHED VI║IRTUAL TEXT║
+        ╙──╨────╨──╨────╨──┼──╨────────╨───────────╜
+        ┊─OPTION 'offset'─►┊
 
 If the last segment is a C<text:tab> or C<text:newline> object 
 then 'end' will be 1.
 If the last segment is a C<text:s> (which can represents several
 consecutive spaces), 'end' will be the number of spaces included in the match.
-
-   Para(s) ║ A match in the Paragraph partly   │
-   entirely║  within the 'offset' option       │
-   ignored ║                                   │
-           ║                                   │
-   ------------------voffset--►┊               │
-   --------------vend-----------------------►  │
-           ║                   ┊            ┊  │
-           ║              match┊     match  ┊  │
-           ║             ║-off►┊  ║---end---►  │
-   ╓──╥────╥──╥────╥─────╥────────╥─────────┴──╖
-   ║XX║XXXX║XX║XXXX║XX   ║     ┊MA║TCH******┊  ║
-   ║XX║XXXX║XX║XXXX║XX┊SE║ARCHED V║IRTUAL TEXT.║
-   ╙──╨────╨──╨────╨──┼──╨────────╨────────────╜
-    ─OPTION 'offset'─►┊
 
 RETURNS:
 
@@ -702,6 +438,26 @@ In array context, zero or more hashrefs.
 
 In scalar context, a hashref or undef if there was no match,
 and croaks if there were multiple matches.
+
+=cut
+
+sub ODF::lpOD::Element::Hsearch {
+  my $context = shift;
+  my $expr    = shift;
+  my %opts    = @{ &__canon_options_arg };
+
+  my @matches;
+  $context->Hreplace($expr, 
+                     sub{ push @matches, $_[0]; return(REPL_CONTINUE) }, 
+                     %opts);
+  return @matches
+    if wantarray;
+  confess "void context, result would be discarded"
+    unless defined wantarray;
+  # scalar context
+  croak "'$expr' matched ",scalar(@matches)," times\n" if @matches > 1;
+  return @matches > 0 ? $matches[0] : undef;
+}
 
 =head2 $context->Hreplace($expr, [content], OPTIONS)
 
@@ -713,7 +469,7 @@ In the first form, each matched substring in the virtual text is
 replaced with C<[content]>.
 
 In the second form, the specified sub is called for each match, passing
-a I<match hashref> as the only argument (see C<Hsearch> for details).
+a I<match hashref> (see C<Hsearch>) as the only argument.
 
 The sub must return one of the following ways:
 
@@ -737,19 +493,7 @@ The sub must return one of the following ways:
     
     "Hreplace" just terminates.
 
-B<[content]> is specified as described for C<Hinsert>.
-
-
-=head2 $context->Hinsert([content], OPTIONS)
-
-OPTIONS may contain:
-
-The new content is inserted at a position relative to C<$context>
-given by a 'position' argument in OPTIONS (default is FIRST_CHILD).
-Possible 'position' values are the same as with C<insert_element()>
-as described in C<ODF::lpOD::Element>.
-
-=head3 Content Specification
+=head3 B<Content Specification>
 
 The C<[content]> argument is a list of zero or more elements, 
 each of which is either
@@ -758,15 +502,15 @@ each of which is either
 
 =item * A text string which may include spaces, tabs and newlines, or
 
--item * A reference to [list of format PROPs] 
+=item * A reference to [list of format PROPs] 
 
 =back
 
 Each [list of format PROPs] describes a I<character style>
-which will be applied only to the immediately-following text string(s).
+which will be applied only to the immediately-following text string.
 
 Each PROP is itself either a [key => value] sublist,
-or a string holding one of the following abbreviations:
+or a shorcut string:
 
   "center"      means  [align => "center"]
   "left"        means  [align => "left"]
@@ -790,75 +534,29 @@ Fonts are automatically registered.
 An ODF Style which already exists (or will be created) may be indicated
 by a list containing a single PROP like this:
 
-  [ [style-name => (name of style)] ]
-
-=head3 Spans
-
-In ODF, character styles are applied to text segments by storing the
-text segments as children of a B<span> object which specifies the style.
-
-C<Hreplace> will "replicate and flatten" any existing styles so that any
-newly inserted styles appear at the top level.  For example, consider
-a document which initially looks like this:
-
-  ┌─────┐  ┌─────┐  ┌─────┐   ┌─────┐
-  │AAAAA├─►│BBBBB├─►│Span1├──►│CCCCC│
-  └─────┘  └─────┘  └──┬──┘   └─────┘
-                       │
-              ┌────────┘
-              ▼
-           ┌─────┐  ┌─────┐  ┌─────┐
-           │ddddd├─►│eeeee├─►│fffff│
-           └─────┘  └─────┘  └─────┘
-
-If the text "eeeee" is replaced by "ZZZ" but covered by a new style,
-the following might result from a naive implementation:
-  
-  ┌─────┐  ┌─────┐  ┌─────┐   ┌─────┐
-  │AAAAA├─►│BBBBB├─►│Span1├──►│CCCCC│
-  └─────┘  └─────┘  └──┬──┘   └─────┘
-                       │
-              ┌────────┘
-              ▼
-           ┌─────┐  ┌─────┐  ┌─────┐
-           │ddddd├─►│Span2├─►│fffff│
-           └─────┘  └──┬──┘  └─────┘
-                       │
-                       ▼
-                     ┌───┐
-                     │ZZZ│
-                     └───┘
-
-However the nested spans are undesirable.  After "replicate and flatten",
-this is the result:
-  
-  ┌─────┐  ┌─────┐  ┌──────┐  ┌─────┐  ┌──────┐  ┌─────┐
-  │AAAAA├─►│BBBBB├─►│Span1a├─►│Span2├─►│Span1b├─►│CCCCC│
-  └─────┘  └─────┘  └──┬───┘  └──┬──┘  └──┬───┘  └─────┘
-                       │         │        │
-                       ▼         ▼        ▼
-                    ┌─────┐   ┌─────┐   ┌─────┐
-                    │ddddd│   │(new)│   │fffff│
-                    └─────┘   └─────┘   └─────┘
-
-The original C<Span1> was replicated and the new span (C<Span2>) floated
-up to the top level.
+  [ [style-name => "name of style"] ]
 
 =cut
 
-sub ODF::lpOD::Element::Hsearch {
+sub ODF::lpOD::Element::Hreplace {
   my $context = shift;
   my $expr    = shift;
+  my $repl    = shift;
   my %opts    = @{ &__canon_options_arg };
 
   my $offset = delete $opts{offset} // 0;
   my $multi  = delete $opts{multi};
   my $debug  = delete $opts{debug};
-say "at ",__LINE__ if $debug;
   croak "Invalid option ",avis(keys %opts) if %opts;
 
   my $regex = ref($expr) eq 'Regexp' ? $expr : qr/\Q${expr}\E/s;
 
+  if (ref($repl) ne "CODE") {
+    my $content = $repl;
+    $repl = sub{ return($multi ? REPL_SUBST_CONTINUE : REPL_SUBST_STOP, 
+                        $content); };
+  }
+                  
   #  $vtext holds the virtual text from the *current* paragraph
   #  excluding any initial segments which were skipped because
   #  they lie entirely before 'offset' in the combined virtual text:
@@ -883,12 +581,11 @@ say "at ",__LINE__ if $debug;
   #                                             ║                           ║
   #  ────$totlen_sofar (@end of para x)────────►║                           ║
   #  -----------------------------------$totlen_sofar (para #N)------------►║
-  my @matches;
   my %seen;
   my $totlen_sofar = 0;
   PARA:
   foreach my $para ($context->descendants_or_self(qr/text:(p|h)/)) {
-say dvis '##Hs START PARA $offset $totlen_sofar $regex $para at ',__LINE__ if $debug;
+    btw dvis '##Hr START PARA $offset $totlen_sofar $regex $para' if $debug;
     my $vtext = "";
     my ($vtoffset, $vtend);
     my $skipped_chars = 0;
@@ -910,7 +607,7 @@ say dvis '##Hs START PARA $offset $totlen_sofar $regex $para at ',__LINE__ if $d
         # Don't save text we will not search
         oops unless length($vtext)==0;
         $skipped_chars += length($etext);
-say dvis '##Hs SKIPPING SEG: $offset $etext $skipped_chars $totlen_sofar at ',__LINE__ if $debug;
+        btw dvis '##Hr SKIP SEG: $offset $etext $skipped_chars $totlen_sofar' if $debug;
         next SEG;
       }
       push @seginfo, { obj    => $e,
@@ -926,7 +623,7 @@ say dvis '##Hs SKIPPING SEG: $offset $etext $skipped_chars $totlen_sofar at ',__
       } else {
         $vtext_pos = 0;
       }
-say ivis '##Hs SEG $seginfo[-1]',dvis '\n     $vtext $vtext_pos $offset $starting_offset $skipped_chars $totlen_sofar  at ',__LINE__ if $debug;
+      btw ivis '##Hr SEG $seginfo[-1]', dvis '\n     $vtext $vtext_pos $offset $starting_offset $skipped_chars $totlen_sofar' if $debug;
       oops if $vtext_pos < 0;
       oops if $vtext_pos >= length($vtext);
       next SEG
@@ -949,18 +646,52 @@ say ivis '##Hs SEG $seginfo[-1]',dvis '\n     $vtext $vtext_pos $offset $startin
                           && ($s->{vtoff} < $vtend || $vtend==0)
                           && $s->{vtoff}+$s->{seglen} >= $vtend;
           }
-          push @matches,
-            {
-               match           => substr($vtext, $vtoffset, $vtend-$vtoffset),
-               segments        => [ map{$_->{obj}} @seginfo[$fsi..$lsi] ],
-               offset          => $vtoffset - $seginfo[$fsi]->{vtoff},
-               end             => $vtend - $seginfo[$lsi]->{vtoff},
-               voffset         => $starting_offset + $vtoffset,
-               vend            => $starting_offset + $vtend,
-               paragraph       => $para,
-            };
-    say '##Hs match #',$#matches,dvis ' $skipped_chars $offset $totlen_sofar $vtext_pos $vtoffset $vtend at ',__LINE__,"\n",fmt_match($matches[-1]) if $debug;
+          my $m = {
+            match      => substr($vtext, $vtoffset, $vtend-$vtoffset),
+            segments   => [ map{$_->{obj}} @seginfo[$fsi..$lsi] ],
+            offset     => $vtoffset - $seginfo[$fsi]->{vtoff},
+            end        => $vtend - $seginfo[$lsi]->{vtoff},
+            voffset    => $starting_offset + $vtoffset,
+            vend       => $starting_offset + $vtend,
+            paragraph  => $para,
+          };
+          btw dvis '##Hr MATCH $skipped_chars $offset $totlen_sofar $vtext_pos $vtoffset $vtend\n',fmt_match($m) if $debug;
+          my ($opcode, @args) = $repl->($m);
+          btw dvis '##Hr $opcode @args' if $debug;
+          confess "Invalid opcode returned from match sub:",vis($opcode)
+            unless $opcode =~ /^REPL_(SUBST_)?(CONTINUE|STOP)$/;
+          my ($dosubst, $continue_or_stop) = ($1,$2);
+          if ($dosubst) {
+            my $content = shift @args // confess "No [content] after $opcode";
+            #############################################################
+            my ($next_seg, $next_offset) 
+              = Hreplace_match($m, $content, debug => $debug);
+            #############################################################
+            btw dvis '##Hr Hreplace_match -> $next_seg $next_offset' if $debug;
+            if ($next_seg && (@input_segs==0 || $next_seg != $input_segs[0])) {
+              oops if grep {$next_seg == $_} @input_segs; 
+              push @input_segs, $next_seg;  # continue here
+            }
+            my $inserted_vlen = sum0(map{ref($_) ? 0 : length($_)} @$content);
+            # $vtext still contains the old text; will continue if < theend.
+            #my $delta = $inserted_vlen - ($m->{vend} - $m->{voffset});
+            #$totlen_sofar += $delta;
+            #$vtend += $delta;
+            oops(dvis '$delta $totlen_sofar $vtend')  
+              unless $vtend==0 || substr($vtext,$vtend-1,1) eq substr($m->{match},-1);
+
+            while (@args) {
+              if ($args[0] eq 'expr') { shift @args; $expr = shift @args; }
+              else { confess "unknown arg for $opcode: @args" };
+            }
+          }
+          if ($continue_or_stop eq "STOP") {
+            return @args;
+          }
+          oops unless $continue_or_stop eq "CONTINUE";
+
           last PARA unless $multi;
+          # ? IS THIS NECESSARY?  i.e. won't $offset small enough?
           $offset = $totlen_sofar - (length($vtext) - $vtend);
           if ($vtend < length($vtext)) {
             $vtext_pos = $vtend;
@@ -968,249 +699,183 @@ say ivis '##Hs SEG $seginfo[-1]',dvis '\n     $vtext $vtext_pos $offset $startin
           } # else start on next seg
         }#matched
         else { 
-          say dvis '[nomatch] $vtext_pos $regex $vtext' if $debug; 
+          btw dvis '[nomatch] $vtext_pos $regex $vtext' if $debug; 
         }
       }
-      say '##Hs advancing to next SEG.  at ',__LINE__ if $debug;
+      btw '##Hr advancing to next SEG.' if $debug;
     }#while input_segs remain in current paragraph
   }#PARA
-  say "##Hs FINISHED, found ",scalar(@matches)," matches  at ",__LINE__ if $debug;
-
-  return @matches
-    if wantarray;
-  confess "void context, result would be discarded"
-    unless defined wantarray;
-  # scalar context
-  croak "'$expr' matched ",scalar(@matches)," times\n" if @matches > 1;
-  return @matches > 0 ? $matches[0] : undef;
-}#Hsearch
-
-=head2 ??? lpod_helper->Hreplace_match([content], $match, [OPTIONS])
-
-=head2 Hreplace_match([content], $match, [OPTIONS])
-
-**** REWORK THIS ****
-
-Replace previously-matched text,
-preserving existing spans (and thus styles which apply to them).
-
-C<$match> is a hashref returned by C<Hsearch>.
-
-Important: Never replace more than one match returned by the same C<Hsearch>
-call unless you know they refer to different paragraphs (the first
-replacement may invalidate references in all matches pointing
-to that paragraph).  Use C<Hsubstitute> to replace
-multiple occurrences which might lie in the same paragraph.
-
-Note that C<Hreplace_match> is a FUNCTION, not a method, because
-the context is implied by C<$match>.
-
-OPTIONS may be:
-
-  Chomp => TRUE     # Remove any final \n from content
-
-C<[content]> is a (ref to a) list of items which describe the new content,
-possibly including format specifiers.
-
-Each member of C<content> is either
-
-=over
-
-=item * A text string which may include spaces, tabs and newlines.
-
-=item * [format PROPs]
-
-=back
-
-Each [format PROPs] list specifies a I<character style>
-which will be applied only to the immediately-following text string(s).
-
-Each PROP in a list is itself either a [key => value] sublist,
-or a string holding one of the following abbreviations:
-
-  "center"      means  [align => "center"]
-  "left"        means  [align => "left"]
-  "right"       means  [align => "right"]
-  "bold"        means  [weight => "bold"]
-  "italic"      means  [style => "italic"]
-  "oblique"     means  [style => "oblique"]
-  "normal"      means  [style => "normal", weight => "normal"]
-  "roman"       means  [style => "normal"]
-  "small-caps"  means  [variant => "small-caps"]
-  "normal-caps" means  [variant => "normal"], #??
-
-  <NUM>         means  [size => "<NUM>pt],   # bare number means point size
-  "<NUM>pt"     means  [size => "<NUM>pt],
-  "<NUM>%"      means  [size => "<NUM>%],
-
-Internally, an ODF "automatic" Style is created for
-each unique combination of PROPs, re-using styles when possible.
-Fonts are automatically registered.
-
-An ODF Style which already exists (or will be created) may be specified by
-
-  [style-name => STYLENAME]
-
-which must be the only PROP in the list.
-
-=cut
+}#Hreplace
 
 sub Hreplace_match($$@) {
-  my $context = shift;
-  my $match   = shift;
+  my $m = shift;
+  my $content = shift;
   my %opts    = @{ &__canon_options_arg };
-  die "unimp";
+
+  my @segments = @{ $m->{segments} };
+  my $seg0 = $segments[0];
+  my $segL = $segments[-1];
+  my $num_segs = @segments;
+  my $residue_vtext = substr(__element2vtext($segL), $m->{end});
+  my $residue_len = length($residue_vtext);
+
+  # Tentatively return (undef,undef) indicating no "after" residue
+
+  # Cut "before" text from seg0 into a new predecessor segment
+  if ($m->{offset} > 0) {
+    my $pred;
+    if ($seg0->is(TEXT_SEGMENT)) {
+      $pred = odf_create_element(TEXT_SEGMENT);
+      $pred->set_text( substr(__element2vtext($seg0),0,$m->{offset}) );
+    }
+    if ($seg0->is("text:s")) {
+      my $c = $seg0->get_attribute('c') // 1;
+      oops unless $c > $m->{offset};
+      $pred = odf_create_element("text:s");
+      $pred->set_attribute('c', $m->{offset});
+    }
+    $pred->paste_before($seg0);
+  }
+  # Cut "after" residue from segL into a new successor segment
+  my $residue_seg;
+  if ($residue_len > 0) {
+    if ($segL->is(TEXT_SEGMENT)) {
+      $residue_seg = odf_create_element(TEXT_SEGMENT);
+      $residue_seg->set_text($residue_vtext); # guaranteed flat
+    }
+    elsif ($segL->is("text:s")) {
+      my $c = $segL->get_attribute('c') // 1;
+      oops unless $c > $residue_len && $residue_vtext =~ /^\s+$/;
+      $residue_seg = odf_create_element("text:s");
+      $residue_seg->set_attribute('c', $residue_len);
+    }
+    else { oops fmt_node($segL) }
+    $residue_seg->paste_after($segL);
+  }
+  # Put the new content before seg0 & after any cut-off "before"
+  $seg0->Hinsert_content($content, position => PREV_SIBLING,
+                         debug => $opts{debug});
+
+  # Delete all the old segments
+  $_->delete() foreach (@segments);
+
+  # If there was "after" residue, return a pointer to that
+  ( $residue_seg ? ($residue_seg,0) : () )
 }
 
-###############################################################
+#  # Possible situations:
+#  #     First Seg                           Last Seg
+#  # ┌─────┬──────┐    ┌────────────┐    ┌──────┬─────┐
+#  # │  A  │xxxxxx│    │xxxxxxxxxxxx│    │xxxxxx│  Z  │
+#  # └─────┴──────┘    └────────────┘    └──────┴─────┘
+#  #
+#  #     First Seg                           Last Seg
+#  # ┌────────────┐    ┌────────────┐    ┌────────────┐
+#  # │xxxxxxxxxxxx│    │xxxxxxxxxxxx│    │xxxxxxxxxxxx│
+#  # └────────────┘    └────────────┘    └────────────┘
+#  #
+#  #                     Only Seg
+#  #                 ┌─────┬──────┬─────┐
+#  #                 │  A  │xxxxxx│  Z  │
+#  #                 └─────┴──────┴─────┘
 
-=head2 $context->Hsubstitute($expr, [content], [OPTIONS])
 
-***??? rename Hsubstitute -> Hreplace to be analog of para->replace:e
+=head2 $context->Hinsert_content([content], OPTIONS)
 
-Replace I<all> occurrences of C<$expr> in the virtual text of C<$context>
-with C<[content]>.
+This works like C<ODF::lpOD::Element::insert_element()> except 
+the possibly-multiple segments to be inserted are described by 
+a high-level C<[content]> specification (as described for C<Hreplace>).
 
-C<$expr> is as described for C<Hsearch>.
-
-C<[content]> is as described for C<Hreplace_match>.
+The segment(s) actually inserted will include spans and the special 
+ODF objects representing tabs, spaces and newlines as implied by
+the characters in C<[content]>.
 
 OPTIONS may contain:
+  
+  position => ...  # default is FIRST_CHILD
 
-  Chomp => TRUE           # Remove any final \n from content
+The new content is inserted at the indicated position relative to
+C<$context>.  
 
-  Starting_pos => offset  # As in Hsearch
+If multiple segments are inserted, the first one
+is will be at the indicated position and the others will be
+immediately-following siblings of the first.
 
-RETURNS: Match hashref(s) similar C<Hsearch>.
+Returns nothing.
 
-Note: C<Hsubstitute> is conceptually like a
-combination of ODF::lpOD's C<search()>
-and C<replace()> or C<set_text()>, and C<set_span()>
-but the search can match segmented text including spaces/tabs/newlines
-and may be invoked directly on a leaf node.
-
-=cut
-
-sub ODF::lpOD::Element::Hsubstitute {
-  my $context     = shift;
-  my $expr        = shift;
-  my $content_arg = shift;
-  my %opts    = @{ &__canon_options_arg };
-  my @content = @$content_arg;
-  my @results;
-  my $para;
-  SEARCH:
-  {
-    my @matches = $context->Hsearch($expr, %opts);
-    foreach my $match(@matches) {
-      if ($para && $match->{paragraph} == $para) {
-        # A second match in the same paragraph: Segments were replaced, so
-        # so other matchrefs pointing to the paragraph are now invalid!
-        # Re-run the search with Starting_offset pointing immediately
-        # after the previous replacement.
-        my $repl_length = 0;
-        foreach(@content) { $repl_length += length($_) unless ref }
-        $opts{Starting_off} = $results[-1]->{offset} + $repl_length;
-        redo SEARCH;
-      }
-      $para = $match->{paragraph};
-      my %result;
-      $result{offset} = $match->{offset}; # posn in entire virtual text
-      $result{match}  = $match->{match};  # matched subtring
-      my $before = substr( __element2vtext($match->{segments}->[0]),
-                           0,
-                           $match->{fseg_offset} );
-      my $after  = substr( __element2vtext($match->{segments}->[-1]),
-                           $match->{lseg_offset} );
-      $result{segments} = [
-        $match->{segments}->[0]->Hinsert_multi(
-                                   [$before, @content, $after],
-                                   [position => NEXT_SIBLING] )
-      ];
-      for my $seg (reverse @{$match->{segments}}) {
-        $seg->{obj}->delete;
-      }
-      $result{fseg_offset} = strlen($before);
-      if (@{$result{segments}} > 0) {
-        ### This seems inefficient; can Hinsert_multi provide more info? FIXME
-        $result{lseg_end_offset} =
-          length(__element2vtext(${ $result{segments} }[-1]))
-          - strlen($after);
-      } else {
-        # No content - the node was deleted with no replacement.
-        oops if $before || $after;
-        $result{fseg_offset} = $result{lseg_end_offset} = 0;
-
-        # Return the containing paragraph so the caller can use it to
-        # find the context, e.g. a containing table cell.
-        #
-        # However if the paragraph is now completely empty, delete it
-        # too and return *its* parent.
-        if (($para->get_text//"") ne "") {
-          @{$result{segments}} = ( $para // oops );
-        } else {
-          @{$result{segments}} = ( $para->parent // oops );
-          $para->delete;
-        }
-      }
-      push @results, \%result;
-    }
-  }
-  @results
-}
-
-###############################################################
-
-=head2 $context->Hinsert_multi([content...], [OPTIONS])
-
-Insert the I<content> at the location relative to C<$context> given by
-
-  position => <location>
-
-in I<OPTIONS>.
-
-C<< <location> >> is
-B<FIRST_CHILD>, or B<NEXT_SIBLING>, etc. see "Child element creation methods"
-in C<ODF::LpOD::Element>.
-
-The I<content> is specified as a list of character strings
-and [PROP...] styles as described for C<Hreplace_match()>.
-
-Nothing is inserted if all text is "".
-
-RETURNS: List of node(s) inserted
+Note: No new segments are inserted if C<position> is C<WITHIN> 
+and the content was entirely inside that segment.
 
 =cut
 
-# $context->Hinsert_multi([content...], [options...])
-sub ODF::lpOD::Element::Hinsert_multi($$) {
+##=head3 B<Spans>
+##
+##In ODF, local character styles are applied to text segments by storing the
+##text segments as children of a B<span> object which specifies the style.
+##
+##C<Hinsert_content> will 'divide' existing spans into multiple copies
+##if needed to allow newly inserted spans to exist at the top level.  
+##
+##For example, consider a paragraph which initially contains 4 text nodes, 
+##with the middle two under a span:
+##                        
+##      |--Text1  
+##      |         |-Text2
+##  Para|----SPAN1|
+##      |         |-Text3
+##      |--Text4
+##
+##Now C<Hinsert_content> is called to insert after Text2, with
+##a [content] parameter C<[ "Text2.3", ["bold"], "Text2.7" ]>.
+##
+##This means "Text2.3" will have the same formatting as it's predecessor
+##("Text2"), but "Text2.7" will by covered by a new span which specifies
+##a bold Style.  Therefore the existing SPAN1 is divided to make room
+##for the new span at the top level:
+##
+##      |--Text1  
+##      |        |--Text2
+##      |--SPAN1a|--Text2.3
+##      |
+##  Para|--NEWSPAN--Text2.7
+##      |
+##      |--SPAN1b--Text3
+##      |
+##      |--Text4
+
+=pod
+
+Empty elements are deleted (or not inserted).
+
+=cut
+
+sub ODF::lpOD::Element::Hinsert_content($$) {
   my $context     = shift;
   my $content_arg = shift;
   my %opts = (
-    position => FIRST_CHILD,  # the default
+    position => FIRST_CHILD, 
     @{ &__canon_options_arg },
   );
   my @content = @$content_arg;
-
-  my $position = $opts{position};
-
-  my $root = $context->get_root;
-
-  # Ignore extraneous initial ""s
-  while (@content and ! ref $content[0] and $content[0] eq "") {
-    shift @content
+  my $debug = $opts{debug};
+btw dvis '##Hi TOP %opts @content context:\n', fmt_tree($context) if $debug;
+  if (@content==0) { # nothing to insert?
+    return
   }
 
-  my @nodes;
+  my $root = $context->get_root;
+  my $ins_context = $context;
+
+  # The node first goes at the position specified by the user,
+  # which might be WITHIN, i.e. splitting an existing text segment.
+  # Subsequent nodes are inserted immediately after the first node.
+  # After everyting is put in, Hnormalize_spans() will "promote" any
+  # 2nd-level spans to the top level.
   while (@content) {
     local $_ = shift @content;
+    my ($text_context, $text_opts);
     if (ref) {
       my $tprops = $_;
-      my $text = shift @content
-        // croak "[text style] not followed by a string\n";
-      ! ref($text)
-        // croak "consecutive [text style]s (no strings inbetween)\n";
-
       my $stylename;
       if (@$tprops == 2 && $tprops->[0] =~ /^style[-_ ]name$/) {
         $stylename = $tprops->[1];
@@ -1218,45 +883,45 @@ sub ODF::lpOD::Element::Hinsert_multi($$) {
         my $ts = automatic_style($root, 'text', @$tprops) // oops;
         $stylename = $ts->get_name;
       }
+      my $vtext = shift(@content) 
+        // croak "[style spec] not followed by anything";
+      if (ref($vtext)) { croak "[style spec] not followed by plain text" }
 
-      my $node = ODF::lpOD::Element->create('text:span')->set_class;
-      $node->set_attributes({style => $stylename});
-      $node->set_text($text);
-      $context->insert_element($node, position => $position);
-      $context = $node;
-      $position = NEXT_SIBLING;
-      push @nodes, $node;
+      my $span = $ins_context->insert_element('text:span', %opts);
+      $span->set_attribute('style-name', $stylename);
+      # ODF::lpOD::TextElement::set_text replaces all children of a container
+      # (paragraph/heading/span) with PCDATA and tab, etc. nodes 
+      # which in this case is exactly what we want.
+      $span->ODF::lpOD::TextElement::set_text($vtext);
+      $ins_context = $span;
+      $opts{position} = NEXT_SIBLING;
     } else {
-      while (@content && ! ref $content[0]) {
-        $_ .= shift @content;  # concatenate adjacent texts
+      my $vtext = $_;
+      # But! ODF::lpOD::TextElement::set_text can not be directly used here
+      # because we do not want to wipe everything from a container.
+      #
+      # First insert a temprary paragraph wherever the user said to start
+      # (or after the previous node, if not processing the first segment)
+      # and create the required segment(s) under it (PCDATA, text:tab etc.)
+      my $tmp_para = $ins_context->insert_element('text:p', %opts);
+      $tmp_para->ODF::lpOD::TextElement::set_text($vtext);
+btw "##Hi BBB context->parent:\n",fmt_tree($context->parent) if $debug;
+      # Now move the child node(s) to where they should be
+      foreach my $node ( $tmp_para->cut_children() ) {
+        $node->paste('before', $tmp_para);
+        $ins_context = $node;  # the last node finally inserted
       }
-      while ($_ ne "") {
-        my $node;
-        if (s/^(  +)//) {
-          $node = ODF::lpOD::Element->create('text:s')->set_class;
-          $node->set_attribute('a',length($1));
-        }
-        elsif (s/^\t//) {
-          $node = ODF::lpOD::Element->create('text:tab')->set_class;
-        }
-        elsif (s/^\n//s) {
-          $node = ODF::lpOD::Element->create('text:line-break')->set_class;
-        }
-        elsif (s/^((?:[^\t\n ]|(?<! ) (?! ))+)//s) {
-          $node = ODF::lpOD::Element->create('#PCDATA')->set_class;
-          $node->set_text($1);
-        }
-        else { oops }
-        oops unless $node;
-        $context->insert_element($node, position => $position);
-        $context = $node;
-        $position = NEXT_SIBLING;
-        push @nodes, $node;
-      }
+btw "##Hi CCC context->parent:\n",fmt_tree($context->parent) if $debug;
+      $tmp_para->delete();
+btw "##Hi DDD after tmp_para->delete(), context->parent:\n",fmt_tree($context->parent) if $debug;
+
+      $opts{position} = NEXT_SIBLING;
     }
   }
+  warn "TODO: normalize_spans\n";
 
-  return @nodes;
+  confess "Hinsert_content does not return a value"
+    if defined(wantarray);
 }
 
 =head1 FUNCTIONS (not methods)
@@ -1343,6 +1008,11 @@ sub automatic_style($$@) {
   if (! defined $stylename) {
     for (;;) {
       $stylename = $auto_pfx.uc(substr($family,0,1)).(++$counters->{$family});
+      # Append something to remind us what style this is while debugging
+      # (the counter guarantees unique results)
+      foreach my $key (qw/align weight style variant size/) {
+        $stylename .= "_".$props{$key} if $props{$key}
+      }
       last
         unless defined (my $s=$doc->get_style($family, $stylename));
       my $existing_key = hashtostring(scalar $s->get_properties);
@@ -1422,18 +1092,18 @@ sub fmt_node(_;$) {  # sans final newline
   my $text = eval{ $node->get_text }; # (resursivly gets full virtual text)
   if (defined($text)) {               
     $text = ODF::lpOD::Common::input_conversion($text);#undo implicit encode
-    $text .= " (len=".length($text).")"                #(except in :chars mode)
   }
   my $tag  = eval{ $node->tag };
   my $att  = eval{ $node->get_attributes };
   my $s = "$node";
-  $s =~ s/ODF::lpOD:://;
   $s =~ s/=HASH//;   # ref($node)
+  #$s =~ s/ODF::lpOD::(\w+)(\(0x[^\(\)]*\))/...$1/;
+  $s =~ s/ODF::lpOD::(\w+)(\(0x[^\(\)]*\))/$1$2/;
   $s .=  " $tag" if defined $tag;
   $s .= " ".(%$att && $tag =~ /^(table-cell|sequence)/ ? "{...}" : vis($att))
-    if defined $att;
+    if keys %$att;
 
-  $s .= " ".vis($text)
+  $s .= " ".vis($text)." (len=".length($text).")"
     if defined($text) && (!$tailtextonly
                             || $tag !~ /text:(box|span|text|p)|office:/);
   return $s;
