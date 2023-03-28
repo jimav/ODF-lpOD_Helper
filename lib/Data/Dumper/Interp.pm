@@ -55,32 +55,46 @@ use Regexp::Common qw/RE_balanced/;
 use Term::ReadKey ();
 use overload ();
 
-#####################################
-# Internal debug-message utilities
-#####################################
-sub _dbrefvis(_) {
-  # Display an address as decimal:hex showing only the last digits
+our $addrvis_ndigits = 3;
+our $addrvis_a2abv =  {}; # address => abbreviated hex
+sub addrvis_forget() {
+  $addrvis_ndigits = 3;
+  $addrvis_a2abv =  {};
+}
+sub addrvis(_) {
+  # Display an address as decimal:hex showing only the last few digits.
   # The arg can be a numeric address or a ref from which the addr is taken.
+  # The number of digits shown increases when collisions occur.
   my $a = shift // return("undef");
   my $pfx = "";
   if (ref $a) {
     $pfx = reftype($a);
     $a = refaddr($a);
   }
-  state $ndigits = 3;
-  state $a_to_abbr = {};  # address => abbreviated repr
-  my sub abbr_hex($) { substr(sprintf("%0*x", $ndigits, $_[0]), -$ndigits) }
-  if (! exists $a_to_abbr->{$a}) {
+  my sub abbr_hex($) { 
+       substr(sprintf("%0*x", $addrvis_ndigits, $_[0]), -$addrvis_ndigits) }
+  my sub abbr_dec($) { 
+       substr(sprintf("%0*d", $addrvis_ndigits, $_[0]), -$addrvis_ndigits) }
+
+  if (! exists $addrvis_a2abv->{$a}) {
     my $abbr = abbr_hex($a);
-    while (grep{$abbr eq $_} values %$a_to_abbr) {
-      ++$ndigits;
-      $a_to_abbr = { map{ $_ => abbr_hex($_) } keys %$a_to_abbr };
+    while (grep{$abbr eq $_} values %$addrvis_a2abv) {
+      ++$addrvis_ndigits;
+      $addrvis_a2abv = { map{ $_ => abbr_hex($_) } keys %$addrvis_a2abv };
       $abbr = abbr_hex($a);
     }
-    $a_to_abbr->{$a} = $abbr;
+    $addrvis_a2abv->{$a} = $abbr;
   }
-  "$pfx<".substr($a, -$ndigits).":".$a_to_abbr->{$a}.">"
+  "$pfx<".abbr_dec($a).":".$addrvis_a2abv->{$a}.">"
 }
+
+=for Pod::Coverage addrvis_forget
+ 
+=cut
+
+#####################################
+# Internal debug-message utilities
+#####################################
 sub _dbshow(_) {
   my $v = shift;
   blessed($v) ? "(".blessed($v).")".$v   # stringify with (classname) prefix
@@ -98,6 +112,7 @@ sub _dbvisq(_) {
   $s
 }
 sub _dbavis(@) { "(" . join(", ", map{_dbvis} @_) . ")" }
+sub _dbrefvis(_) { addrvis($_[0])._dbvis($_[0]) }
 
 our $_dbmaxlen = 300;
 sub _dbrawstr(_) { "«".(length($_[0])>$_dbmaxlen ? substr($_[0],0,$_dbmaxlen-3)."..." : $_[0])."»" }
@@ -124,6 +139,7 @@ use Exporter 'import';
 our @EXPORT    = qw(visnew
                     vis  avis  alvis  ivis  dvis  hvis  hlvis
                     visq avisq alvisq ivisq dvisq hvisq hlvisq
+                    addrvis refvis
                     u quotekey qsh __forceqsh qshpath);
 
 our @EXPORT_OK = qw($Debug $MaxStringwidth $Truncsuffix $Objects $Foldwidth
@@ -316,6 +332,12 @@ sub alvis(@)  { substr &avis,  1, -1 }  # bare List without parenthesis
 sub alvisq(@) { substr &avisq, 1, -1 }
 sub hlvis(@)  { substr &hvis,  1, -1 }
 sub hlvisq(@) { substr &hvisq, 1, -1 }
+
+sub refvis(_) { my $o = &__getobj_s->_Vistype('s');
+                my ($v) = $o->Values;
+                return "undef" unless defined $v;
+                (ref($v) ne "" ? addrvis($v) : "").$o->Dump
+              }
 
 # Trampolines which replace the call frame with a call directly to the
 # interpolation code which uses $package DB to access the user's context.
@@ -615,8 +637,8 @@ sub _preprocess { # modifies an item by ref
   my ($self, $cloned_itemref, $orig_itemref) = @_;
   my ($debug, $seenhash) = @$self{qw/Debug Seenhash/};
 
-say "##pp AAA cloned=",_dbrefvis($cloned_itemref)," -> ",_dbvis($$cloned_itemref) if $debug;
-say "##         orig=",_dbrefvis($orig_itemref)," -> ",_dbvis($$orig_itemref)," at ",__LINE__ if $debug;
+say "##pp AAA cloned=",addrvis($cloned_itemref)," -> ",_dbvis($$cloned_itemref) if $debug;
+say "##         orig=",addrvis($orig_itemref)," -> ",_dbvis($$orig_itemref)," at ",__LINE__ if $debug;
 
   # Pop back if this item was visited previously
   if ($seenhash->{ refaddr($cloned_itemref) }++) {
@@ -1433,10 +1455,17 @@ Data::Dumper::Interp - interpolate Data::Dumper output into strings for human co
     #    and @ARGV=("-i","/file/path")
 
   # Functions to format one thing
-  say vis $ref;     #-->{abc => [1,2,3,4,5], def => undef}
-  say vis \@ARGV;   #-->["-i", "/file/path"]  # any scalar
-  say avis @ARGV;   #-->("-i", "/file/path")
-  say hvis %hash;   #-->(abc => [1,2,3,4,5], def => undef)
+  say vis $ref;      #prints {abc => [1,2,3,4,5], def => undef}
+  say vis \@ARGV;    #prints ["-i", "/file/path"]  # any scalar
+  say avis @ARGV;    #prints ("-i", "/file/path")
+  say hvis %hash;    #prints (abc => [1,2,3,4,5], def => undef)
+
+  # Format a reference with abbreviated referent address
+  say refvis $ref;   #prints HASH<457:1c9>{abc => [1,2,3,4,5], ...}
+  
+  # Just abbreviate a referent address or arbitrary number
+  say addrvis $ref;           # HASH<457:1c9>
+  say addrvis refaddr($ref);  # <457:1c9>
 
   # Stringify objects
   { use bigint;
@@ -1487,7 +1516,7 @@ with pre- and post-processing to "improve" the results:
 
 =over 2
 
-=item * Output is compact (1 line if possibe,
+=item * Output is compact (1 line if possible,
 otherwise folded at your terminal width), WITHOUT a trailing newline.
 
 =item * Printable Unicode characters appear as themselves.
@@ -1529,13 +1558,15 @@ from interpolating it beforehand.
 
 =head2 dvis 'string to be interpolated'
 
-Like C<ivis> with the addition that interpolated expressions
+Like C<ivis> with the addition that interpolated items
 are prefixed with a "exprtext=" label.
 
 The 'd' in 'dvis' stands for B<d>ebugging messages, a frequent use case where
 brevity of typing is more highly prized than beautiful output.
 
-=head2 vis [SCALAREXPR]
+=head2 vis optSCALAREXPR
+
+=head2 refvis optSCALAREXPR
 
 =head2 avis LIST
 
@@ -1543,6 +1574,9 @@ brevity of typing is more highly prized than beautiful output.
 
 C<vis> formats a single scalar ($_ if no argument is given)
 and returns the resulting string.
+
+C<refvis> is the same as C<vis> except if the argument is a reference
+then the result includes the object's abbreviated address (see C<addrvis>).
 
 C<avis> formats an array (or any list) as comma-separated values in parenthesis.
 
@@ -1558,7 +1592,9 @@ The "l" variants return a bare list without the enclosing parenthesis.
 
 =head2 dvisq 'string to be interpolated'
 
-=head2 visq [SCALAREXPR]
+=head2 visq optSCALAREXPR
+
+=head2 refvisq optSCALAREXPR
 
 =head2 avisq LIST
 
@@ -1573,6 +1609,24 @@ The 'q' variants display strings in 'single quoted' form if possible.
 Internally, Data::Dumper is called with C<Useqq(0)>, but depending on
 the version of Data::Dumper the result may be "double quoted" anyway
 if wide characters are present.
+
+=head2 addrvis REF
+
+=head2 addrvis NUMBER or undef
+
+Abbreviate object addresses, showing only the last few digits
+in both decimal and hex.  The result is like I<< "HASHE<lt>457:1c9E<gt>" >>
+for references, I<< "<457:1c9>" >> for a plain numbers, 
+or I<"undef"> if the argument is undefined.
+
+Initially 3 digits are shown, but the number of digits increases over
+time if necessary to keep new results unambiguous.  
+Every unique value is remembered internally, so
+calling this with billions of unique values will use a lot of memory.
+
+B<refvis> is equivalent to
+
+  addrvis(REF).vis(REF)   # e.g. "HASH<457:1c9>{ key=>value, ... }"
 
 =head1 OBJECT-ORIENTED INTERFACES
 

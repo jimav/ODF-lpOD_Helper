@@ -13,6 +13,10 @@ require Exporter;
 use parent 'Exporter';
 our @EXPORT = qw/bug silent/;
 
+# Do an initial read of $[ so arybase will be autoloaded
+# (prevents corrupting $!/ERRNO in subsequent tests)
+eval '$[' // die;
+
 # N.B. It appears, experimentally, that output from ok(), like() and friends
 # is not written to the test process's STDOUT or STDERR, so we do not need
 # to worry about ignoring those normal outputs (somehow everything is
@@ -118,12 +122,24 @@ sub import {
   require autovivification;
   autovivification->unimport::out_of($target);
 
-  # import things I always use into the test case
+  # import things I always or often use into the test case
   require Carp;
   Carp->import::into($target);
 
   require Test::More; Test::More->VERSION('0.98'); # see UNIVERSAL
   Test::More->import::into($target);
+
+  require Scalar::Util;
+  Scalar::Util->import::into($target, qw/blessed reftype looks_like_number
+                                         weaken isweak refaddr/
+                            );
+
+  # Avoid regex performance penalty in Perl <= 5.18
+  # if $PREMATCH $MATCH or $POSTMATCH are imported
+  # (fixed in perl 5.20).
+  require English;
+  English->import::into($target, '-no_match_vars' ); 
+
 
   if (grep{ $_ eq ':silent' } @_) {
     @_ = grep{ $_ ne ':silent' } @_;
