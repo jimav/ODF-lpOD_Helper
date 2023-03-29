@@ -1,7 +1,9 @@
 #!/usr/bin/perl
 use FindBin qw($Bin);
 use lib $Bin;
-use t_Setup qw/bug :silent/; # strict, warnings, Test::More, Carp etc.
+use t_Setup qw/:silent/; # strict, warnings, Test::More, Carp etc.
+
+use t_Utils qw/bug oops/;
 
 use Data::Dumper::Interp qw/visnew ivis dvis vis hvis avis u/;
 
@@ -16,6 +18,7 @@ my $body = $doc->get_body;
   my $m = $body->search("☺");
   ok($m->{segment}, "The :chars import tag implies Huse_character_strings");
 
-  like(fmt_node($m->{segment}), qr/text=" has ☺"/, ":DEFAULT still imports others")
+  like(fmt_node($m->{segment}), qr/☺Unicode/, 
+       ":DEFAULT still imports others")
 }
 done_testing();

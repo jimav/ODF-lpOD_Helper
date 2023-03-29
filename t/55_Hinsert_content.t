@@ -1,259 +1,86 @@
 #!/usr/bin/perl
+
+if (($ENV{PERL_PERTURB_KEYS}//42) ne "2") {
+  $ENV{PERL_PERTURB_KEYS} = "2"; # deterministic
+  $ENV{PERL_HASH_SEED} = "0xDEADBEEF";
+  exec $^X, $0, @ARGV; # for reproducible results
+}
 use FindBin qw($Bin);
 use lib $Bin;
-#use t_Setup qw/bug :silent/; # strict, warnings, Test::More, Carp etc.
-use t_Setup; # strict, warnings, Test::More, Carp etc.
-use t_Utils qw/check_match check_nomatch ok_with_lineno like_with_lineno
-               bug oops mydump/;
+#use t_Setup qw/:silent/; # strict, warnings, Test::More, Carp etc.
+use t_Setup ; # strict, warnings, Test::More, Carp etc.
+use warnings FATAL => 'all';
+
+use t_Utils qw/bug oops ok_with_lineno like_with_lineno
+               rawstr showstr showcontrols displaystr
+               show_white show_empty_string
+               checkeq_literal check
+               _check_end/;
+
+use Mydump qw/mydump/;
 
 use ODF::lpOD;
 use ODF::lpOD_Helper qw/:DEFAULT :chars fmt_node fmt_tree fmt_match/;
 
-use warnings FATAL => 'all';
+use File::Copy ();
+use Guard qw/guard scope_guard/;
 
-my $input_path = "$Bin/../tlib/Skel.odt";
-my $doc = odf_get_document($input_path);
+my $master_copy_path = "$Bin/../tlib/Skel.odt";
+
+# Prevent any possibility of over-writing the input file
+my $input_path = "./_TMP_".basename($master_copy_path);
+my $input_path_remover = guard { unlink $input_path };
+File::Copy::copy($master_copy_path, $input_path) or die "File::Copy $!";
+
+my $doc = odf_get_document($input_path, read_only => 1);
 my $body = $doc->get_body;
  
-{ my $m = $body->Hsearch(qr/Front Stuff/) // bug;
-  my $para = $m->{paragraph};
-  note "BEFORE:\n", mydump($para, {return_only => 1});
-  #$para->Hinsert_content(["NEW999"], position => FIRST_CHILD);
-  $para->Hreplace(qr/Front Stuff/, ["NEW999"], debug => 1);
-  note "AFTER :\n", mydump($para, {return_only => 1});
-  die "Tex";
-}
-
-check_match( $body->Hsearch(qr/Front/s),
-             "Hsearch match start of first paragraph (regex)",
-             { num_segs=>1, offset=>0, end=>5, voffset=>0, vend=>5 } );
-      
-check_match( $body->Hsearch(qr/^Front/s),
-             "Hsearch ^anchored match start of first paragraph",
-             { num_segs=>1, offset=>0, end=>5, voffset=>0, vend=>5 } );
-      
-check_nomatch( $body->Hsearch(qr/^Stuff/s),
-             "Hsearch ^anchored match middle of first seg fails");
-
-check_match( my $m1 = $body->Hsearch('Stuff'),
-             "Hsearch match middle of of first segment (string)",
-             { num_segs=>1, offset=>6, end=>11, voffset=>6, vend=>11 } );
-
-check_match( $body->Hsearch(qr/Front Stuff /s),
-             "Hsearch match entire first segment",
-             { num_segs=>1, offset=>0, end=>12, voffset=>0, vend=>12 } );
-      
-check_match( $body->Hsearch(qr/Front Stuff o/s),
-             "Hsearch match first segment + start of second",
-             { num_segs=>2, offset=>0, end=>1, voffset=>0, vend=>13 } );
-      
-check_match( $body->Hsearch(qr/utside/s),
-             "Hsearch match middle of second segment",
-             { num_segs=>1, offset=>1, end=>7, voffset=>13, vend=>19 } );
-      
-check_match( $body->Hsearch(qr/outside the 2-column Section/s),
-             "Hsearch match entire second segment",
-             { num_segs=>1, offset=>0, end=>28, voffset=>12, vend=>40 } );
-      
-check_nomatch( $body->Hsearch(qr/^outside/s, debug => 0),
-             "Hsearch ^anchored match start of second seg fails");
-      
-check_match( $body->Hsearch('o'),
-             "Hsearch first 'o' (string)",
-             { num_segs=>1, offset=>2, end=>3, voffset=>2, vend=>3 } );
-check_match( $body->Hsearch(qr/o/),
-             "Hsearch first 'o' (regex)",
-             { num_segs=>1, offset=>2, end=>3, voffset=>2, vend=>3 } );
-      
-check_match( $body->Hsearch(qr/o.*o/),
-             "Hsearch longest match across mult segs ('o.*o')",
-             { num_segs=>2, offset=>2, end=>27, voffset=>2, vend=>39 } );
-      
-check_match( $body->Hsearch(qr/^Lorem.*another/s, debug => 0),
-             "Hsearch match past one newline",
-             { num_segs=>11, offset=>0, end=>7, voffset=>76, vend=>168 } );
-      
-check_match( $body->Hsearch(qr/^Lorem.*laborum\./s),
-             "Hsearch match past multiple newlines",
-             { num_segs=>33, offset=>0, end=>305, voffset=>76, vend=>708 } );
-      
-
-#####################
-
-check_match( $body->Hsearch(qr/5 consecutive-spaces:/),
-             "Hsearch until just b4 space b4 multi-space",
-             { num_segs=>2, offset=>0, end=>19, voffset=>91, vend=>112 } );
-check_match( $body->Hsearch(qr/5 consecutive-spaces: /),
-             "Hsearch until just b4 multi-space",
-             { num_segs=>2, offset=>0, end=>20, voffset=>91, vend=>113 } );
-for my $n (1..6) {
-  my $regex_src = '5 consecutive-spaces: '.(" " x $n);
-  if ($n < 5) {
-    check_match( $body->Hsearch(qr/$regex_src/),
-                 "Hsearch including $n of multi-space",
-                 { num_segs=>3, offset=>0, end=>$n, voffset=>91, vend=>113+$n } 
-               );
-  } else {
-    check_nomatch( $body->Hsearch(qr/$regex_src/),
-                   "Hsearch beyond end of multi-space ($n total)" );
-  }
-}
-
-#####################
-
-{
-  my $tab_match;
-  check_match( $tab_match = $body->Hsearch(qr/\t/),
-               "Hsearch for tab alone",
-               { match => "\t", offset=>0, end=>1 } );
-
-  check_match( $body->Hsearch(qr/tab here:\t/),
-               "Hsearch for stuff+tab",
-               { match => "tab here:\t", offset=>0, end=>1,
-                 voffset => $tab_match->{voffset}-9,
-                 vend    => $tab_match->{voffset}+1,
-               } );
-
-  check_match( $body->Hsearch(qr/tab here:\t:there/),
-               "Hsearch for stuff+tab+stuff",
-               { match => "tab here:\t:there", offset=>0, end=>6,
-                 voffset => $tab_match->{voffset}-9,
-                 vend    => $tab_match->{voffset}+1+6,
-               } );
-
-  check_match( $body->Hsearch(qr/\t:there/),
-               "Hsearch for tab+stuff",
-               { match => "\t:there", offset=>0, end=>6,
-                 voffset => $tab_match->{voffset},
-                 vend    => $tab_match->{voffset}+1+6,
-               } );
-}
-
-#####################
-
-check_match( $body->Hsearch(qr/.*Unicode characters.*/s),
-             "Hsearch match variety para",
-             { offset=>0, 
-               voffset=>708,
-               match => 'This «Paragraph» has ☺Unicode characters and bold and italic and underlined and larger text.'
-             } );
-      
-#####################
-{ my sub smashwhite($) {
-    local $_ = shift;
-    s/[ \t\n\N{NO-BREAK SPACE}]+/ /gs;
-    $_
-  }
-
-  (my $input_txt = $input_path) =~ s/\.o..$/.txt/ or bug;
-  #note "> Reading $input_txt ...";
-  my $itxt;
-  { open my $fh, "<:encoding(UTF-8)", $input_txt or die "$! ";
-    local $/; # slurp
-    $itxt = <$fh>;
-    close $fh or die "Error reading txt:$!";
-  }
-  my $sitxt = smashwhite($itxt);
-
-  for my $maxlen (1..1000) {
-    my $text = "";
-    my $nchunks = 0;
-    my @paragraphs = $body->descendants_or_self(qr/text:(p|h)/);
-    for my $px (0..$#paragraphs) {
-      my $para = $paragraphs[$px];
-      my $offset = 0;
-      #say "[$px] para=$para";
-      while (my $m = $para->Hsearch(qr/.{1,${maxlen}}/s, offset => $offset, debug=>0)) {
-        $text .= $m->{match};
-        $offset = $m->{vend};
-        #say "GOT MATCH:", fmt_match($m);
-        bug unless $m->{paragraph} == $para;
-        $nchunks++;
-      }
-      $text .= "\n"; # inter-paragraph separator
+{ my $debug = grep /-d/, @ARGV;;
+  my $count = 0;
+  my $prev_vtext = "Front Stuff";
+  foreach (
+           [["bold"], "NEW"],
+           ["NEW"], ["NEW"], 
+           ["\t"], ["NEW\t"], ["\tNEW"], ["NEW\t006"],
+           ["\n"], ["NEW\n"], ["\nNEW"], ["NEW\n009"],
+           [" "], ["NEW "], [" NEW"], ["NEW 009"],
+           ["  "], ["NEW  "], ["  NEW"], ["NEW  009"],
+           ["   "], ["NEW   "], ["   NEW"], ["NEW   009"],
+           ["NEW \t\t\n   \n\n  "],
+           [["italic"], "NEW", "NEW", [17], "17ptNEW", ["bold", 38], "38ptNEW"],
+          ) 
+  { my $new_content = $_;
+    foreach (@$new_content) { 
+      s/NEW/sprintf("NEW%03d", $count++)/esg unless ref; 
     }
-    my $stext = smashwhite($text);
-    my $ok = ($sitxt eq $stext);
-    if (! $ok) {
-      note "> doc contains ", length($text), " virtual characters";
-      note "           and ", length($stext), " of smashed text";
-      note "> $input_txt contains ", length($sitxt), " of smashed text";
+    my $m = $body->Hsearch($prev_vtext) // bug;
+    my $para = $m->{paragraph};
+    my $orig_text = $para->get_text;
   
-      foreach ([$stext, "smashed text from ODF", "/tmp/j.stext"],
-               [$sitxt, "smashed text from ".basename($input_txt), "/tmp/j.sitxt"],
-              ) {
-        my ($data, $title, $path) = @$_;
-        note "> Dumping $title > $path";
-        open my $fh, ">:encoding(UTF-8)", $path or die "$path : $!";
-        print $fh $data;
-        print $fh "\n";
-        close $fh or die "Error writing $path";
-      }
-      bug "Match of Total text FAILED: ($nchunks chunks of max $maxlen chars)";
-    }
-    last if length($text) < $maxlen;
-  }
-  ok_with_lineno(1, "Total text matches ".basename($input_txt)." after smashing (variations)");
-}
-#####################
-
-check_match( $body->Hsearch(qr//s),
-             "Hsearch with qr//s", { offset=>0, end=>0, voffset=>0, vend=>0 } );
-
-check_match( $body->Hsearch(qr//),
-             "Hsearch with qr//", { offset=>0, end=>0, voffset=>0, vend=>0 } );
-
-for (my $offset=4; $offset < 50; $offset++) {
-  check_match( $body->Hsearch(qr//s, offset => $offset, debug => 0),
-               "Hsearch with qr//s, offset => $offset", 
-               { voffset=>$offset, vend=>$offset },
-               1 
-             ); #ok_only_if_failed
-
-  check_match( $body->Hsearch(qr//, offset => $offset, debug => 0),
-               "Hsearch with qr//, offset => $offset", 
-               { voffset=>$offset, vend=>$offset },
-               1 
-             ); #ok_only_if_failed
-}
-ok_with_lineno(1, "Hsearch with qr//s or qr// and many offsets");
-
-#####################
-{ #Multi-match ADDR{1,2,3} in different table cells 
-  my @m = $body->Hsearch(qr/ADDR./, multi => 1, debug => 0);
-  check_match($m[0], "multi-match finding ADDR1",
-              { voffset=>856, match => 'ADDR1' });
-  check_match($m[1], "multi-match finding ADDR2",
-              { voffset=>865, match => 'ADDR2' });
-  check_match($m[2], "multi-match finding ADDR3",
-              { voffset=>874, match => 'ADDR3' });
-  ok_with_lineno(@m==3, "No extraneous matches");
-}
-{ #Multi-match in same paragraph
-  # Using offset to start with the last table cell containing **ADDR3**
-  my $off = 872;
-  my @m = $body->Hsearch(qr/(?:AD|R3|.)/s, multi => 1, offset => $off);
+    note dvis 'BEFORE: $prev_vtext $new_content para:\n', fmt_tree($para)
+      if $debug;
+    
+    $para->Hreplace(qr/\Q${prev_vtext}\E/, $new_content, debug => $debug);
   
-  my $ix = 0;
-  foreach my $exp (qw/* * AD D R3 * */) {
-    my $m = $m[$ix++] // die "Too few matches";
-    check_match($m, "multi-match in same para ($exp at $off)",
-                { match => $exp, 
-                  voffset => $off, vend => $off+length($exp),
-                });
-    $off += length($exp);
-  }
-  ok_with_lineno(@m==7, "correct number of matches"); # no extras
-  my $totstr = reduce { $a . $b } (map{ $_->{match} } @m);
-  bug unless defined $totstr;
-  like_with_lineno($totstr, qr/^\*\*ADDR3\*\*$/, "Multi-match in same para");
-}
-#####################
+    note "AFTER :\n", fmt_tree($para) if $debug;
+  
+    my $n_vtext = join("", grep{! ref} @$new_content);
 
-#{ my $m = $body->Hsearch("Front Stuff");
-#  say fmt_match($m);
-#  say fmt_tree($m->{paragraph});
-#  die "tex"
-#}
+    my $new_text = $para->get_text;
+    (my $t = $orig_text) =~ s/\Q${prev_vtext}\E/${n_vtext}/s or oops;
+    ok($new_text eq $t, 
+       "Hreplace ".vis($prev_vtext)." with ".vis($new_content))
+      || ( note(dvis '$orig_text\n$new_text\n$prev_vtext\n$n_vtext\n$t\n'), bug );
+    $prev_vtext = $n_vtext;
+  }
+}
+
+# TODO: Write Hreplace tests covering all the corner cases in Hsearch.t
+# (Idea: discard and re-read the doc before each test, possibly using
+# an in-memory xml rep instead of re-reading from disk each time).
+
+#my $output_path = "./_OUTPUT_".basename($master_copy_path);
+#$doc->save(target => $output_path);
 
 done_testing();
+

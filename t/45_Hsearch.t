@@ -1,13 +1,71 @@
 #!/usr/bin/perl
 use FindBin qw($Bin);
 use lib $Bin;
-use t_Setup qw/bug oops :silent/; # strict, warnings, Test::More, Carp etc.
-use t_Utils qw/check_match check_nomatch ok_with_lineno like_with_lineno/;
+use t_Setup qw/:silent/; # strict, warnings, Test::More, Carp etc.
+
+use t_Utils qw/bug oops ok_with_lineno like_with_lineno
+               rawstr showstr showcontrols displaystr
+               show_white show_empty_string
+               checkeq_literal check
+               _check_end/;
+
+use Mydump qw/mydump/;
+
+use warnings FATAL => 'all';
 
 use ODF::lpOD;
 use ODF::lpOD_Helper qw/:DEFAULT :chars fmt_node fmt_tree fmt_match/;
 
-use warnings FATAL => 'all';
+sub _check_match($$$) {
+  my ($m, $test_label, $exp) = @_;
+  my $err;
+  if (!$m) {
+    $err = "match FAILED (undef result)\n"
+  } else {
+    {
+      $err = "Key 'segments is' undef or missing in match result:\n", last
+        unless defined $m->{segments};
+      foreach my $key (keys %$exp) {
+        confess "test bug" unless defined $exp->{$key};
+        if ($key eq "num_segs") {
+          $err = "Expecting $exp->{num_segs} segments in match result:\n", last
+            unless @{ $m->{segments} } == $exp->{num_segs};
+        }
+        else {
+          $err = "Key '$key' undef or missing in match result:\n", last
+            unless defined($m->{$key});
+          $err = "Expecting $key = ".showstr($exp->{$key})."\n"
+                .sprintf("%*s", 10+length($key)+3, "Not:").showstr($m->{$key})." in match result:\n", last
+            unless $m->{$key} eq $exp->{$key};
+        }
+      }
+    }
+    if ($err) {
+      $err .= fmt_match($m)."\n";
+      #$err .= "\nparagraph:\n".fmt_tree($m->{paragraph}) if $m->{paragraph};
+    }
+  } 
+  $err
+}
+sub _check_nomatch($$) {
+  my ($m, $test_label) = @_;
+  my $err = 0;
+  if ($m) {
+    $err = "Expected no-match, but got:\n".fmt_match($m);
+  }
+  $err
+}
+sub check_match($$$;$) {
+  my (undef, $test_label, undef, $ok_only_if_failed) = @_;
+  @_ = ( &_check_match, $test_label, $ok_only_if_failed );
+  goto &_check_end;
+}
+sub check_nomatch($$;$) {
+  my (undef, $test_label, $ok_only_if_failed) = @_;
+  @_ = ( &_check_nomatch, $test_label, $ok_only_if_failed );
+  goto &_check_end;
+}
+
 
 my $input_path = "$Bin/../tlib/Skel.odt";
 my $doc = odf_get_document($input_path);
@@ -120,11 +178,11 @@ for my $n (1..6) {
 
 #####################
 
-check_match( $body->Hsearch(qr/.*Unicode characters.*/s),
+check_match( $body->Hsearch(qr/.*Unicode .*/s),
              "Hsearch match variety para",
              { offset=>0, 
                voffset=>758,
-               match => 'This «Paragraph» has ☺Unicode characters and bold and italic and underlined and larger text.'
+               match => "This «Paragraph» has ☺Unicode and bold\t<tabthere and     multi-space and italic and underlined and larger text."
              } );
       
 #####################
@@ -207,20 +265,24 @@ for (my $offset=4; $offset < 50; $offset++) {
 }
 ok_with_lineno(1, "Hsearch with qr//s or qr// and many offsets");
 
+#
+# NOTE: To fix offsets, examine output of "t/dumpskel.pl 2"
+#
+
 #####################
 { #Multi-match ADDR{1,2,3} in different table cells 
   my @m = $body->Hsearch(qr/ADDR./, multi => 1, debug => 0);
   check_match($m[0], "multi-match finding ADDR1",
-              { voffset=>906, match => 'ADDR1' });
+              { voffset=>925, match => 'ADDR1' });
   check_match($m[1], "multi-match finding ADDR2",
-              { voffset=>915, match => 'ADDR2' });
+              { voffset=>934, match => 'ADDR2' });
   check_match($m[2], "multi-match finding ADDR3",
-              { voffset=>924, match => 'ADDR3' });
+              { voffset=>943, match => 'ADDR3' });
   ok_with_lineno(@m==3, "No extraneous matches");
 }
 { #Multi-match in same paragraph
   # Using offset to start with the last table cell containing **ADDR3**
-  my $off = 922;
+  my $off = 941;
   my @m = $body->Hsearch(qr/(?:AD|R3|.)/s, multi => 1, offset => $off);
   
   my $ix = 0;

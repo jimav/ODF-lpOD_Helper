@@ -8,7 +8,7 @@
 # (your choice of GPL 3 or Apache 2.0).
 # -----------------------------------------------------------------------------
 
-use strict; use warnings; use feature qw(switch state say);
+use strict; use warnings; use feature qw(switch state say current_sub);
 
 # We only call ODF::lpOD (and hence XML::Twig), and if we get warnings
 # we want to die to force immediate resolution.
@@ -133,7 +133,7 @@ use Carp;
 sub oops(@) { unshift @_, "oops! "; goto &Carp::confess; }
 #sub btw(@) { local $_=join("",@_); s/\n\z//s; say "$_  \@ ".(caller(0))[2]; }
 sub btw(@) { local $_=join("",@_); s/\n\z//s; say "[".(caller(0))[2]."]$_"; }
-use Data::Dumper::Interp qw/ivis ivisq vis visq dvis u/;
+use Data::Dumper::Interp qw/visnew ivis ivisq vis visq addrvis refvis dvis u/;
 use Scalar::Util qw/refaddr blessed reftype weaken isweak/;
 use List::Util qw/min max first any all none reduce max sum0/;
 
@@ -144,7 +144,7 @@ use List::Util qw/min max first any all none reduce max sum0/;
 #
 our %perdoc_state;  # "address" => [ { statehash }, $doc_weakened ]
 my $auto_pfx = "auto";
-sub get_perdoc_hash($) {
+sub _get_per_doc_hash($) {
   my $doc = shift;
   confess "not a Document" unless ref($doc) eq "ODF::lpOD::Document";
   my $addr = refaddr($doc);
@@ -344,28 +344,33 @@ so they can be called the same way as native ODF::lpOD methods
 
 =cut
 
-sub ODF::lpOD::Common::Huse_character_strings() {
-  # TODO: Can we make this a pragmata which only affects it's scope?
-  #
-  #   ODF::lpOD::Common::input/output_conversion() methods would
-  #   need to use (caller(N))[10] to locate the user's %^H hash
-  #   to find out whether to decode/encode; "N" is not fixed, so
-  #   those method would need to walk the stack to find the nearest
-  #   caller not inside ODF::lpOD::something.
-  #
-  #   If ODF::lpOD_Helper is someday merged into ODF::lpOD this would
-  #   but ugly but reasonably straightforward.
-  #
-  #   As a separate module ODF::lpOD_Helper might be able to patch
-  #   Perl's symbol table to replace those methods using
-  #      *ODF::lpOD::Common::input_conversion = &replacement;
-  #   however Perl caches method lookups, so if the user's program
-  #   managed to call ODF::lpOD methods before loading ODF::lpOD_Helper
-  #   then the overrides might not be effective.  It's better to not
-  #   go down that rabbit hole!
+# TODO: Can we make :chars a pragmata which only affects it's scope?
+#
+#   ODF::lpOD::Common::input/output_conversion() methods would
+#   need to use (caller(N))[10] to locate the user's %^H hash
+#   to find out whether to decode/encode; "N" is not fixed, so
+#   those method would need to walk the stack to find the nearest
+#   caller not inside ODF::lpOD::something.
+#
+#   If ODF::lpOD_Helper is someday merged into ODF::lpOD this would
+#   but ugly but reasonably straightforward.
+#
+#   As a separate module ODF::lpOD_Helper might be able to patch
+#   Perl's symbol table to replace those methods using
+#      *ODF::lpOD::Common::input_conversion = &replacement;
+#   however Perl caches method lookups, so if the user's program
+#   managed to call ODF::lpOD methods before loading ODF::lpOD_Helper
+#   then the overrides might not be effective.  It's better to not
+#   go down that rabbit hole!
 
+sub ODF::lpOD::Common::Huse_character_strings() {
   $ODF::lpOD::Common::INPUT_CHARSET = undef;
   $ODF::lpOD::Common::OUTPUT_CHARSET = undef;
+  # It would be nicer if lpod->set_input_charset(undef) worked...
+}
+sub ODF::lpOD::Common::Huse_octet_strings() {
+  lpod->set_input_charset("UTF-8");
+  lpod->set_output_charset("UTF-8");
 }
 
 
@@ -585,7 +590,7 @@ sub ODF::lpOD::Element::Hreplace {
   my $totlen_sofar = 0;
   PARA:
   foreach my $para ($context->descendants_or_self(qr/text:(p|h)/)) {
-    btw dvis '##Hr START PARA $offset $totlen_sofar $regex $para' if $debug;
+    btw dvis('##Hr START PARA $offset $totlen_sofar $regex $para')  if $debug;
     my $vtext = "";
     my ($vtoffset, $vtend);
     my $skipped_chars = 0;
@@ -707,6 +712,12 @@ sub ODF::lpOD::Element::Hreplace {
   }#PARA
 }#Hreplace
 
+# For the time being, Hreplace_match is not public
+
+=for Pod::Coverage Hreplace_match
+
+=cut
+
 sub Hreplace_match($$@) {
   my $m = shift;
   my $content = shift;
@@ -719,24 +730,7 @@ sub Hreplace_match($$@) {
   my $residue_vtext = substr(__element2vtext($segL), $m->{end});
   my $residue_len = length($residue_vtext);
 
-  # Tentatively return (undef,undef) indicating no "after" residue
-
-  # Cut "before" text from seg0 into a new predecessor segment
-  if ($m->{offset} > 0) {
-    my $pred;
-    if ($seg0->is(TEXT_SEGMENT)) {
-      $pred = odf_create_element(TEXT_SEGMENT);
-      $pred->set_text( substr(__element2vtext($seg0),0,$m->{offset}) );
-    }
-    if ($seg0->is("text:s")) {
-      my $c = $seg0->get_attribute('c') // 1;
-      oops unless $c > $m->{offset};
-      $pred = odf_create_element("text:s");
-      $pred->set_attribute('c', $m->{offset});
-    }
-    $pred->paste_before($seg0);
-  }
-  # Cut "after" residue from segL into a new successor segment
+  # Copy any "after" residue from segL into a new successor segment
   my $residue_seg;
   if ($residue_len > 0) {
     if ($segL->is(TEXT_SEGMENT)) {
@@ -749,14 +743,27 @@ sub Hreplace_match($$@) {
       $residue_seg = odf_create_element("text:s");
       $residue_seg->set_attribute('c', $residue_len);
     }
-    else { oops fmt_node($segL) }
+    else { oops }
     $residue_seg->paste_after($segL);
   }
-  # Put the new content before seg0 & after any cut-off "before"
-  $seg0->Hinsert_content($content, position => PREV_SIBLING,
-                         debug => $opts{debug});
+  if ($m->{offset} > 0) {
+    # seg0 contains "before" part to be saved: elide the rest of seg0's text
+    if ($seg0->is(TEXT_SEGMENT)) {
+      $seg0->set_text( substr(__element2vtext($seg0),0,$m->{offset}) );
+    }
+    elsif ($seg0->is("text:s")) {
+      oops unless $seg0->get_attribute('c') > $m->{offset};
+      $seg0->set_attribute('c', $m->{offset});
+    }
+    else { oops }
+    shift @segments; # don't delete seg0
+  }
+  
+  # N.B. This might merge whatever follows $segL out of existence, 
+  # but AFAIK will not merge "backwards", so $segL will remain in existence
+  $segL->Hinsert_content($content, 
+                         position => NEXT_SIBLING, debug => $opts{debug});
 
-  # Delete all the old segments
   $_->delete() foreach (@segments);
 
   # If there was "after" residue, return a pointer to that
@@ -852,16 +859,30 @@ Empty elements are deleted (or not inserted).
 sub ODF::lpOD::Element::Hinsert_content($$) {
   my $context     = shift;
   my $content_arg = shift;
+  confess "[content] must be an array ref" unless ref($content_arg) eq "ARRAY";
   my %opts = (
     position => FIRST_CHILD, 
     @{ &__canon_options_arg },
   );
   my @content = @$content_arg;
   my $debug = $opts{debug};
-btw dvis '##Hi TOP %opts @content context:\n', fmt_tree($context) if $debug;
-  if (@content==0) { # nothing to insert?
-    return
+
+  my $show_cp = $opts{position} =~ /SIBLING/ ? $context->{parent} : undef;
+  my sub show_context($) {
+    my $msg = shift;
+    if ($show_cp) {
+      # The original context might have been merged out of existence by now
+      $msg .= " context=".addrvis($context)." ORIG context->{parent}:\n"
+                         .fmt_tree($show_cp);
+    } else {
+      $msg .= " context:\n". fmt_tree($context);
+    }
+    @_ = ($msg);
+    goto &btw;  # show caller's line number
   }
+
+show_context(dvis '##Hi TOP %opts\n     @content\n    ') if $debug;
+  return if @content==0; # nothing to insert?
 
   my $root = $context->get_root;
   my $ins_context = $context;
@@ -871,6 +892,7 @@ btw dvis '##Hi TOP %opts @content context:\n', fmt_tree($context) if $debug;
   # Subsequent nodes are inserted immediately after the first node.
   # After everyting is put in, Hnormalize_spans() will "promote" any
   # 2nd-level spans to the top level.
+  my @tmp_paras; 
   while (@content) {
     local $_ = shift @content;
     my ($text_context, $text_opts);
@@ -890,35 +912,43 @@ btw dvis '##Hi TOP %opts @content context:\n', fmt_tree($context) if $debug;
       my $span = $ins_context->insert_element('text:span', %opts);
       $span->set_attribute('style-name', $stylename);
       # ODF::lpOD::TextElement::set_text replaces all children of a container
-      # (paragraph/heading/span) with PCDATA and tab, etc. nodes 
-      # which in this case is exactly what we want.
+      # with PCDATA and tab, etc. nodes which in this case is what we want.
       $span->ODF::lpOD::TextElement::set_text($vtext);
+show_context("##Hi BBB span=".addrvis($span)) if $debug;
       $ins_context = $span;
-      $opts{position} = NEXT_SIBLING;
     } else {
       my $vtext = $_;
-      # But! ODF::lpOD::TextElement::set_text can not be directly used here
-      # because we do not want to wipe everything from a container.
-      #
-      # First insert a temprary paragraph wherever the user said to start
-      # (or after the previous node, if not processing the first segment)
-      # and create the required segment(s) under it (PCDATA, text:tab etc.)
+      # Put the new content into a dummy paragraph inserted exactly where
+      # the content should end up (likely forming an invalid structure e.g.
+      # paragraphs). Later the new children will be moved out and the dummy
+      # paragraphs deleted, but that is deferred to avoid dealing with merged
+      # text nodes in the middle of processing.
       my $tmp_para = $ins_context->insert_element('text:p', %opts);
       $tmp_para->ODF::lpOD::TextElement::set_text($vtext);
-btw "##Hi BBB context->parent:\n",fmt_tree($context->parent) if $debug;
-      # Now move the child node(s) to where they should be
-      foreach my $node ( $tmp_para->cut_children() ) {
-        $node->paste('before', $tmp_para);
-        $ins_context = $node;  # the last node finally inserted
-      }
-btw "##Hi CCC context->parent:\n",fmt_tree($context->parent) if $debug;
-      $tmp_para->delete();
-btw "##Hi DDD after tmp_para->delete(), context->parent:\n",fmt_tree($context->parent) if $debug;
-
-      $opts{position} = NEXT_SIBLING;
+      push @tmp_paras, $tmp_para;
+show_context("##Hi CCC tmp_para=".addrvis($tmp_para)) if $debug;
+      $ins_context = $tmp_para;
     }
+    $opts{position} = NEXT_SIBLING;
+    delete @opts{qw/after before offset/};
   }
-  warn "TODO: normalize_spans\n";
+  # Move children out of the temporary paragraphs and delete the temp paras.
+  # NOTE this merges adjacent #PCDATA nodes, possibly re-combining an
+  # originally-split ancestor.  WE DONT KNOW WHERE THE NEW DATA WILL END UP.
+  while (my $tmp_para = shift @tmp_paras) {
+    foreach my $node ( $tmp_para->cut_children() ) {
+      $node->paste('before', $tmp_para);
+    }
+    $tmp_para->delete();
+  }
+
+  #warn "TODO: normalize_spans\n";
+  #  ACTUALLY maybe nested spans are okay, if styles can "not specify"
+  #  some attributes, i.e. to inherit part of an enclosing span's style.
+  #...maybe should do this before removing temp paragraphs?
+  #...we would need to look inside the temp paras to see sub-spans
+
+show_context("##Hi FINAL") if $debug;
 
   confess "Hinsert_content does not return a value"
     if defined(wantarray);
@@ -980,6 +1010,8 @@ Find or create an 'automatic' (i.e. functionally anonymous) style and
 return the object.  Styles are re-used when possible, so a style should
 not be modified because it might be shared.
 
+C<$family> is "text" or another style family name (TODO: specify)
+
 PROPs are as described for C<Hsubstitute>.
 
 **FIXME: Can this be made a method of ODF::lpOD::Document or ???
@@ -998,13 +1030,13 @@ sub automatic_style($$@) {
   my $doc = $context->get_document // oops;
   my %props = @{ __unabbrev_props(\@input_props) };
 
-  my $sh = get_perdoc_hash($doc);
+  my $sh = _get_per_doc_hash($doc);
   my $style_caches = ($sh->{style_caches} //= {});
   my $counters     = ($sh->{counters}     //= {});
 
   my $cache = ($style_caches->{$family} //= {});
   my $cache_key = hashtostring(\%props);
-  my $stylename = $$cache->{$cache_key};
+  my $stylename = $$cache{$cache_key};
   if (! defined $stylename) {
     for (;;) {
       $stylename = $auto_pfx.uc(substr($family,0,1)).(++$counters->{$family});
@@ -1085,7 +1117,7 @@ Format a match hashreffor debug messages (sans final newline).
 =cut
 
 sub fmt_node(_;$) {  # sans final newline
-  my ($node, $tailtextonly) = @_;
+  my ($node, $leaftextonly) = @_;
   if (! ref $node) {
     return "(invalid node: ".vis($node).")";
   }
@@ -1095,17 +1127,22 @@ sub fmt_node(_;$) {  # sans final newline
   }
   my $tag  = eval{ $node->tag };
   my $att  = eval{ $node->get_attributes };
-  my $s = "$node";
-  $s =~ s/=HASH//;   # ref($node)
-  #$s =~ s/ODF::lpOD::(\w+)(\(0x[^\(\)]*\))/...$1/;
-  $s =~ s/ODF::lpOD::(\w+)(\(0x[^\(\)]*\))/$1$2/;
+  ref($node) =~ /ODF::lpOD::(\w+)/;
+  my $class = $1 // ref($node) || confess("not a ref");
+  my $s = "$class<".addrvis(refaddr $node).">";
   $s .=  " $tag" if defined $tag;
   $s .= " ".(%$att && $tag =~ /^(table-cell|sequence)/ ? "{...}" : vis($att))
     if keys %$att;
 
-  $s .= " ".vis($text)." (len=".length($text).")"
-    if defined($text) && (!$tailtextonly
-                            || $tag !~ /text:(box|span|text|p)|office:/);
+  $s .= " ".vis($text)."[len=".length($text)."]"
+    if defined($text) && (!$leaftextonly  # ?? what is text:box (?a mistake?)
+                            || $tag !~ /^text:(box|span|text|p|h)|^office:/);
+
+  foreach my $k (sort keys %$node) { # any private members e.g. from XML::Twig?
+    next if any{ $k eq $_ } qw/pcdata att gi parent first_child last_child 
+                               prev_sibling next_sibling/;
+    $s .= " $k=".visq($node->{$k});
+  }
   return $s;
 }
 sub _fmt_tree($$$);
@@ -1115,7 +1152,6 @@ sub _fmt_tree($$$) {
   $$sref .= " "x$indent.fmt_node($obj,1)."\n";
   return unless ref $obj;
   foreach my $e ($obj->children) {
-    my $oldtext = $e->get_text;
     _fmt_tree($e,$indent+1,$sref);
   }
 }
@@ -1139,6 +1175,7 @@ sub fmt_tree(_;@) { # sans final newline
 
 sub fmt_match(_) { # sans final newline
   my $href = shift;
+  return "undef" unless defined $href;
   my %h = %$href;
   my @segments = map { 
                   my $t = __element2vtext($_);
@@ -1194,7 +1231,8 @@ so that methods speak and listen in characters, not octets.
 
 It is possible to toggle between the old behavior and character-string
 mode:
-I<< set_input/output_charset() >> (see C<ODF::lpOD::Common>)
+I<< lpod->Huse_octet_strings() >> or
+I<< lpod->set_input/output_charset() >> (see C<ODF::lpOD::Common>)
 will re-enable implicit decoding/encoding of method arguments
 if the B<:chars> tag was imported.
 And I<< lpod->Huse_character_strings() >> will disable the old behavior
@@ -1270,7 +1308,7 @@ ODF::lpOD_Helper is in the Public Domain (or CC0 license), but
 requires ODF::lpOD to function so as a practical matter
 use must comply with ODF::lpOD's license.
 
-=for Pod::Coverage oops
+=for Pod::Coverage oops btw 
 
 =cut
 
