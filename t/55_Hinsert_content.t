@@ -37,7 +37,8 @@ my $body = $doc->get_body;
  
 { my $debug = grep /-d/, @ARGV;;
   my $count = 0;
-  my $prev_vtext = "Front Stuff";
+  my $initial_vtext = $body->Hsearch("Front Stuff")->{paragraph}->get_text;
+  my $prev_item = "Front Stuff";
   foreach (
            [["bold"], "NEW"],
            ["NEW"], ["NEW"], 
@@ -47,32 +48,48 @@ my $body = $doc->get_body;
            ["  "], ["NEW  "], ["  NEW"], ["NEW  009"],
            ["   "], ["NEW   "], ["   NEW"], ["NEW   009"],
            ["NEW \t\t\n   \n\n  "],
-           [["italic"], "NEW", "NEW", [17], "17ptNEW", ["bold", 38], "38ptNEW"],
+           [["italic"], "foobarNEWfoobar", " NEW foobar", [17], "17ptNEW", ["bold", 38], " 38ptNEW"],
           ) 
   { my $new_content = $_;
     foreach (@$new_content) { 
       s/NEW/sprintf("NEW%03d", $count++)/esg unless ref; 
     }
-    my $m = $body->Hsearch($prev_vtext) // bug;
+    my $m = $body->Hsearch($prev_item) // bug;
     my $para = $m->{paragraph};
-    my $orig_text = $para->get_text;
+    my $curr_vtext = $para->get_text;
+    oops unless $initial_vtext 
+      eq $curr_vtext =~ s/${prev_item}/Front Stuff/rs; # /r -> non-destructive
   
-    note dvis 'BEFORE: $prev_vtext $new_content para:\n', fmt_tree($para)
+    note dvis 'BEFORE: $prev_item $new_content para:\n', fmt_tree($para)
       if $debug;
     
-    $para->Hreplace(qr/\Q${prev_vtext}\E/, $new_content, debug => $debug);
+    $para->Hreplace(qr/\Q${prev_item}\E/, $new_content, debug => $debug);
   
     note "AFTER :\n", fmt_tree($para) if $debug;
   
-    my $n_vtext = join("", grep{! ref} @$new_content);
+    my $n_item = join("", grep{! ref} @$new_content);
 
-    my $new_text = $para->get_text;
-    (my $t = $orig_text) =~ s/\Q${prev_vtext}\E/${n_vtext}/s or oops;
-    ok($new_text eq $t, 
-       "Hreplace ".vis($prev_vtext)." with ".vis($new_content))
-      || ( note(dvis '$orig_text\n$new_text\n$prev_vtext\n$n_vtext\n$t\n'), bug );
-    $prev_vtext = $n_vtext;
+    my $new_vtext = $para->get_text;
+    oops unless $initial_vtext 
+      eq $new_vtext =~ s/${n_item}/Front Stuff/rs; # /r -> non-destructive
+    
+    ok(1, "Hreplace ".vis($prev_item)." with ".vis($new_content));
+      
+    $prev_item = $n_item;
   }
+
+  # Check replacing something with nothing
+  { my $m = $body->Hsearch("foobar") // oops;
+    my $para = $m->{paragraph};
+    my $before_vtext = $para->get_text;
+    oops unless $initial_vtext 
+      eq $before_vtext =~ s/${prev_item}/Front Stuff/rs; # /r -> non-destructive
+    $para->Hreplace("foobar", [], multi => 1); # I think multi is the default(?)
+    my $after_vtext = $para->get_text;
+    ok($after_vtext
+        eq $before_vtext =~ s/foobar//gsr, "multi replace with []");
+  }
+    
 }
 
 # TODO: Write Hreplace tests covering all the corner cases in Hsearch.t
