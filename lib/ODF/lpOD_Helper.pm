@@ -31,16 +31,13 @@ ODF::lpOD_Helper - ease-of-use wrapper for ODF::lpOD
 
   Sorry, no examples yet... TODO TODO FIXME
 
-  The following APIs are exported by default:
+  The following funcions exported by default:
 
-    Hsearch -- find a possibly-segmented string
-    Hreplace -- find and replace strings with high-level style specs
-    Hinsert_content
-    automatic_style
-    common_style
-    self_or_parent
-    gen_table_name
-    fmt_match fmt_node fmt_tree (debug print utilities)
+  Hautomatic_style 
+  Hcommon_style
+  self_or_parent
+  fmt_match fmt_node fmt_tree
+  The REPL_* constants used by the Hreplace method.
 
 =head1 DESCRIPTION
 
@@ -89,10 +86,9 @@ package ODF::lpOD_Helper;
 
 our @EXPORT = qw(
   __disconnected_style
-  automatic_style common_style
+  Hautomatic_style Hcommon_style
   self_or_parent
   fmt_match fmt_node fmt_tree
-  gen_table_name
   REPL_CONTINUE REPL_SUBST_CONTINUE REPL_SUBST_STOP REPL_STOP
 );
 our @EXPORT_OK = qw(
@@ -247,7 +243,7 @@ sub __disconnected_style($$@) {
     }
     $object = odf_create_style('paragraph', @pprops);
     if (@tprops) {
-      my $ts = automatic_style($context, 'text', @tprops);
+      my $ts = Hautomatic_style($context, 'text', @tprops);
       $object->set_properties(area => 'text', clone => $ts);
     }
   }
@@ -330,8 +326,9 @@ strings rather than encoded binary.
 You will B<always> want this unless
 your application really, really needs to pass un-decoded octets
 directly between file/network resources and ODF::lpOD without
-looking at the data along the way.  See C<ODF::lpOD_Helper::Unicode>.
+looking at the data along the way.  
 Not enabled by default to avoid breaking old programs.
+See B<< C<ODF::lpOD_Helper::Unicode> >>.
 
 Currently B<:chars> has global effect but might someday become
 scoped; to be safe put C<use ODF::lpOD_Helper ':chars'>
@@ -389,8 +386,9 @@ the paragraph, treating the special tab, newline, and space objects
 as if they stored normal text.
 
 Each match must be contained within a paragraph,
-but may span segments arbitrarily.
-A match may encompass leaves under different spans.
+but may include any number of segments and 
+need not start or end on segment boundaries.
+A match may encompass leaves under different I<span>s.
 
 <$expr> may be a plain string or qr/regex/s
 (the /s option allows '.' to match \n).
@@ -516,7 +514,7 @@ each of which is either
 
 =back
 
-Each [list of format PROPs] describes a I<character style>
+Each [list of format PROPs] describes an I<automatic character style>
 which will be applied only to the immediately-following text string.
 
 Each PROP is itself either a [key => value] sublist,
@@ -844,9 +842,6 @@ immediately-following siblings of the first.
 
 Returns nothing.
 
-Note: No new segments are inserted if C<position> is C<WITHIN>
-and the content was entirely inside that segment.
-
 =cut
 
 ##=head3 B<Spans>
@@ -945,7 +940,7 @@ show_context(dvis '##Hi TOP %opts\n     @content\n    ') if $debug;
       if (@$tprops == 2 && $tprops->[0] =~ /^style[-_ ]name$/) {
         $stylename = $tprops->[1];
       } else {
-        my $ts = automatic_style($root, 'text', @$tprops) // oops;
+        my $ts = Hautomatic_style($root, 'text', @$tprops) // oops;
         $stylename = $ts->get_name;
       }
       my $vtext = shift(@content)
@@ -1026,9 +1021,7 @@ show_context("##Hi FINAL") if $debug;
 
 ###################################################
 
-=head2 self_or_parent($node, $tag)
-
-**FIXME: Can this be made a method of ODF::lpOD::Element ??
+=head2 $node->self_or_parent($tag)
 
 Returns $node or it's nearest ancestor which matches a gi
 
@@ -1037,17 +1030,17 @@ matches $tag.
 
 =cut
 
-sub self_or_parent($$) {
-  my ($node, $tag) = @_;
-  my $e = $node->passes($tag) ? $node : $node->parent($tag);
+sub ODF::lpOD::Element::self_or_parent($$) {
+  my ($node, $cond) = @_;
+  my $e = $node->passes($cond) ? $node : $node->parent($cond);
   # Should we return undef instead of croaking??
-  croak "Neither node nor ancestors match ",vis($tag),"\n" unless $e;
+  croak "Neither node nor ancestors match ",vis($cond),"\n" unless $e;
   return $e;
 }
 
 ###################################################
 
-=head2 automatic_style($context, $family, PROP...)
+=head2 Hautomatic_style($context, $family, PROP...)
 
 Find or create an 'automatic' (i.e. functionally anonymous) style
 with attributes specified via high-level properties.
@@ -1059,9 +1052,7 @@ C<$family> is "text" or another style family name (TODO: specify)
 
 PROPs are as described for C<Hreplace>.
 
-**FIXME: Can this be made a method of ODF::lpOD::Document or ???
-
-=head2 common_style($context, $family, PROP...)
+=head2 Hcommon_style($context, $family, PROP...)
 
 Create a 'common' (i.e. named by the user) style from high-level props.
 
@@ -1069,8 +1060,8 @@ The name must be given by [name => "STYLENAME"] somewhere in PROPs.
 
 =cut
 
-sub automatic_style($$@);
-sub automatic_style($$@) {
+sub Hautomatic_style($$@);
+sub Hautomatic_style($$@) {
   my ($context, $family, @input_props) = @_;
   my $doc = $context->get_document // oops;
   my %props = @{ __unabbrev_props(\@input_props) };
@@ -1103,10 +1094,10 @@ sub automatic_style($$@) {
   }
 }
 
-sub common_style($$@) {
+sub Hcommon_style($$@) {
   my ($context, $family, @input_props) = @_;
   my %props = @{ __unabbrev_props(\@input_props) };
-  croak "common_style must specify 'name'\n" unless $props{name};
+  croak "Hcommon_style must specify 'name'\n" unless $props{name};
   my $object = __disconnected_style($context, $family, %props);
   return $context->get_document->insert_style($object, automatic => FALSE);
 }
@@ -1160,21 +1151,26 @@ sub ODF::lpOD::Element::descendants_pruned {
 
 ###################################################
 
-=head2 gen_table_name($context)
-
-**FIXME: Should be a method of ODF::lpOD::Document (or call $self->get_document)
+=head2 $context->gen_table_name()
 
 Generate a table name not currently used of the form "Table<NUM>".
 
+C<$context> may be the document object or a descendant.
+
 =cut
 
-sub gen_table_name($) {
+sub ODF::lpOD::Element::gen_table_name($) {
   my $context = shift;
-  state $table_names = { map{ ($_->get_name() => 1) }
-                            $context->get_document->get_body->get_tables };
+  my $doc = $context->get_document;
+  my $sh = _get_per_doc_hash($doc);
+  my $table_names = ($sh->{table_names} //= {
+    map{ ($_->get_name() => 1) } $doc->get_body->get_tables
+  });
+
   state $seq = 1;
   my $name;
-   do { $name=$auto_pfx."Table".$seq++ } while exists $table_names->{$name};
+   do { $name=$auto_pfx."Table".($sh->{table_name_seq}++) } 
+   while exists $table_names->{$name};
   $table_names->{$name} = 1;
   return $name;
 }
@@ -1299,92 +1295,10 @@ sub fmt_match(_) { # sans final newline
   return $s."\n}";
 }
 
-###################################################
-
-=head1 UNICODE ISSUES
-
-The usual Perl paradigm is to *decode* character data immediately upon
-receipt from an external source, process the data as Perl character
-strings without concern for encoding,
-and finally *encode* results just before sending them out.
-Often this can be done automatically by calling
-C<open> or C<binmode> with an ":encoding()" specification.
-
-For historical reasons
-ODF::lpOD is incompatible with the above paradigm by default
-because it's methods always encode result strings (e.g. into UTF-8)
-before returning them to you, and attempts to decode strings you pass in before
-using them.  Therefore, by default,
-you must work with binary rather than character strings;
-regex match, substr(), length(), etc. will not do what you want
-with non-ASCII characters
-(ASCII slides by because C<encode> and C<decode> are essentially no-ops
-for those characters).
-
-B<< use ODF::lpOD_Helper ':chars'; >>
-disables ODF::lpOD's internal encoding and decoding,
-so that methods speak and listen in characters, not octets.
-
-It is possible to toggle between the old behavior and character-string
-mode:
-I<< lpod->Huse_octet_strings() >> or
-I<< lpod->set_input/output_charset() >> (see C<ODF::lpOD::Common>)
-will re-enable implicit decoding/encoding of method arguments
-if the B<:chars> tag was imported.
-And I<< lpod->Huse_character_strings() >> will disable the old behavior
-and restore B<:chars> mode.
-
-If the above discussion is bewildering, you are not alone; the official Perl
-docs to read are 'man perlunicode' and it's references, but they can be daunting
-on first read.   Here is yet another overview of the subject:
-
-=over
-
-A I<character> is an abstract thing defined only by it's Unicode code point.
-Obviously Perl must represent characters somehow in memory, but you
-do not care how because Perl *character* strings behave as a sequence
-of those abstract entities called characters, each of length 1,
-regardless of their internal representation.  Internally, Perl represents
-some characters as a single byte and others as multiple bytes, but
-this is invisible to Perl code.
-
-The ONLY time your program must know how characters are stored
-is when communicating with the world outside of Perl.
-When reading input, your program uses C<decode> to convert
-from the external representation (which you specify) to Perl's internal
-representation (which you don't know); and you use C<encode> when
-writing to disk or network to convert from Perl's internal rep to
-the appropriate external representation (which you specify).  The
-C<encoding(...)> option to C<open> and C<binmode> make Perl's I/O system
-do the encode or decode for you.
-
-Encoded data (the "external representation") is stored by Perl in "binary"
-strings, which are strings internally distinguished by Perl to work as
-a sequence of arbitrary octets rather than as containers for characters;
-operations like C<length()> and C<substr()> treat the stored octets individually,
-just as you would want when working with binary data.
-The difference is that with *character* strings, the octets actually stored
-are determined by Perl according to it's scheme for representing Unicode
-characters; the individual octets are not accessible except via back doors.
-
-Before Perl implemented Unicode all strings were "binary", which was okay
-because all characters were represented as single bytes.
-Nowadays there are two species of strings, and they must be kept separate.
-Inter-species marriage (for example concatenation) will yield wrong results.
-
-By the way, encode and decode are very fast when the UTF-8 encoding is used
-because Perl often (but not always) uses UTF-8 as it's internal representation
-and in that case there's nothing to do.
-However you still must perform the encode & decode operations so
-that Perl will know which strings represent abstract characters
-and which should give direct access to the stored octets.
-
-=back
-
 =head1 HISTORY
 
 The original ODF::lpOD_Helper was written in 2012.  The code was reworked
-and this manual written in 2023.
+and this manual written in 2023.  The API changed with version 3.000 .
 
 As of Feb 2023,
 ODF::lpOD is not actively maintained (last updated in 2014, v1.126),
