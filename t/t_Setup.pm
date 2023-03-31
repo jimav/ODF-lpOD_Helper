@@ -97,7 +97,7 @@ sub import {
   use 5.011;  # cpantester gets warning that 5.11 is the minimum acceptable
   use 5.018;  # lexical_subs
   require feature;
-  feature->import::into($target, qw/lexical_subs say state/);
+  feature->import::into($target, qw/state say current_sub lexical_subs/);
   warnings->unimport::out_of($target, "experimental::lexical_subs");
 
   # Unicode support

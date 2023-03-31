@@ -8,7 +8,9 @@
 # (your choice of GPL 3 or Apache 2.0).
 # -----------------------------------------------------------------------------
 
-use strict; use warnings; use feature qw(switch state say current_sub);
+use strict; use warnings; 
+use feature qw(switch state say current_sub lexical_subs);
+no warnings "experimental::lexical_subs";
 
 # We only call ODF::lpOD (and hence XML::Twig), and if we get warnings
 # we want to die to force immediate resolution.
@@ -21,17 +23,24 @@ use warnings FATAL => 'all';
 
 =head1 NAME
 
-ODF::lpOD_Helper - ease-of-use wrapper for ODF::lpOD
+ODF::lpOD_Helper - fix and enhance ODF::lpOD
 
 =head1 SYNOPSIS
 
+  use feature 'unicode_strings';
   use ODF::LpOD;
   use ODF::LpOD_Helper qw/:chars :DEFAULT/;
-  use feature 'unicode_strings';
 
-  Sorry, no examples yet... TODO TODO FIXME
+  my $doc = odf_get_document("/path/to/something.xml");
+  my $body = $doc->get_body;
+  
+  # Replace "{famous author}" with "Stephen King" in large, red, bold text.
+  # regardless of segmentation
+  $body->Hreplace("{famous author}", 
+                  [["bold",[size => "120%"],[color => "red]], "Stephen King"] 
+                 );
 
-  The following funcions exported by default:
+The following funcions are exported by default:
 
   Hautomatic_style 
   Hcommon_style
@@ -992,10 +1001,6 @@ show_context("##Hi FINAL") if $debug;
     if defined(wantarray);
 }
 
-=head1 FUNCTIONS (not methods)
-
-=cut
-
 ####################################################
 #
 #=head2 $context->Hget_vtext()
@@ -1037,72 +1042,6 @@ sub ODF::lpOD::Element::self_or_parent($$) {
   croak "Neither node nor ancestors match ",vis($cond),"\n" unless $e;
   return $e;
 }
-
-###################################################
-
-=head2 Hautomatic_style($context, $family, PROP...)
-
-Find or create an 'automatic' (i.e. functionally anonymous) style
-with attributes specified via high-level properties.
-
-Styles are re-used when possible, so the returned style object
-should not be modified because it might be shared.
-
-C<$family> is "text" or another style family name (TODO: specify)
-
-PROPs are as described for C<Hreplace>.
-
-=head2 Hcommon_style($context, $family, PROP...)
-
-Create a 'common' (i.e. named by the user) style from high-level props.
-
-The name must be given by [name => "STYLENAME"] somewhere in PROPs.
-
-=cut
-
-sub Hautomatic_style($$@);
-sub Hautomatic_style($$@) {
-  my ($context, $family, @input_props) = @_;
-  my $doc = $context->get_document // oops;
-  my %props = @{ __unabbrev_props(\@input_props) };
-
-  my $sh = _get_per_doc_hash($doc);
-  my $style_caches = ($sh->{style_caches} //= {});
-  my $counters     = ($sh->{counters}     //= {});
-
-  my $cache = ($style_caches->{$family} //= {});
-  my $cache_key = hashtostring(\%props);
-  my $stylename = $$cache{$cache_key};
-  if (! defined $stylename) {
-    for (;;) {
-      $stylename = $auto_pfx.uc(substr($family,0,1)).(++$counters->{$family});
-      # Append something to remind us what style this is while debugging
-      # (the counter guarantees unique results)
-      foreach my $key (qw/align weight style variant size/) {
-        $stylename .= "_".$props{$key} if $props{$key}
-      }
-      last
-        unless defined (my $s=$doc->get_style($family, $stylename));
-      my $existing_key = hashtostring(scalar $s->get_properties);
-      $$cache{$existing_key} //= $stylename;
-    }
-    $$cache{$cache_key} = $stylename;
-    my $object = __disconnected_style($context,$family, %props, name=>$stylename);
-    return $doc->insert_style($object, automatic => TRUE);
-  } else {
-    return $doc->get_style($family, $stylename);
-  }
-}
-
-sub Hcommon_style($$@) {
-  my ($context, $family, @input_props) = @_;
-  my %props = @{ __unabbrev_props(\@input_props) };
-  croak "Hcommon_style must specify 'name'\n" unless $props{name};
-  my $object = __disconnected_style($context, $family, %props);
-  return $context->get_document->insert_style($object, automatic => FALSE);
-}
-
-###################################################
 
 =head2 $context->descendants_pruned($cond, $prune_cond)
 
@@ -1174,6 +1113,75 @@ sub ODF::lpOD::Element::gen_table_name($) {
   $table_names->{$name} = 1;
   return $name;
 }
+
+###################################################
+
+=head1 FUNCTIONS (not methods)
+
+
+=head2 Hautomatic_style($context, $family, PROP...)
+
+Find or create an 'automatic' (i.e. functionally anonymous) style
+with attributes specified via high-level properties.
+
+Styles are re-used when possible, so the returned style object
+should not be modified because it might be shared.
+
+C<$family> is "text" or another style family name (TODO: specify)
+
+PROPs are as described for C<Hreplace>.
+
+=head2 Hcommon_style($context, $family, PROP...)
+
+Create a 'common' (i.e. named by the user) style from high-level props.
+
+The name must be given by [name => "STYLENAME"] somewhere in PROPs.
+
+=cut
+
+sub Hautomatic_style($$@);
+sub Hautomatic_style($$@) {
+  my ($context, $family, @input_props) = @_;
+  my $doc = $context->get_document // oops;
+  my %props = @{ __unabbrev_props(\@input_props) };
+
+  my $sh = _get_per_doc_hash($doc);
+  my $style_caches = ($sh->{style_caches} //= {});
+  my $counters     = ($sh->{counters}     //= {});
+
+  my $cache = ($style_caches->{$family} //= {});
+  my $cache_key = hashtostring(\%props);
+  my $stylename = $$cache{$cache_key};
+  if (! defined $stylename) {
+    for (;;) {
+      $stylename = $auto_pfx.uc(substr($family,0,1)).(++$counters->{$family});
+      # Append something to remind us what style this is while debugging
+      # (the counter guarantees unique results)
+      foreach my $key (qw/align weight style variant size/) {
+        $stylename .= "_".$props{$key} if $props{$key}
+      }
+      last
+        unless defined (my $s=$doc->get_style($family, $stylename));
+      my $existing_key = hashtostring(scalar $s->get_properties);
+      $$cache{$existing_key} //= $stylename;
+    }
+    $$cache{$cache_key} = $stylename;
+    my $object = __disconnected_style($context,$family, %props, name=>$stylename);
+    return $doc->insert_style($object, automatic => TRUE);
+  } else {
+    return $doc->get_style($family, $stylename);
+  }
+}
+
+sub Hcommon_style($$@) {
+  my ($context, $family, @input_props) = @_;
+  my %props = @{ __unabbrev_props(\@input_props) };
+  croak "Hcommon_style must specify 'name'\n" unless $props{name};
+  my $object = __disconnected_style($context, $family, %props);
+  return $context->get_document->insert_style($object, automatic => FALSE);
+}
+
+###################################################
 
 ###################################################
 
