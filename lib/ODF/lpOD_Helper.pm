@@ -9,15 +9,15 @@
 # -----------------------------------------------------------------------------
 
 use strict; use warnings; 
-use feature qw(switch state say current_sub lexical_subs);
-no warnings "experimental::lexical_subs";
-
 # We only call ODF::lpOD (and hence XML::Twig), and if we get warnings
 # we want to die to force immediate resolution.
 # If somebody is launching a moon probe or controlling an artificial heart
 # they should audit all libraries they use for 'user warnings FATAL ...'
 # and remove such from their private copies of the code.
 use warnings FATAL => 'all';
+
+use feature qw(switch state say current_sub lexical_subs);
+no warnings "experimental::lexical_subs";
 
 =encoding utf8
 
