@@ -138,7 +138,7 @@ use Carp;
 sub oops(@) { unshift @_, "oops! "; goto &Carp::confess; }
 #sub btw(@) { local $_=join("",@_); s/\n\z//s; say "$_  \@ ".(caller(0))[2]; }
 sub btw(@) { local $_=join("",@_); s/\n\z//s; say '##'.(caller(0))[2].": $_"; }
-use Data::Dumper::Interp qw/visnew ivis ivisq vis visq addrvis refvis dvis u/;
+use Data::Dumper::Interp qw/visnew ivis ivisq vis visq avis avisq addrvis refvis dvis u/;
 use Scalar::Util qw/refaddr blessed reftype weaken isweak/;
 use List::Util qw/min max first any all none reduce max sum0/;
 
@@ -1216,10 +1216,7 @@ sub fmt_node(_;$) {  # sans final newline
   my ($node, $leaftextonly) = @_;
   return "undef" unless defined($node);
   oops unless ref($node);
-  my $text = eval{ $node->get_text }; # (resursivly gets full virtual text)
-  if (defined($text)) {
-    $text = ODF::lpOD::Common::input_conversion($text);#undo implicit encode
-  }
+
   my $tag  = eval{ $node->tag };
   my $att  = eval{ $node->get_attributes };
   ref($node) =~ /ODF::lpOD::(\w+)/;
@@ -1229,10 +1226,20 @@ sub fmt_node(_;$) {  # sans final newline
   $s .= " ".(%$att && $tag =~ /^(table-cell|sequence)/ ? "{...}" : vis($att))
     if keys %$att;
 
+  my $text;
+  if (!$leaftextonly || scalar($node->children)==0) {
+    # To let this work on low-level XML::Twig nodes even if not blessed
+    # into ODF::lpOD::something, we first try get_text() [which assembles
+    # the complete virtual text of paragraphs], and failing that 
+    # XML::Twig's text() method.
+    $text = eval{ $node->get_text } // $node->text;
+  }
+  if (defined($text)) {
+    $text = ODF::lpOD::Common::input_conversion($text);#undo implicit encode
+  }
+
   $s .= " ".vis($text)."[len=".length($text)."]"
-    if defined($text) && (!$leaftextonly
-                               # Why draw:text-box ???
-                    || $tag !~ /^text:(span|text|p|h)|^office:|^draw:text-box/);
+    if defined($text);
 
   if (0) {
     foreach my $k (sort keys %$node) { # any private members e.g. from XML::Twig?
