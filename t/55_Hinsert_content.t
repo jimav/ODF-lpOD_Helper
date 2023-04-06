@@ -1,21 +1,26 @@
 #!/usr/bin/perl
 
-if (($ENV{PERL_PERTURB_KEYS}//42) ne "2") {
-  $ENV{PERL_PERTURB_KEYS} = "2"; # deterministic
-  $ENV{PERL_HASH_SEED} = "0xDEADBEEF";
-  exec $^X, $0, @ARGV; # for reproducible results
+BEGIN {
+  unless (($ENV{PERL_PERTURB_KEYS}//"") eq "2") {
+    $ENV{PERL_PERTURB_KEYS} = "2"; # deterministic
+    $ENV{PERL_HASH_SEED} = "0xDEADBEEF";
+    #$ENV{PERL_HASH_SEED_DEBUG} = "1";
+    exec $^X, $0, @ARGV; # for reproducible results
+  }
 }
+
 use FindBin qw($Bin);
 use lib $Bin;
-#use t_Setup qw/:silent/; # strict, warnings, Test::More, Carp etc.
-use t_Setup ; # strict, warnings, Test::More, Carp etc.
-use warnings FATAL => 'all';
-
-use t_Utils qw/bug oops ok_with_lineno like_with_lineno
-               rawstr showstr showcontrols displaystr
-               show_white show_empty_string
-               checkeq_literal check
-               _check_end/;
+use t_Common qw/oops/; # strict, warnings, Carp, Data::Dumper::Interp, etc.
+use t_TestCommon ':silent',
+                 qw/bug ok_with_lineno like_with_lineno
+                    rawstr showstr showcontrols displaystr 
+                    show_white show_empty_string
+                    fmt_codestring 
+                    timed_run
+                    checkeq_literal check _check_end
+                    $debug
+                  /;
 
 use Mydump qw/mydump/;
 
@@ -35,7 +40,7 @@ File::Copy::copy($master_copy_path, $input_path) or die "File::Copy $!";
 my $doc = odf_get_document($input_path, read_only => 1);
 my $body = $doc->get_body;
  
-{ my $debug = grep /-d/, @ARGV;;
+{
   my $count = 0;
   my $initial_vtext = $body->Hsearch("Front Stuff")->{paragraph}->get_text;
   my $prev_item = "Front Stuff";

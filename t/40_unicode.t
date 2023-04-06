@@ -1,10 +1,16 @@
 #!/usr/bin/perl
+
 use FindBin qw($Bin);
 use lib $Bin;
-use t_Setup qw/:silent/; # strict, warnings, Test::More, Carp etc.
-
-use t_Utils qw/bug oops/;
-use utf8;
+use t_Common qw/oops/; # strict, warnings, Carp, Data::Dumper::Interp, etc.
+use t_TestCommon ':silent',
+                 qw/bug ok_with_lineno like_with_lineno
+                    rawstr showstr showcontrols displaystr 
+                    show_white show_empty_string
+                    fmt_codestring 
+                    timed_run
+                    checkeq_literal check _check_end
+                  /;
 
 use Data::Dumper::Interp qw/visnew ivis dvis vis hvis avis u/;
 
@@ -40,18 +46,22 @@ sub check_search_chars($) {
   # inside ODF::lpOD unless implicit encoding is disabled
   my $m = eval{ $body->search($smiley_char) };
   if ($octet_mode) { # implicit encoding enabled
-    ok(!defined($m) && $@ =~ /wide char/i, "default: search(wide char) blows up (string)");
+    ok(!defined($m) && $@ =~ /wide char/i, "default: search(wide char) blows up (string)")
+      || diag dvis '$m\n$@\n';
   } else {
-    ok($m->{segment}, "With :chars, search(wide char) works (string)");
+    ok($m->{segment}, "With :chars, search(wide char) works (string)")
+      || diag dvis '$m\n$@\n';
   }
 
   $m = eval{ $body->search(qr/$smiley_char/) };
   if ($octet_mode) { # implicit encoding enabled
     # An exception is thrown when ODF::lpOD calles decode() on it's input
     # argument if it contains abstract "wide" characters
-    ok(!defined($m) && $@ =~ /wide char/i, "default: search(wide char) blows up (regex)");
+    ok(!defined($m) && $@ =~ /wide char/i, "default: search(wide char) blows up (regex)")
+      || diag dvis '$m\n$@\n';
   } else {
-    ok($m->{segment}, "With :chars, search(wide char) works (regex)");
+    ok($m->{segment}, "With :chars, search(wide char) works (regex)")
+      || diag dvis '$m\n$@\n';
   }
 
   my @m = eval{ $body->Hsearch($smiley_char) };
@@ -62,7 +72,8 @@ sub check_search_chars($) {
     ok(!defined($m), "default: Hsearch(wide char) fails")
       || diag(dvis '$@  \$m=', fmt_match($m));
   } else {
-    ok($m->{segment}, "With :chars, Hsearch(wide char) works");
+    ok($m->{segment}, "With :chars, Hsearch(wide char) works")
+      || diag dvis '\n@m\n';
   }
 }
 sub check_search_octets($) {
@@ -77,13 +88,16 @@ sub check_search_octets($) {
       || say visnew->dvis('$p_text\n$full_octet_re p=\n').fmt_tree($p);
     bug unless $p_text =~ qr/$ascii_only_re/;
   } else {
-    ok(!defined($m->{segment}), "search(octets) fails in :chars mode");
+    ok(!defined($m->{segment}), "search(octets) fails in :chars mode")
+      || diag dvis '\n$m\n';
   }
   my @m = eval{ $body->Hsearch($smiley_octets) };
   if ($octet_mode) { 
-    ok(defined($m), "default(octet mode): Hsearch(octets) works");
+    ok(defined($m), "default(octet mode): Hsearch(octets) works")
+      || diag dvis '\n@m\n';
   } else {
-    ok(@m==0, "Hsearch(octets) fails in :chars mode");
+    ok(@m==0, "Hsearch(octets) fails in :chars mode")
+      || diag dvis '\n@m\n';
   }
 }
 

@@ -13,11 +13,7 @@ use parent 'Exporter';
 our @EXPORT = qw/mydump/;
 
 use ODF::lpOD_Helper qw/:chars fmt_tree/;
-use Carp;
-sub oops(@) { @_=("Internal oops! ",@_); goto &Carp::confess }
-#use utf8;
-use t_Setup;
-#use t_Utils qw/oops/;
+use t_Common qw/oops/; # strict, warnings, Carp, utf8 etc.
 
 sub mydump_old($;@) {
   my ($top, @args) = @_;

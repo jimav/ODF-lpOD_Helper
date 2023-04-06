@@ -1,17 +1,17 @@
 #!/usr/bin/perl
 use FindBin qw($Bin);
 use lib $Bin;
-use warnings FATAL => 'all';
-use t_Setup qw/:silent/; # strict, warnings, Test::More, Carp etc.
-
-use t_Utils qw/bug oops ok_with_lineno like_with_lineno
-               rawstr showstr showcontrols displaystr
-               show_white show_empty_string
-               checkeq_literal check
-               _check_end/;
+use t_Common qw/oops/; # strict, warnings, Carp, Data::Dumper::Interp, etc.
+use t_TestCommon ':silent',
+                 qw/bug ok_with_lineno like_with_lineno
+                    rawstr showstr showcontrols displaystr 
+                    show_white show_empty_string
+                    fmt_codestring 
+                    timed_run
+                    checkeq_literal check _check_end
+                  /;
 
 use Mydump qw/mydump/;
-
 
 use ODF::lpOD;
 use ODF::lpOD_Helper qw/:DEFAULT :chars fmt_node fmt_tree fmt_match/;

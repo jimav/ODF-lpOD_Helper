@@ -2,8 +2,9 @@
 use open ':std', ':encoding(UTF-8)'; ## WHY DOES NOT t_Setup PROVIDE THIS?
 use FindBin qw($Bin);
 use lib $Bin;
-use t_Setup; # strict, warnings, Test::More, Carp etc. Unicode STDfiles
-use t_Utils qw/bug oops/;
+use t_Common qw/oops/;    # strict, warnings, Carp, Data::Dumper::Interp, etc.
+use t_TestCommon; # Test::More
+
 use Mydump qw/mydump/;
 
 use ODF::lpOD;
