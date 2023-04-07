@@ -1278,13 +1278,14 @@ sub fmt_tree(_;@) { # sans final newline
   return "------------\n".$string."------------";
 }
 
+# Format a match structure as returned by Hsearch (not search)
 sub fmt_match(_) { # sans final newline
   my $href = shift;
   return "undef" unless defined $href;
   my %h = %$href;
   if ( (any {! defined($h{$_})} qw/match segments offset end voffset vend/)
        || ref($h{segments}) ne "ARRAY") {
-    confess "INVALID MATCH STRUCTURE:\n",vis($href)
+    confess "INVALID (Hmatch) MATCH STRUCTURE:\n",vis($href)
   }
   my @segments = map {
                   my $t = __element2vtext($_);

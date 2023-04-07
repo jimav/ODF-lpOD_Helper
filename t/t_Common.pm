@@ -16,10 +16,7 @@
 
 package t_Common;
 
-sub hash2str($) {
-  my $href = shift;
-  join("",map{" ${_}=>".($href->{$_}//"u")} sort keys %$href)
-}
+sub hash2str($) { my $h=shift; join("",map{" ${_}=>".($h->{$_}//"u")} sort keys %$h) }
 my $default_pragmas = ($^H//"u").":".hash2str(\%^H);
 my $default_warnbits = ${^WARNING_BITS}//"u";
 

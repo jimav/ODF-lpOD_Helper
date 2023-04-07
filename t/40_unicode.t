@@ -47,7 +47,13 @@ sub check_search_chars($) {
   my $m = eval{ $body->search($smiley_char) };
   if ($octet_mode) { # implicit encoding enabled
     ok(!defined($m) && $@ =~ /wide char/i, "default: search(wide char) blows up (string)")
-      || diag dvis '$m\n$@\n';
+      # Sometimes inexplicably does not fail in cpantesters land...
+      # I've tested this with LANG=C so there should be no default
+      # STD* encoding going on.  Hmm...
+      || diag dvis '$m\n$@\n segment ->\n',
+                   u(eval{ fmt_tree($m->{segment}//undef) }),"\n",
+                   do{ my @lay = PerlIO::get_layers(*STDOUT);
+                       join(" ", " STDOUT layers:", @lay ) }
   } else {
     ok($m->{segment}, "With :chars, search(wide char) works (string)")
       || diag dvis '$m\n$@\n';
@@ -64,15 +70,16 @@ sub check_search_chars($) {
       || diag dvis '$m\n$@\n';
   }
 
+  # But Hsearch does not throw because it does not try to decode() it's args
+  # and will not try to encode the result
   my @m = eval{ $body->Hsearch($smiley_char) };
+  oops($@) if $@;
   if ($octet_mode) {
-    # But Hsearch does not throw because it does not try to decode() it's args
-    # (and if the search fails, it will not try to encode the result)
-    oops if $@;
-    ok(!defined($m), "default: Hsearch(wide char) fails")
-      || diag(dvis '$@  \$m=', fmt_match($m));
+    ok(@m==0, "default: Hsearch(wide char) fails as expected")
+      || diag(dvis '$@  \@m=', join("\n   ", map{fmt_match} @m));
   } else {
-    ok($m->{segment}, "With :chars, Hsearch(wide char) works")
+    oops if $@;
+    ok(@m > 0, "With :chars, Hsearch(wide char) works")
       || diag dvis '\n@m\n';
   }
 }
@@ -93,7 +100,7 @@ sub check_search_octets($) {
   }
   my @m = eval{ $body->Hsearch($smiley_octets) };
   if ($octet_mode) { 
-    ok(defined($m), "default(octet mode): Hsearch(octets) works")
+    ok(@m > 0, "default(octet mode): Hsearch(octets) works")
       || diag dvis '\n@m\n';
   } else {
     ok(@m==0, "Hsearch(octets) fails in :chars mode")
