@@ -138,6 +138,7 @@ sub string_to_tempfile($@) {
 # This is usually enclosed in Capture { ... }
 sub run_perlscript(@) {
   my @cmd = @_;
+  oops unless defined($cmd[0]);
   VERIF:
   { open my $fh, "<", $cmd[0] or die "$cmd[0] : $!";
     while (<$fh>) { last VERIF if /^#!.*perl|^\s*use\s+(?:warnings|\w+::)/; }
@@ -235,7 +236,8 @@ END{
 }
 #--------------- (end of :silent stuff) ---------------------------
 
-dirname(abs_path(__FILE__)) =~ m#.*/(\w+)-\w[-\w]*/# or die "Cant intuit testee module name";
+# N.B. package dir might have version like ".../ODF-lpOD_Helper-3.008/..."
+dirname(abs_path(__FILE__)) =~ m#.*/(\w+)-\w[-\w\.]*/# or die "Cant intuit testee module name";
 (my $testee_top_module = $1) =~ s/-/::/g;
 oops unless $testee_top_module;
 

@@ -95,6 +95,11 @@ sub import {
   File::Path->import::into($target, qw/make_path rmtree/);
 
   require File::Spec;
+  require File::Spec::Functions;
+  File::Spec::Functions->import::into($target, qw/
+    canonpath catdir catfile curdir rootdir updir
+    no_upwards file_name_is_absolute devnull tmpdir splitpath splitdir 
+    abs2rel rel2abs case_tolerant/);
 
   require List::Util;
   List::Util->import::into($target, qw/reduce min max first any all none sum0/);
