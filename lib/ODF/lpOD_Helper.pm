@@ -140,7 +140,10 @@ use Carp;
 sub oops(@) { unshift @_, "oops! "; goto &Carp::confess; }
 #sub btw(@) { local $_=join("",@_); s/\n\z//s; say "$_  \@ ".(caller(0))[2]; }
 sub btw(@) { local $_=join("",@_); s/\n\z//s; say '##'.(caller(0))[2].": $_"; }
-use Data::Dumper::Interp qw/visnew ivis ivisq vis visq avis avisq addrvis refvis dvis u/;
+use Data::Dumper::Interp qw/visnew
+                    vis  viso  avis  alvis  ivis  dvis  hvis  hlvis
+                    visq visoq avisq alvisq ivisq dvisq hvisq hlvisq
+                    addrvis rvis rvisq u quotekey qsh qshlist qshpath/;
 use Scalar::Util qw/refaddr blessed reftype weaken isweak/;
 use List::Util qw/min max first any all none reduce max sum0/;
 
