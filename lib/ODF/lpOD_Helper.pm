@@ -432,8 +432,12 @@ sub ODF::lpOD::Element::Hsearch {
 
   my @matches;
   $context->Hreplace($expr,
-                     sub{ push @matches, $_[0]; REPL_CONTINUE },
-                     %opts);
+                     sub{ push @matches, $_[0]; 
+                          btw "## callback: m=$_[0]" if $opts{debug};
+                          $opts{multi} ? REPL_CONTINUE : REPL_STOP
+                        },
+                     %opts, multi => undef);
+  btw dvis '## final @matches' if $opts{debug};
   return @matches
     if wantarray;
   confess "void context, result would be discarded"
@@ -441,19 +445,21 @@ sub ODF::lpOD::Element::Hsearch {
   # scalar context
   croak "'$expr' matched ",scalar(@matches)," times\n" if @matches > 1;
   return @matches > 0 ? $matches[0] : undef;
-}
+}#Hsearch
 
-=head2 $context->Hreplace($expr, [content], OPTIONS)
+=head2 $context->Hreplace($expr, [content], multi => bool, OPTIONS)
 
 =head2 $context->Hreplace($expr, sub{...},  OPTIONS)
 
 Search and replace. C<$expr> is a string or qr/regex/s as with C<Hsearch>.
 
-In the first form, each matched substring in the virtual text is
-replaced with C<[content]> and the number of matches is returned.
+In the first form, one or (with multi => TRUE) all matched substrings
+in the virtual text are replaced with C<[content]>;
+The number of matches is returned.
 
 In the second form, the specified sub is called for each match, passing
-a I<match hashref> (see C<Hsearch>) as the only argument.
+a I<match hashref> (see C<Hsearch>) as the only argument.  The return
+value determines whether none, one, or multiple substitutions occur.
 
 The sub must return one of the following ways:
 
@@ -549,7 +555,10 @@ say "context:\n", fmt_tree($context) if $debug;
 
   my $regex = ref($expr) eq 'Regexp' ? $expr : qr/\Q${expr}\E/s;
 
-  if (ref($repl) ne "CODE") {
+  if (ref($repl) eq "CODE") {
+    confess "option 'multi' may not be specified when using a callback\n"
+      if defined $multi;
+  } else {
     my $content = $repl;
     $repl = sub{ return(($multi ? REPL_SUBST_CONTINUE : REPL_SUBST_STOP),
                         $content); };
@@ -696,12 +705,12 @@ say "context:\n", fmt_tree($context) if $debug;
               else { confess "unknown arg for $opcode: @args" };
             }
           }
+          else { btw dvis '(negatory $dosubst)' if $opts{debug}; }
           if ($continue_or_stop eq "STOP") {
             return @args ? (@args) : $match_count;
           }
           oops unless $continue_or_stop eq "CONTINUE";
 
-          last PARA unless $multi;
           # ? IS THIS NECESSARY?  i.e. won't $offset small enough?
           $offset = $totlen_sofar - (length($vtext) - $vtend);
           if ($vtend < length($vtext)) {

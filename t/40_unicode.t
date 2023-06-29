@@ -10,7 +10,12 @@ use t_TestCommon ':silent',
                     fmt_codestring 
                     timed_run
                     mycheckeq_literal mycheck _mycheck_end
+                    $debug $verbose $silent
                   /;
+
+my %dvb = (map{ no strict 'refs';
+                defined(${$_}) ? ($_ => ${$_}) : ()
+              } qw/debug verbose silent/);
 
 use Data::Dumper::Interp qw/visnew ivis dvis vis hvis avis u/;
 
@@ -46,41 +51,46 @@ sub check_search_chars($) {
   # inside ODF::lpOD unless implicit encoding is disabled
   my $m = eval{ $body->search($smiley_char) };
   if ($octet_mode) { # implicit encoding enabled
-    ok(!defined($m) && $@ =~ /wide char/i, "default: search(wide char) blows up (string)")
-      # Sometimes inexplicably does not fail in cpantesters land...
-      # I've tested this with LANG=C so there should be no default
-      # STD* encoding going on.  Hmm...
-      || diag dvis '$m\n$@\n segment ->\n',
+    # Sometimes inexplicably does not fail in cpantesters land...
+    # I've tested this with LANG=C so there should be no default
+    # STD* encoding going on.  Hmm...
+    ok(!defined($m) && $@ =~ /wide char/i, 
+       "default: search(wide char) blows up (string)",
+       dvis '$m\n$@\n segment ->\n',
                    u(eval{ fmt_tree($m->{segment}//undef) }),"\n",
                    do{ my @lay = PerlIO::get_layers(*STDOUT);
-                       join(" ", " STDOUT layers:", @lay ) }
+                       join(" ", " STDOUT layers:", @lay ) 
+                     }
+    );
   } else {
-    ok($m->{segment}, "With :chars, search(wide char) works (string)")
-      || diag dvis '$m\n$@\n';
+    ok($m->{segment}, "With :chars, search(wide char) works (string)",
+       dvis '$m\n$@\n');
   }
 
   $m = eval{ $body->search(qr/$smiley_char/) };
   if ($octet_mode) { # implicit encoding enabled
     # An exception is thrown when ODF::lpOD calles decode() on it's input
     # argument if it contains abstract "wide" characters
-    ok(!defined($m) && $@ =~ /wide char/i, "default: search(wide char) blows up (regex)")
-      || diag dvis '$m\n$@\n';
+    ok(!defined($m) && $@ =~ /wide char/i, 
+       "default: search(wide char) blows up (regex)",
+       dvis '$m\n$@\n');
   } else {
-    ok($m->{segment}, "With :chars, search(wide char) works (regex)")
-      || diag dvis '$m\n$@\n';
+    ok($m->{segment}, "With :chars, search(wide char) works (regex)",
+       dvis '$m\n$@\n');
   }
 
   # But Hsearch does not throw because it does not try to decode() it's args
   # and will not try to encode the result
   my @m = eval{ $body->Hsearch($smiley_char) };
-  oops($@) if $@;
   if ($octet_mode) {
-    ok(@m==0, "default: Hsearch(wide char) fails as expected")
-      || diag(dvis '$@  \@m=', join("\n   ", map{fmt_match} @m));
+    ok(@m==0 && $@ eq "", 
+       "default: Hsearch(wide char) fails as expected",
+       dvis '$@  \@m=', join("\n   ", map{fmt_match} @m)
+      );
   } else {
-    oops if $@;
-    ok(@m > 0, "With :chars, Hsearch(wide char) works")
-      || diag dvis '\n@m\n';
+    ok(@m > 0 && $@ eq "", 
+       "With :chars, Hsearch(wide char) works", 
+       dvis '\n@m\n');
   }
 }
 sub check_search_octets($) {
@@ -98,13 +108,13 @@ sub check_search_octets($) {
     ok(!defined($m->{segment}), "search(octets) fails in :chars mode")
       || diag dvis '\n$m\n';
   }
-  my @m = eval{ $body->Hsearch($smiley_octets) };
+  my @m = eval{ $body->Hsearch($smiley_octets, \%dvb) };
   if ($octet_mode) { 
-    ok(@m > 0, "default(octet mode): Hsearch(octets) works")
-      || diag dvis '\n@m\n';
+    ok(@m > 0, "default(octet mode): Hsearch(octets) works",
+       dvis '\n@m\n$@\n');
   } else {
-    ok(@m==0, "Hsearch(octets) fails in :chars mode")
-      || diag dvis '\n@m\n';
+    ok(@m==0 && $@ eq "", "Hsearch(octets) fails in :chars mode", 
+       dvis '\n@m\n$@\n');
   }
 }
 
