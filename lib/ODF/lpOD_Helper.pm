@@ -639,67 +639,11 @@ use constant PARA_COND             => 'text:p|text:h';
 use constant TEXTCONTAINER_COND    => PARA_COND."|text:span";
 use constant TEXTLEAF_OR_PARA_COND => TEXTLEAF_COND."|".PARA_COND;
 
-sub ODF::lpOD::Element::Hreplace {
-  my $context = shift;
-  my $expr    = shift;
-  my $repl    = shift;
-  my %opts    = @_;
-  my $debug   = $opts{debug};
-
-  btw dvis 'Hreplace Top: $context $expr $repl %opts' if $debug;
-btw "context:\n", fmt_tree($context) if $debug;
-
-  croak "'expr'  must be a qr/regex/ or plain string\n"
-    if (!defined($expr) or ref($expr) && ref($expr) ne "Regexp");
-
-  my $callback;
-  if (ref($repl) eq "CODE") {
-    croak "Option 'multi' and using a callback are mutually exclusive\n"
-      if defined  $opts{multi};
-    $callback = $repl;
-  }
-  elsif (ref($repl) eq "ARRAY") {
-    $callback = $opts{multi} ? sub{ (Hr_SUBST        , $repl) }
-                             : sub{ (Hr_SUBST|Hr_STOP, $repl) } ;
-  }
-  else {
-    croak "Replacement argument must be [content] aref or callback subref",
-          " (not ",qsh($repl),")";
-  }
-
-  #  $vtext holds the entire virtual text from the *current* paragraph
-  #  even if option 'offset' points past the beginning of the paragraph.
-  #  The match {offset} is the offset into the first matching segment.
-  #
-  #         ║                                   ║ ║
-  #  Para(s)║           Paragraph 'x'           ║ ║   later Paragraph 'N'
-  #   before║                                   ║ ║
-  # ------------------voffset---►┊              ║ ║
-  # --------------vend----------------------►┊  ║ ║
-  #         ║                    ┊           ┊  ║ ║
-  #         ║              match ┊    match  ┊  ║ ║ match           ║match
-  #         ║             ║-off-►┊ ║--end---►┊  ║ ║offset-►┊        ║end►┊
-  # ╓──╥────╥──╥────╥─────╥──────┬─╥─────────┴──╖ ╓────────┬──╥─────╥────┴──╖
-  # ║XX║XXXX║XX║XXXX║XX   ║      MA║TCHED TXT┊  ║ ║        MAT║CHED ║TEXT┊  ║
-  # ║XX║XXXX║XX║XXXX║XXsea║rched te║xt..........║ ║searched te║xt...║.......║
-  # ╙──╨────╨──╨────╨──┴──╨────────╨────────────╜ ╙───────────╨─────╨───────╜
-  # ┊─OPTION 'offset'─►┊         ┊           ┊  ║ ║                         ║
-  #         ║~~~~~~~~($vtext for para x)~~~~~~~~║ ║~~~($vtext for para N)~~~║
-  #         ║                    ┊           ┊  ║ ║                         ║
-  #         ║◄──────$vtoff──────►┊           ┊  ║ ║                         ║
-  #         ║◄────────────$vtend────────────►┊  ║ ║                         ║
-  #                                             ║                           ║
-  #  ──────────$totlen (@end of para x)────────►║                           ║
-  #  ------------------------------------------$totlen (@end of para N)----►║
-
-  my $offset = $opts{offset} // 0;
-  my $match_count = 0;
-
-  my $totlen = 0;
-  my $para_start_offset;
-
-  my sub _get_seginfo($) {
-    my $node = shift;
+# These used to be lexical subs inside Hreplace, but a Perl bug prevented
+# reentrant searches (via callbacks).   The stuff in the $state hash
+# used to be lexicals in Hreplace.  https://github.com/Perl/perl5/issues/18606
+  sub _get_seginfo($$) {
+    my ($state, $node) = @_;
     my @seginfo;
     my $vtext = "";
     # Do not descend into nested paragraphs, which are visited in outer loop
@@ -710,29 +654,30 @@ btw "context:\n", fmt_tree($context) if $debug;
         elt    => $e,
         seglen => $textlen,
         vtoff  => length($vtext),
-        voff   => $totlen,
+        voff   => $state->{totlen},
       };
       $vtext .= $etext;
-      $totlen += $textlen;
+      $state->{totlen} += $textlen;
     }
     ($vtext, \@seginfo)
   }
 
-  my sub _first_match($$$) {
-    my ($vtext, $seginfo, $node) = @_;
+  sub _first_match($$$$) {
+    my ($state, $vtext, $seginfo, $node) = @_;
     oops unless @$seginfo; # truly empty paragraphs are not searched
+    my ($debug, $expr) = @$state{qw/debug expr/};
 
-    if ($offset >= $totlen) {
-      btw dvis '  Hr SKIP WHOLE PARA $totlen $offset' if $debug;
+    if ($state->{offset} >= $state->{totlen}) {
+      btw dvis '  Hr SKIP WHOLE PARA $state->{totlen} $state->{offset}' if $debug;
       return ()
     }
 
     my $vtext_pos =
-         $offset > $para_start_offset ? ($offset - $para_start_offset) : 0;
+         $state->{offset} > $state->{para_start_offset} ? ($state->{offset} - $state->{para_start_offset}) : 0;
 
-btw rdvis '_first_match START : $node $vtext\n   $vtext_pos $offset $totlen $expr\n$seginfo' if $debug;
+btw rdvis '_first_match START : $node $vtext\n   $vtext_pos $state->{offset} $state->{totlen} $expr\n$seginfo' if $debug;
 
-    oops(dvis '$vtext_pos $para_start_offset $totlen $vtext') if $vtext_pos < 0 or $vtext_pos > $totlen;
+    oops(dvis '$vtext_pos $state->{para_start_offset} $state->{totlen} $vtext') if $vtext_pos < 0 or $vtext_pos > $state->{totlen};
 
     my ($vtoffset, $vtend);
     if (ref $expr) { # Regexp
@@ -750,7 +695,6 @@ btw dvis '### NON-REGEX match, $vtoffset $vtend $vtext' if $debug;
       }
     }
     if (defined $vtoffset) {
-      ++$match_count;
 
       # Find the first and last segments containing the match.
       # Empty segments at the boundaries are not included in the match
@@ -779,33 +723,31 @@ btw dvis '### NON-REGEX match, $vtoffset $vtend $vtext' if $debug;
         segments   => [ map{$_->{elt}} @$seginfo[$fix..$lix] ],
         offset     => $vtoffset - $$seginfo[$fix]->{vtoff},
         end        => $vtend    - $$seginfo[$lix]->{vtoff},
-        voffset    => $para_start_offset + $vtoffset,
-        vend       => $para_start_offset + $vtend,
+        voffset    => $state->{para_start_offset} + $vtoffset,
+        vend       => $state->{para_start_offset} + $vtend,
         para       => ($node->isa("ODF::lpOD::Paragraph")
                          ? $node : $node->get_parent_paragraph),
         para_voffset => $vtoffset,
       };
-      btw rdvis('  Hr MATCH $fix $lix $offset $para_start_offset $totlen $vtext_pos $vtoffset $vtend $node\n'),fmt_match($m) if $debug;
-      return ($m, $callback->($m));
+      btw rdvis('  Hr MATCH $fix $lix $state->{offset} $state->{para_start_offset} $state->{totlen} $vtext_pos $vtoffset $vtend $node\n'),fmt_match($m) if $debug;
+      return ($m, $state->{callback}->($m));
     }
     btw '_first_match NO MATCH, returning ()' if $debug;
     return ()
   }# _first_match
 
-  my @subst_results;
-  my (%seen_paras, $rescan_count);
-  my sub _process_para($) { # also called if context is a text leaf
-    my $node = shift; # paragraph or total $context if it is a textual leaf
+  sub _process_para($$) { # also called if context is a text leaf
+    my ($state, $node) = @_; # paragraph or total $context if a textual leaf
+    my ($debug) = @$state{qw/debug/};
 
-    oops "seen_paras ",fmt_node($node),"\ncontext: ",fmt_tree($context)
-      if $seen_paras{$node}++;
+    oops "seen_paras ",fmt_node($node) if $state->{seen_paras}{$node}++;
 
-    my $para_startcount = scalar @subst_results;
+    my $para_startcount = scalar @{$state->{subst_results}};
     PARA: {
       btw "Hr PARA ",_abbrev_addrvis($node),dvis(' Top $totlen') if $debug;
 
-      $para_start_offset = $totlen;
-      my ($vtext, $seginfo) = _get_seginfo($node);
+      $state->{para_start_offset} = $state->{totlen};
+      my ($vtext, $seginfo) = _get_seginfo($state, $node);
 
       if (@$seginfo == 0) {
         btw "Hr _no leaves_ " if $debug;
@@ -813,15 +755,15 @@ btw dvis '### NON-REGEX match, $vtoffset $vtend $vtext' if $debug;
       }
 
       MATCH: {
-        my ($m, $r, @args) = _first_match($vtext, $seginfo, $node);
+        my ($m, $r, @args) = _first_match($state, $vtext, $seginfo, $node);
 
         if (defined $m) {
 oops unless @{$m->{segments}};
           if ($r & Hr_SUBST) {
             my $content = shift @args // confess "No [content] after Hr_SUBST";
-            my $new_vlength = Hreplace_match($m, $content, %opts);
+            my $new_vlength = Hreplace_match($m, $content, debug => $debug);
 
-            push @subst_results, {
+            push @{$state->{subst_results}}, {
               #(excessive/unneeded?) match        => $m->{match},
               voffset      => $m->{voffset},
               vlength      => $new_vlength,
@@ -830,61 +772,139 @@ oops unless @{$m->{segments}};
             } ;#if defined wantarray;
 
             # Re-process the whole paragraph with $offset set appropriately.
-            $offset = $m->{voffset}; # start of match
+            $state->{offset} = $m->{voffset}; # start of match
             if ($r & Hr_RESCAN) {
-              croak "100 RESCANs in same paragraph" if ++$rescan_count > 100;
+              croak "100 RESCANs in same paragraph" if ++$state->{rescan_count} > 100;
             } else {
-              $offset += $new_vlength; # length of replacement
+              $state->{offset} += $new_vlength; # length of replacement
             }
             unless ($r & Hr_STOP) {
               btw dvis '  Hr redo PARA after substitution $offset $m->{voffset} $new_vlength' if $debug;
               if ($m->{match} eq "" && $new_vlength==0) {
                 # Avoid infinite loop
                 btw dvis '  Hr NULL MATCH & REPL: offset++' if $debug;
-                $offset++;
+                $state->{offset}++;
               }
-              $totlen -= length($vtext);
+              $state->{totlen} -= length($vtext);
               redo PARA;
             }
           } else {
             if ($m->{match} eq "") {
               # Avoid infinite loop
               btw dvis '  Hr NULL MATCH: offset++' if $debug;
-              $offset++;
+              $state->{offset}++;
             } else {
-              $offset = $m->{vend}; # just past end of match
+              $state->{offset} = $m->{vend}; # just past end of match
             }
           }
           if ($r & Hr_STOP) {
-            $node->Hnormalize() if $para_startcount != scalar @subst_results;
+            $node->Hnormalize() if $para_startcount != scalar @{$state->{subst_results}};
             #btw ivis '  Hr STOP  retvals=@args' if $debug; #logged in mainbody
             return(Hr_STOP, @args);
           }
-          if ($offset < $totlen) {
+          if ($state->{offset} < $state->{totlen}) {
             btw dvis '  Hr CONTINUE: new $offset, *redo MATCH*' if $debug;
             redo MATCH;
           }
         } else {
-          btw '  Hr [no match] expr=',vis($expr),dvis ' $offset $para_start_offset $vtext' if $debug;
+          btw '  Hr [no match] expr=',vis($state->{expr}),dvis ' $offset $para_start_offset $vtext' if $debug;
         }
       }#MATCH
     }#PARA
-    $node->Hnormalize() if $para_startcount != scalar @subst_results;
+    $node->Hnormalize() if $para_startcount != scalar @{$state->{subst_results}};
     return (0);
   }#_process_para()
+
+our $recursion_level = 0;
+
+sub ODF::lpOD::Element::Hreplace {
+  my $context = shift;
+  my $expr    = shift;
+  my $repl    = shift;
+  my %opts    = @_;
+  my $debug   = $opts{debug};
+
+  # We can not allow recursive substitutions (i.e. via callbacks) in the
+  # same paragraph because saved segment data might be invalidated
+  # an crash _first_match().  However recursive search-only calls are ok, 
+  # such as via Hsearch.  N.B We don't know whether a substitution will occur 
+  # until control returns from a callback.
+  #
+  # Attempted modifications throw an exception if $recursion_level > 1
+  # i.e. only the outer-most level is allowed to change anything.
+  # This is checked in Hreplace_match (in case we ever make it public)
+  local $recursion_level = $recursion_level + 1;
+
+  btw dvis 'Hreplace Top: $context $expr $repl %opts' if $debug;
+btw "context:\n", fmt_tree($context) if $debug;
+
+  croak "'expr'  must be a qr/regex/ or plain string\n"
+    if (!defined($expr) or ref($expr) && ref($expr) ne "Regexp");
+
+  my $callback;
+  if (ref($repl) eq "CODE") {
+    croak "Option 'multi' and using a callback are mutually exclusive\n"
+      if defined  $opts{multi};
+    $callback = $repl;
+  }
+  elsif (ref($repl) eq "ARRAY") {
+    $callback = $opts{multi} ? sub{ (Hr_SUBST        , $repl) }
+                             : sub{ (Hr_SUBST|Hr_STOP, $repl) } ;
+  }
+  else {
+    croak "Replacement argument must be [content] aref or callback subref",
+          " (not '$repl')";
+  }
+
+  #  $vtext holds the entire virtual text from the *current* paragraph
+  #  even if option 'offset' points past the beginning of the paragraph.
+  #  The match {offset} is the offset into the first matching segment.
+  #
+  #         ║                                   ║ ║
+  #  Para(s)║           Paragraph 'x'           ║ ║   later Paragraph 'N'
+  #   before║                                   ║ ║
+  # ------------------voffset---►┊              ║ ║
+  # --------------vend----------------------►┊  ║ ║
+  #         ║                    ┊           ┊  ║ ║
+  #         ║              match ┊    match  ┊  ║ ║ match           ║match
+  #         ║             ║-off-►┊ ║--end---►┊  ║ ║offset-►┊        ║end►┊
+  # ╓──╥────╥──╥────╥─────╥──────┬─╥─────────┴──╖ ╓────────┬──╥─────╥────┴──╖
+  # ║XX║XXXX║XX║XXXX║XX   ║      MA║TCHED TXT┊  ║ ║        MAT║CHED ║TEXT┊  ║
+  # ║XX║XXXX║XX║XXXX║XXsea║rched te║xt..........║ ║searched te║xt...║.......║
+  # ╙──╨────╨──╨────╨──┴──╨────────╨────────────╜ ╙───────────╨─────╨───────╜
+  # ┊─OPTION 'offset'─►┊         ┊           ┊  ║ ║                         ║
+  #         ║~~~~~~~~($vtext for para x)~~~~~~~~║ ║~~~($vtext for para N)~~~║
+  #         ║                    ┊           ┊  ║ ║                         ║
+  #         ║◄──────$vtoff──────►┊           ┊  ║ ║                         ║
+  #         ║◄────────────$vtend────────────►┊  ║ ║                         ║
+  #                                             ║                           ║
+  #  ──────────$totlen (@end of para x)────────►║                           ║
+  #  ------------------------------------------$totlen (@end of para N)----►║
+
+  my $state = {
+    offset            => $opts{offset} // 0,
+    totlen            => 0,
+    para_start_offset => undef,
+    subst_results     => [],
+    seen_paras        => {},
+    rescan_count      => undef,
+    debug             => $debug,
+    expr              => $expr,
+    callback          => $callback,
+  };
 
   ### MAIN BODY OF Hreplace ###
 
   my ($stop, @retvals);
   # If $context itself is a paragraph or a leaf segment, process it first
   if ($context->passes(TEXTLEAF_OR_PARA_COND)) {
-    ($stop, @retvals) = _process_para($context); # ignores any nested paras
+    ($stop, @retvals) = _process_para($state, $context); # ignores nested paras
   }
   # Now process paragraphs which are descendants.   This will visit nested
   # paragraphs in depth-first order (unless blocked by option prune_cond)
   { my $para = $context ;
     while ($para = $para->Hnext_elt($context, PARA_COND, $opts{prune_cond})) {
-      ($stop, @retvals) = _process_para($para);
+      ($stop, @retvals) = _process_para($state, $para);
       last if $stop & Hr_STOP;
     }
   }
@@ -896,7 +916,7 @@ oops unless @{$m->{segments}};
     croak ("Callback specified multiple results but context is scalar")
       if @retvals > 1 && !wantarray;
   }
-  @retvals = @subst_results if @retvals == 0;
+  @retvals = @{$state->{subst_results}} if @retvals == 0;
 
   if (wantarray) {
     btw ivis 'Hreplace RETURNING @retvals' if $debug;
@@ -932,6 +952,8 @@ sub Hreplace_match($$@) { # *FUNCTION*
   my $debug = $opts{debug};
   btw 'Hrep_m match=',fmt_match(\%match),dvis '\n$content' if $debug;
 oops unless @{ $match{segments} };
+
+  croak "Recursive substitutions are not permitted to avoid confusing Hreplace\n" if $recursion_level > 1;
 
   # INITIALLY:
   #     $m->{segments}[0]     ...       $m->{...}[-1]

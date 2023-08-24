@@ -1,3 +1,7 @@
+6.001 - Work around https://github.com/Perl/perl5/issues/18606 to
+        allow Hsearch to be called from Hreplace callbacks.
+        Recursive substitution is caught and throws.
+         
 6.000 - A major overhaul with incompatible API changes.
 
         "Character mode" is now the default and the old ':chars' import tag

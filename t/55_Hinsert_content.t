@@ -98,6 +98,7 @@ for my $start_text ("Front Stuff", "  :(3", "  ")
   foreach (@repl_content) {
     my $new_content = $_;
     foreach (@$new_content) { #make unique
+      next if ref;
       s/NEW/sprintf("NEW%03d", $count++)/esg unless ref; 
     }
     my $testname = "Hreplace ".vis($start_text)." with ".vis($new_content);
@@ -105,7 +106,7 @@ for my $start_text ("Front Stuff", "  :(3", "  ")
     my $content_vtext = join("", grep{! ref} @$new_content);
     
     my ($replinfo, @extra) = $body->Hreplace(qr/\Q${start_text}\E/s, 
-                                             $new_content, 
+                                             $new_content,
                                              debug => $debug);
     oops unless $replinfo && !@extra;
     note "AFTER :\n", fmt_tree($para) if $debug;
@@ -141,6 +142,35 @@ for my $start_text ("Front Stuff", "  :(3", "  ")
   note "Final body vtext = ",vis($body->Hget_text())
     if $debug;
 
+}
+
+# Confirm that recursive substitution throws
+{ fail("oops") if $body->Hget_text() =~ /FILBERT/;
+  my @r = $body->Hreplace("Lorem", 
+            sub{ my $m = shift; 
+                 (Hr_SUBST|Hr_STOP, ["FILBERT"]) 
+               });
+  fail("oops") unless $body->Hget_text() =~ /FILBERT/;
+  $r[0]->{para}->Hreplace("FILBERT", ["Lorem"]); # undo
+     @r = $body->Hreplace("Lorem", 
+            sub{ my $m = shift; 
+                 # Recursive search is okay
+                 my @r2 = $m->{para}->Hsearch("Lorem");
+                 is(scalar(@r2), 1, "recursive search is allowed");
+
+                 (Hr_SUBST|Hr_STOP, ["FILBERT"]) 
+               });
+  $r[0]->{para}->Hreplace("FILBERT", ["Lorem"]); # undo
+     @r = $body->Hreplace("Lorem", 
+            sub{ my $m = shift; 
+                 # Recursive modification should throw 
+                 eval {
+                   () = $m->{para}->Hreplace("Lorem", sub{ (Hr_SUBST|Hr_STOP, ["bar"]) });
+                 };
+                 like($@, qr/Recursive sub.*not /, "recursive subst throws");
+
+                 (Hr_SUBST|Hr_STOP, ["FILBERT"]) 
+               });
 }
 
 done_testing();
