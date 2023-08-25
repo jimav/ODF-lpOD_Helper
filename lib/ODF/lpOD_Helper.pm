@@ -63,6 +63,11 @@ ODF::lpOD_Helper - fix and enhance ODF::lpOD
   # Create or reuse an 'automatic' (pseudo-anonymous) style
   $style = $doc->Hautomatic_style($family, properties...);
 
+  # Remove problematic 'rsid' styles left by LibreOffice which interfere
+  # with cloning content
+  $context->Hclean_for_cloning();
+  do_something( $context->clone );
+
   # Format a node or entire tree for debug messages
   say fmt_node($elt);
   say fmt_tree($elt);
@@ -104,6 +109,7 @@ our @EXPORT = qw(
 our @EXPORT_OK = qw(
   hashtostring
   AUTO_PFX
+  Hr_MASK
   TEXTLEAF_COND PARA_COND TEXTCONTAINER_COND TEXTLEAF_OR_PARA_COND
 );
 
@@ -111,7 +117,9 @@ use constant {
   Hr_STOP   => 1,
   Hr_SUBST  => 2,
   Hr_RESCAN => 4,
+  Hr_MASK   => 7,
 };
+
 sub _is_Hr_valid($) { ($_[0]//"invalid") =~ /^[01236]$/ }
 
 use ODF::lpOD;
@@ -139,13 +147,12 @@ directly between file/network resources and ODF::lpOD without
 looking at the data along the way.
 Please see B<< L<ODF::lpOD_Helper::Unicode> >>.
 
+This can be disabled for legacy applications as described in
+L<ODF::lpOD_Helper::Unicode>.
+
 Currently this patch has global effect but might someday become
 scoped; to be safe put C<use ODF::lpOD_Helper> at the top of every file which 
 calls ODF::lpOD or ODF::lpOD_Helper methods.
-
-This patch can be disabled for legacy applications, where method
-arguments and results are encoded binary bytes rather than Perl characters.
-Please see L<ODF::lpOD_Helper::Unicode> for how to do this.
 
 Prior to version 6.000 transparent Unicode was not enabled by default,
 but required a now-deprected ':chars' import tag.
@@ -264,17 +271,23 @@ our %perdoc_state;  # "address" => [ { statehash }, $doc_weakened ]
 sub _get_ephemeral_statehash($) {
   my $doc = shift;
   confess "not a Document" unless ref($doc) eq "ODF::lpOD::Document";
-  my $addr = refaddr($doc);
-  my $aref;
-  if (($aref = $perdoc_state{$addr})) {
-    $aref = undef if !defined($aref->[1]); # object destroyed?
+
+  my $result;
+  foreach my $addr (keys %perdoc_state) {
+    my ($statehash, $that_doc) = @{ $perdoc_state{$addr} };
+    if (!defined $that_doc) { # that doc was destroyed
+      delete $perdoc_state{$addr};
+    }
+    elsif ($that_doc == $doc) {
+      $result = $statehash;
+    }
   }
-  unless($aref) {
-    $perdoc_state{$addr} = $aref = [ {}, $doc ];
+  unless ($result) {
+    $perdoc_state{refaddr $doc} = my $aref = [ {}, $doc ];
+    $result = $aref->[0];
     weaken($aref->[1]);
-  }
-  oops unless isweak($aref->[1]);
-  return $aref->[0];
+  }  
+  $result
 }
 use constant AUTO_PFX => "lpODH";
 
@@ -2319,6 +2332,133 @@ sub fmt_match(_;@) { # sans final newline
 #  my $r = shift;
 #  fmt_match($r, _missings_ok => 1, @_)
 #}
+
+=head1 LIBRE OFFICE WORK-AROUND
+
+Some versions of LibreOffice track revisions by installing special spans
+using "rsid" styles which interfere with cloning.
+The problem is that LO expectes these styles to be referenced exactly
+once.  The C<Hclean_for_cloning()> method will remove them.
+
+It may also be possible to save LibreOffice documents without 'rsids' :
+
+  https://ask.libreoffice.org/t/where-do-the-text-style-name-tnn-span-tags-come-from-and-how-do-i-get-rid-of-them/31681/2
+
+  https://bugs.documentfoundation.org/show_bug.cgi?id=68183
+
+=head2 $doc->Hclean_for_cloning();
+
+This unpleasant hack removes any "rsid" styles.
+
+C<Hclean_for_cloning> should be called before cloning any content 
+in the document, if the cloned items might have been edited by Libre Office.
+It may be called multiple times; second and subsequent calls do nothing.
+
+Gory detail: 
+Every span in the document body is examined; 
+if it references a text style with 
+a B<officeooo:rsid> or B<officeooo:paragraph-rsid>
+attribute in a 
+descendant style:text-properties node, then that attribute is removed.
+If the text-properties contains other attributes then everything
+else is left as-is (this is the case when the style has an additional
+purpose besides holding an rsid attribute).  
+If the text-properties node has no other
+attributes it is deleted, and if the ancestor style has no surviving
+text-properties then the style is deleted and span(s) which
+reference it are erased, moving up the span's childen.
+
+=cut
+
+# Hack to remove officeooo:rsid text properties from text styles,
+# which if cloned or otherwise used for multiple spans cause Libre Office 
+# to hang or crash.
+#
+# Modified styles which have no remaining attributes are deleted, and spans 
+# which were useing them are erased (moving their content up one level).
+sub ODF::lpOD::Document::Hclean_for_cloning {
+  my ($doc, %opts) = @_;
+
+  my $sh = _get_ephemeral_statehash($doc);
+  return if $sh->{cleaned_for_cloning}++;
+
+  # Collect the *names* of styles bearing rsid properties.
+  #  values are [$style_object, $property_objects....]
+  my %rsid_styles;
+  {
+    # [OLD] This does not work due to a bug overloading "text" with the 
+    # same-named DataStyle type:
+    # my @textstyles = $doc->get_styles('text');
+    #FIXME ... I can't see why get_styles('text') is not correct!
+    ##    DataStyle::is_numeric_family('text') should return false...
+    
+    # The following was extracted from ODF::lpOD::Document::get_styles
+    my $xp = '//style:style[@style:family="text"]';
+    my @textstyles = ($doc->get_elements(STYLES,$xp), $doc->get_elements(CONTENT,$xp));
+    foreach my $tstyle (@textstyles) {
+      my @props = $tstyle->descendants(qr/style:text-properties/);
+      if (any{ 
+            # Look for 'officeooo:rsid', 'officeooo:paragraph-rsid'
+            any{ /officeooo:.*rsid/ } keys(%{ $_->get_attributes })
+          } @props) 
+      {
+        $rsid_styles{$tstyle->get_name} = [$tstyle, @props];
+      }
+    }
+  }
+
+  # Check every span in the document body
+  my $body = $doc->get_body;
+  my $span = $body;
+  while ($span = $span->next_elt($body, 'text:span')) {
+    my $tsname = $span->get_attribute('style') // oops;
+    next unless (my $v = $rsid_styles{$tsname});
+    if (ref $v) { # not (yet) deleted
+      # Remove rsid properties from the style.  If other properties remain
+      # then the cleaned style is left; if there are other spans that
+      # reference the same style (which I don't think LibreOffice allows,
+      # but being defensive here...) then the style will be harmlessly
+      # re-examined again.
+      #
+      # If no properties remain after removing rsid properties, then the style 
+      # is deleted and the value in %rsid_styles set to "DELETED", which
+      # signals that all spans referencing the style should be erased.
+      my ($tstyle, @props) = @$v;
+      oops unless $tstyle->{parent};
+      my $props_remain;
+      for my $text_prop (@props) {
+        oops unless $text_prop->{parent};
+        my %att = $text_prop->get_attributes;
+        foreach my $key (grep { /officeooo:.*rsid/ } keys %att) {
+          delete $att{$key} 
+        }
+        if (keys %att) {
+          $text_prop->del_attributes;
+          $text_prop->set_attributes(%att);
+          $props_remain = 1;
+          btw "$tsname : now-rsid-free text_prop ",fmt_node($text_prop) if $opts{debug}; 
+        } else {
+          btw "$tsname : Deleting rsid-only text_prop ",fmt_node($text_prop) if $opts{debug}; 
+          $text_prop->delete;
+        }
+      }
+      if (! $props_remain) {
+        btw "$tsname : Deleting rsid style ",fmt_tree($tstyle, internals=>1)
+          if $opts{debug}; 
+        $tstyle->delete; 
+        $rsid_styles{$tsname} = $v = "DELETED";
+      }
+    }
+    if ($v eq "DELETED") {
+      btw "Erasing rsid-only span ",fmt_node($span) if $opts{debug}; 
+      $span->erase; # XML::Twig
+      # FIXME: There were old comments in the code copied from RFFMDirGenODF
+      # to the effect that ODF::lpOD overrides XML::Twig methods with 
+      # incompatible APIs and breaks XML::Twig::Elt::erase().
+      # But I don't see that now...
+    }
+  }
+}#Hclean_for_cloning
 
 =head1 HISTORY
 

@@ -36,44 +36,44 @@ See "Not always so tidy" below for more discussion.
 =head1 ODF::lpOD
 
 For historical reasons
-ODF::lpOD by itself is incompatible with the above paradigm by default
+ODF::lpOD by default is incompatible with the above paradigm
 because every method encodes result strings into UTF-8
 before returning them to you, and attempts to decode strings you pass in before
-using them.  Therefore you must work with binary rather than character strings;
+using them.  Therefore you must work with binary octets rather than 
+abstract characters; 
 Regex match, substr(), length(), and comparison with string literals
 do not work with non-ASCII/latin1 characters.
 Also, you can't print such already-encoded binary to STDOUT if that
 file handle auto-encodes because the data will be encoded twice.
 
 B<< use ODF::lpOD_Helper >>
-fixes this by disabling ODF::lpOD's internal encoding and decoding.
+disables ODF::lpOD's internal encoding and decoding.
 Methods then speak and listen in characters, not octets.
 
 You should also B<< use feature 'unicode_strings'; >> to
-disable problematic aspects of legacy Perl behavior.
+avoid problematic aspects of legacy Perl behavior.
 
 =head1 IF LEGACY BEHAVIOR IS NEEDED
 
 The import tag B<:bytes> will tell ODF::lpOD_Helper to not disable
-internal encoding & decoding, i.e. the original ODF::lpOD behavior
-will be retained.
+internal encoding & decoding, i.e. retain the original ODF::lpOD behavior.
 
-It is also possible to toggle between the old behavior and 
-character-string mode:
+It is also possible to toggle between the old and new behavior at
+run-time:
 I<< lpod->Huse_octet_strings() >> will will re-enable implicit 
 decoding/encoding of method arguments (using UTF-8 encoding by default)
 and I<< lpod->Huse_character_strings() >> will disable the old behavior
 and restore transparent Unicode support.
 
 Prior to version 6.000 character mode was not the default, but
-required a B<:chars> import tag.  This tag is now deprecated and
+required a B<:chars> import tag.  That tag is now deprecated and
 produces a warning. 
 
 =head1 XML::Twig & XML::Parser
 
 XML::Twig's docs wrongly say that it stores strings in memory encoded
 as UTF-8, implying that a I<decode> operation would be needed to obtain
-abstract Perl characters; in fact XML::Twig stores strings as characters
+characters; in fact XML::Twig stores strings as characters
 (the result of the I<decode> done by C<parse()>),
 and most methods return those Perl characters, not encoded binary.
 
@@ -89,7 +89,7 @@ Going the other way, XML::Twig's B<parse()> method expects binary octets as
 input and uses the "encoding=..." specification in the XML
 header to know how to decode the remainder of the file.  
 
-=head2 Not always so tidy
+=head1 Not always so tidy
 
 Perl's data model now has two kinds of strings: B<binary octets>,
 which might or might not be some representation of Unicode characters,
@@ -108,20 +108,19 @@ Non-Unicode-aware scripts usually "just work" as long as they never
 see characters outside the ASCII range.  This is because,
 without a I<decode> operation or literal strings with "wide" characters,
 Perl treats all strings as "binary"; the behaviour of such strings is
-usually correct when they hold single-byte characters.
+usually correct when all characters have single-byte representations.
 
-=head3 The "wide character" warning
+=head2 The "wide character" warning
 
 If a non-ASCII/latin1 character does get into a Perl string
 which is written to a non-encoding file handle, Perl issues
 a warning because that should never happen.  It means
 the program is both Unicode-unaware and uses characters which
-require Unicode processing to always work correctly.
+require Unicode processing to work correctly.
 See C<man perlunifaq>.
 
-Unicode-aware programs, if correctly written, 
-always I<encode> character strings before writing to disk
-either explicitly or by using an encoding file handle.
+Unicode-aware programs must always I<encode> character strings before 
+writing to disk either explicitly or by using an encoding file handle.
 
 Non-unicode-aware programs (which neither decode or encode),
 will "just work" with ASCII data as described earlier.
