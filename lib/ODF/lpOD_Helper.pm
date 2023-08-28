@@ -55,7 +55,7 @@ ODF::lpOD_Helper - fix and enhance ODF::lpOD
   $context=>Hinsert_content([ "The author is ", ["bold"], "Stephen King"],
                             position=>WITHIN, offset => ... );
 
-  # Work around bug in ODF::lpOD::Element::get_text(recursive => TRUE) 
+  # Work around bug in ODF::lpOD::Element::get_text(recursive => TRUE)
   # so that tab, line-break, and spacing objects are expanded correctly
   #
   $text = $context->Hget_text(); # include nested paragraphs
@@ -91,8 +91,9 @@ and fonts registered.
 
 package ODF::lpOD_Helper;
 
-# VERSION
-# DATE
+{ no strict 'refs'; ${__PACKAGE__."::VER"."SION"} = 997.999; }
+# VERSION from Dist::Zilla::Plugin::OurPkgVersion
+# DATE from Dist::Zilla::Plugin::OurDate
 
 use Carp;
 use Data::Dumper::Interp 6.000 qw/visnew
@@ -105,6 +106,7 @@ use Data::Dumper::Interp 6.000 qw/visnew
 our @EXPORT = qw(
   Hr_STOP Hr_SUBST Hr_RESCAN
   fmt_match fmt_node fmt_tree fmt_node_brief fmt_tree_brief
+  fmt_Hreplace_result fmt_Hreplace_results
 );
 our @EXPORT_OK = qw(
   hashtostring
@@ -151,7 +153,7 @@ This can be disabled for legacy applications as described in
 L<ODF::lpOD_Helper::Unicode>.
 
 Currently this patch has global effect but might someday become
-scoped; to be safe put C<use ODF::lpOD_Helper> at the top of every file which 
+scoped; to be safe put C<use ODF::lpOD_Helper> at the top of every file which
 calls ODF::lpOD or ODF::lpOD_Helper methods.
 
 Prior to version 6.000 transparent Unicode was not enabled by default,
@@ -210,7 +212,7 @@ sub import {
     }
   }
 
-  my (@my_args, @exporter_args); 
+  my (@my_args, @exporter_args);
   foreach (@_) {
     if (/^:(chars|bytes)$/) { push @my_args, $_; }
     else                    { push @exporter_args, $_; }
@@ -286,7 +288,7 @@ sub _get_ephemeral_statehash($) {
     $perdoc_state{refaddr $doc} = my $aref = [ {}, $doc ];
     $result = $aref->[0];
     weaken($aref->[1]);
-  }  
+  }
   $result
 }
 use constant AUTO_PFX => "lpODH";
@@ -429,7 +431,7 @@ nodes for tab, newline, and consecutive spaces, and may be partly located in
 different I<span>s.
 
 By default all Paragraphs are searched, including nested paragraphs
-inside B<frames> and B<tables>.   
+inside B<frames> and B<tables>.
 Nested paragraphs may be excluded using
 option C<prune_cond =E<gt> 'text:p|text:h'>.
 
@@ -641,7 +643,7 @@ Internally, an ODF "automatic" Style is created for
 each unique combination of properties, re-using styles when possible.
 Fonts are automatically registered.
 
-Alternatively, you can specify an existing (or to-be-created) ODF Style with 
+Alternatively, you can specify an existing (or to-be-created) ODF Style with
 
   [style-name => "name of style"]
 
@@ -757,7 +759,7 @@ btw dvis '### NON-REGEX match, $vtoffset $vtend $vtext' if $debug;
 
     my $para_startcount = scalar @{$state->{subst_results}};
     PARA: {
-      btw "Hr PARA ",_abbrev_addrvis($node),dvis(' Top $totlen') if $debug;
+      btw "Hr PARA ",_abbrev_addrvis($node),dvis(' Top $state->{totlen}') if $debug;
 
       $state->{para_start_offset} = $state->{totlen};
       my ($vtext, $seginfo) = _get_seginfo($state, $node);
@@ -792,7 +794,7 @@ oops unless @{$m->{segments}};
               $state->{offset} += $new_vlength; # length of replacement
             }
             unless ($r & Hr_STOP) {
-              btw dvis '  Hr redo PARA after substitution $offset $m->{voffset} $new_vlength' if $debug;
+              btw dvis '  Hr redo PARA after substitution $state->{offset} $m->{voffset} $new_vlength' if $debug;
               if ($m->{match} eq "" && $new_vlength==0) {
                 # Avoid infinite loop
                 btw dvis '  Hr NULL MATCH & REPL: offset++' if $debug;
@@ -816,11 +818,11 @@ oops unless @{$m->{segments}};
             return(Hr_STOP, @args);
           }
           if ($state->{offset} < $state->{totlen}) {
-            btw dvis '  Hr CONTINUE: new $offset, *redo MATCH*' if $debug;
+            btw dvis '  Hr CONTINUE: new $state->{offset}, *redo MATCH*' if $debug;
             redo MATCH;
           }
         } else {
-          btw '  Hr [no match] expr=',vis($state->{expr}),dvis ' $offset $para_start_offset $vtext' if $debug;
+          btw '  Hr [no match] expr=',vis($state->{expr}),dvis '$state $vtext' if $debug;
         }
       }#MATCH
     }#PARA
@@ -837,10 +839,10 @@ sub ODF::lpOD::Element::Hreplace {
   my %opts    = @_;
   my $debug   = $opts{debug};
 
-  # We can not allow recursive substitutions (i.e. via callbacks) in the
+  # We can not allow reentrant substitutions (i.e. via callbacks) in the
   # same paragraph because saved segment data might be invalidated
-  # an crash _first_match().  However recursive search-only calls are ok, 
-  # such as via Hsearch.  N.B We don't know whether a substitution will occur 
+  # and crash _first_match().  However recursive search-only calls are ok,
+  # such as via Hsearch.  N.B We don't know whether a substitution will occur
   # until control returns from a callback.
   #
   # Attempted modifications throw an exception if $recursion_level > 1
@@ -913,8 +915,10 @@ btw "context:\n", fmt_tree($context) if $debug;
   if ($context->passes(TEXTLEAF_OR_PARA_COND)) {
     ($stop, @retvals) = _process_para($state, $context); # ignores nested paras
   }
-  # Now process paragraphs which are descendants.   This will visit nested
-  # paragraphs in depth-first order (unless blocked by option prune_cond)
+  # Now process paragraphs which are descendants.
+  # _process_para will not descend into nested paragraphs, i.e. it only
+  # looks at the text at that level; nested paragraphs are visited directly
+  # here (after the parent paragraph was visited).
   { my $para = $context ;
     while ($para = $para->Hnext_elt($context, PARA_COND, $opts{prune_cond})) {
       ($stop, @retvals) = _process_para($state, $para);
@@ -1024,7 +1028,7 @@ oops unless @{ $match{segments} };
 
   # No need to normalize here because Hreplace will do an overall normalize
   #$temp_para->Hnormalize();
-  
+
   # Move the new content out of the temp_para and cut the para
   oops unless length($temp_para->Hget_text//"") == $vlength;
   for my $e ($temp_para->cut_children()) {
@@ -1560,14 +1564,14 @@ Option B<prune_cond> may be used to omit text below specified node types
 
 C<ODF::lpOD::TextElement::get_text()> with option I<recursive E<gt> TRUE>
 looks like it should do the same thing as C<Hget_text()>, but it has bugs:
-  
+
 =over 4
 
 =item 1.
 
-The special nodes for tab, etc. are expanded only when they are the 
+The special nodes for tab, etc. are expanded only when they are the
 immediate children of $context.  With the 'recursive'
-option #PCDATA nodes in nested paragraphs are expanded but tabs, etc. 
+option #PCDATA nodes in nested paragraphs are expanded but tabs, etc.
 are ignored.
 
 =item 2.
@@ -1578,7 +1582,7 @@ a #PCDATA node, not if it is a tab, etc. node.
 =back
 
 I think get_text's "recursive" option was probably intended to include text from
-paragraphs in possibly-nested frames and tables, and it was an oversight 
+paragraphs in possibly-nested frames and tables, and it was an oversight
 that that special text nodes are not always handled correctly.
 
 Note that there is no 'recursive' option to C<Hget_text>, which behaves
@@ -1604,8 +1608,8 @@ sub ODF::lpOD::Element::Hget_text {
 
 =head2 $context->Hnormalize();
 
-Similar to XML::Twig's C<normalize()> method but also "normalizes"
-text:s usage:
+Similar to XML::Twig's C<normalize()> method but also "normalizes" text:s
+usage.
 
 Nodes are edited so that spaces are represented with the first or only
 space in a #PCDATA node and subsequent consecutive spaces in a text:s node.
@@ -1621,7 +1625,7 @@ sub ODF::lpOD::Element::Hnormalize {
 #Carp::cluck "=== Hnormalize BEFORE: ", fmt_tree($context);
 
   # Relocate spaces between #PCDATA and text:s so that only single spaces are
-  # in #PCDATA and text:s only represents 2nd and subsequent consecutive spaces 
+  # in #PCDATA and text:s only represents 2nd and subsequent consecutive spaces
   DESCENDANT:
   for (my $i=0; $i <= $#descendants; ++$i) {
     my $desc = $descendants[$i];
@@ -1646,9 +1650,9 @@ sub ODF::lpOD::Element::Hnormalize {
     if ($desc_tag eq "text:s" && (my $desc_len = length($desc_text))) {
       # !! This might not be correct if the last preceding PCDATA has a
       # !! trailing space but it is isolated from $desc by span boundaries.
-      # AFAIK ODF 1.2 permits text:s to hold all spaces without the first 
+      # AFAIK ODF 1.2 permits text:s to hold all spaces without the first
       #   being in a preceding text segment, although it is recommended
-      #   that the first space be sparate.   So for now, I'm leaving text:s 
+      #   that the first space be sparate.   So for now, I'm leaving text:s
       #   unchanged if a span boundary or something else intervenes.
       my $prev = $desc;
       while ($prev = $prev->{prev_sibling}) {
@@ -1681,7 +1685,7 @@ sub ODF::lpOD::Element::Hnormalize {
   while( my $desc= shift @descendants) {
     my $desc_len = length($desc->Hget_text);
     if( ! $desc_len) { $desc->delete; next; }
-    while( @descendants 
+    while( @descendants
            && ((my $next_sib = $desc->{next_sibling})//0) == $descendants[0] ) {
       if (! length $next_sib->Hget_text) {
         shift(@descendants)->delete;
@@ -1709,28 +1713,11 @@ sub ODF::lpOD::Element::Hnormalize {
 
 ###################################################
 
-=head2 $node->self_or_parent($cond)
-
-Returns $node or it's nearest ancestor which matches a condition
-
-Currently this throws an exception if neither $node or an ancestor
-matches $cond.
-
-=cut
-
-sub ODF::lpOD::Element::self_or_parent($$) {
-  my ($node, $cond) = @_;
-  my $e = $node->passes($cond) ? $node : $node->parent($cond);
-  # Should we return undef instead of croaking??
-  croak "Neither node (",addrvis($node),") nor ancestors match ",vis($cond),"\n" unless $e;
-  return $e;
-}
-
 =head2 $next_elt = $prev_elt->Hnext_elt($subtree_root, $cond, $prune_cond);
 
 This are like the "next_elt" method in L<XML::Twig> but
 accepts an additional argument giving a "prune condition", which
-if present suppresses decendants of matching nodes.  
+if present suppresses decendants of matching nodes.
 
 A pruned node is itself returned if it also matches the primary condition.
 
@@ -1774,6 +1761,7 @@ If the B<$prune_cond> parameter is omitted or undef then these methods
 work exactly like the correspoinding non-B<H> methods.
 
 C<Hnext_elt>, C<Hdescendants> and C<Hdescendants_or_self>
+C<Hparent> and C<Hself_or_parent>
 are installed as methods of XML::Twig::Elt.
 
 =cut
@@ -1827,6 +1815,42 @@ sub XML::Twig::Elt::Hdescendants_or_self {
   my @descendants = $subtree_root->passes($select_cond) ? ($subtree_root) : ();
   push @descendants, &XML::Twig::Elt::Hdescendants;
   @descendants;
+}
+
+=head2 $node->Hparent($cond, [$stop_cond])
+
+Returns the nearest ancestor which matches condition C<$cond>.
+
+If C<$stop_cond> is defined, then undef is returned if the search would
+ascend above the nearest ancestor matching the stop condition.
+For exmaple,
+
+  my $row = $elt->Hparent("table:table-row", "draw:frame");
+
+would locate the table row containing $elt unless $elt was
+encapsulated in a frame within a row.
+
+An exception is thrown if no ancestor matches either $cond or $stop_cond.
+
+=head2 $node->Hself_or_parent($cond, [$stop_cond])
+
+Like C<Hparent> but returns $node itself if it matches $cond.
+
+=cut
+
+sub XML::Twig::Elt::Hparent($$;$) {
+  my ($elt, $cond, $stop_cond) = @_;
+  for(;;) {
+    $elt = $elt->{parent} || croak "No ancestors match ",vis($cond);
+    return $elt if $elt->passes($cond);
+    return undef if $stop_cond && $elt->passes($stop_cond);
+  }
+}
+
+sub XML::Twig::Elt::Hself_or_parent($$;$) {
+  my ($elt, $cond, $stop_cond) = @_;
+  return $elt if $elt->passes($cond);
+  goto &XML::Twig::Elt::Hparent;
 }
 
 ###################################################
@@ -2169,16 +2193,16 @@ sub fmt_node(_;@) {  # sans final newline
                     # so we get back Perl characters (no-op except with :bytes)
                     ODF::lpOD::Common::input_conversion($node->get_text)
                   };
-      $text_pfx .= "[non-leaf]" if defined($text);
+      $text_suf .= "[non-leaf]" if defined($text);
 
     }
     if (! defined $text) {
       $text = $node->text(); # Twig primitive
-      $text_pfx .= "[Frame? Table?]" if defined($text);
+      $text_suf .= "[Frame? Table?]" if defined($text);
     }
   }
   if (defined $text) {
-    $text_suf .= "(len=".length($text).")"
+    $text_suf = "(len=".length($text).")" . $text_suf
       if $opts{showlen} && length($text) > 4;
     if (defined(my $_vtoref = $opts{_vtoref})) {
       $text_pfx .= $$_vtoref.":";
@@ -2313,7 +2337,7 @@ sub fmt_match(_;@) { # sans final newline
   }
 
   _append_new_line(qw/match/);
-  _append_new_line(qw/voffset vend/);
+  _append_new_line(qw/voffset vend vlength/);
   if (exists $h{para}) {
     local $opts{wrapindent} += 2;
     $s .= "\n  para => ".fmt_node(delete $h{para}, %opts)."\n ";
@@ -2327,13 +2351,16 @@ sub fmt_match(_;@) { # sans final newline
     if defined $segments;
 
   return $s."\n}";
+}#fmt_match
+sub fmt_Hreplace_results(@) {
+  my $results = (@_ == 1 && ref($_[0]) eq 'ARRAY') ? $_[0] : \@_;
+  "(".(join ",\n", map{fmt_match($_)} @$results).")";
 }
-#sub fmt_Hinsert_result(_;@) {
-#  my $r = shift;
-#  fmt_match($r, _missings_ok => 1, @_)
-#}
+sub fmt_Hreplace_result(_) {
+  goto &fmt_match
+}
 
-=head1 LIBRE OFFICE WORK-AROUND
+=head1 LIBRE OFFICE 'RSID' WORK-AROUND
 
 Some versions of LibreOffice track revisions by installing special spans
 using "rsid" styles which interfere with cloning.
@@ -2350,19 +2377,19 @@ It may also be possible to save LibreOffice documents without 'rsids' :
 
 This unpleasant hack removes any "rsid" styles.
 
-C<Hclean_for_cloning> should be called before cloning any content 
+C<Hclean_for_cloning> should be called before cloning any content
 in the document, if the cloned items might have been edited by Libre Office.
 It may be called multiple times; second and subsequent calls do nothing.
 
-Gory detail: 
-Every span in the document body is examined; 
-if it references a text style with 
+Gory detail:
+Every span in the document body is examined;
+if it references a text style with
 a B<officeooo:rsid> or B<officeooo:paragraph-rsid>
-attribute in a 
+attribute in a
 descendant style:text-properties node, then that attribute is removed.
 If the text-properties contains other attributes then everything
 else is left as-is (this is the case when the style has an additional
-purpose besides holding an rsid attribute).  
+purpose besides holding an rsid attribute).
 If the text-properties node has no other
 attributes it is deleted, and if the ancestor style has no surviving
 text-properties then the style is deleted and span(s) which
@@ -2371,10 +2398,10 @@ reference it are erased, moving up the span's childen.
 =cut
 
 # Hack to remove officeooo:rsid text properties from text styles,
-# which if cloned or otherwise used for multiple spans cause Libre Office 
+# which if cloned or otherwise used for multiple spans cause Libre Office
 # to hang or crash.
 #
-# Modified styles which have no remaining attributes are deleted, and spans 
+# Modified styles which have no remaining attributes are deleted, and spans
 # which were useing them are erased (moving their content up one level).
 sub ODF::lpOD::Document::Hclean_for_cloning {
   my ($doc, %opts) = @_;
@@ -2386,21 +2413,21 @@ sub ODF::lpOD::Document::Hclean_for_cloning {
   #  values are [$style_object, $property_objects....]
   my %rsid_styles;
   {
-    # [OLD] This does not work due to a bug overloading "text" with the 
+    # [OLD] This does not work due to a bug overloading "text" with the
     # same-named DataStyle type:
     # my @textstyles = $doc->get_styles('text');
     #FIXME ... I can't see why get_styles('text') is not correct!
     ##    DataStyle::is_numeric_family('text') should return false...
-    
+
     # The following was extracted from ODF::lpOD::Document::get_styles
     my $xp = '//style:style[@style:family="text"]';
     my @textstyles = ($doc->get_elements(STYLES,$xp), $doc->get_elements(CONTENT,$xp));
     foreach my $tstyle (@textstyles) {
       my @props = $tstyle->descendants(qr/style:text-properties/);
-      if (any{ 
+      if (any{
             # Look for 'officeooo:rsid', 'officeooo:paragraph-rsid'
             any{ /officeooo:.*rsid/ } keys(%{ $_->get_attributes })
-          } @props) 
+          } @props)
       {
         $rsid_styles{$tstyle->get_name} = [$tstyle, @props];
       }
@@ -2420,7 +2447,7 @@ sub ODF::lpOD::Document::Hclean_for_cloning {
       # but being defensive here...) then the style will be harmlessly
       # re-examined again.
       #
-      # If no properties remain after removing rsid properties, then the style 
+      # If no properties remain after removing rsid properties, then the style
       # is deleted and the value in %rsid_styles set to "DELETED", which
       # signals that all spans referencing the style should be erased.
       my ($tstyle, @props) = @$v;
@@ -2430,30 +2457,30 @@ sub ODF::lpOD::Document::Hclean_for_cloning {
         oops unless $text_prop->{parent};
         my %att = $text_prop->get_attributes;
         foreach my $key (grep { /officeooo:.*rsid/ } keys %att) {
-          delete $att{$key} 
+          delete $att{$key}
         }
         if (keys %att) {
           $text_prop->del_attributes;
           $text_prop->set_attributes(%att);
           $props_remain = 1;
-          btw "$tsname : now-rsid-free text_prop ",fmt_node($text_prop) if $opts{debug}; 
+          btw "$tsname : now-rsid-free text_prop ",fmt_node($text_prop) if $opts{debug};
         } else {
-          btw "$tsname : Deleting rsid-only text_prop ",fmt_node($text_prop) if $opts{debug}; 
+          btw "$tsname : Deleting rsid-only text_prop ",fmt_node($text_prop) if $opts{debug};
           $text_prop->delete;
         }
       }
       if (! $props_remain) {
         btw "$tsname : Deleting rsid style ",fmt_tree($tstyle, internals=>1)
-          if $opts{debug}; 
-        $tstyle->delete; 
+          if $opts{debug};
+        $tstyle->delete;
         $rsid_styles{$tsname} = $v = "DELETED";
       }
     }
     if ($v eq "DELETED") {
-      btw "Erasing rsid-only span ",fmt_node($span) if $opts{debug}; 
+      btw "Erasing rsid-only span ",fmt_node($span) if $opts{debug};
       $span->erase; # XML::Twig
       # FIXME: There were old comments in the code copied from RFFMDirGenODF
-      # to the effect that ODF::lpOD overrides XML::Twig methods with 
+      # to the effect that ODF::lpOD overrides XML::Twig methods with
       # incompatible APIs and breaks XML::Twig::Elt::erase().
       # But I don't see that now...
     }
@@ -2468,7 +2495,7 @@ In Aug 2023 a major overhaul was released as rev 6.000 with API changes.
 
 As of Feb 2023, the underlying ODF::lpOD is not actively maintained
 (last updated in 2014, v1.126), and is unusable as-is.
-However with ODF::lpOD_Helper, ODF::lpOD is once again an 
+However with ODF::lpOD_Helper, ODF::lpOD is once again an
 extremely useful tool.
 
 B<Original Motivation:>
@@ -2513,6 +2540,7 @@ ODF::lpOD (v1.126) may be used under the GPL 3 or Apache 2.0 license.
 
 =for Pod::Coverage oops btw btwN
 =for Pod::Coverage fmt_node_brief fmt_tree_brief fmt_match
+=for Pod::Coverage fmt_Hreplace_result fmt_Hreplace_results
 
 =cut
 
