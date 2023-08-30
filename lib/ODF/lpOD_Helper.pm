@@ -105,11 +105,12 @@ use Data::Dumper::Interp 6.000 qw/visnew
 
 our @EXPORT = qw(
   Hr_STOP Hr_SUBST Hr_RESCAN
+  Hor_cond
   fmt_match fmt_node fmt_tree fmt_node_brief fmt_tree_brief
   fmt_Hreplace_result fmt_Hreplace_results
 );
 our @EXPORT_OK = qw(
-  hashtostring
+  hashtostring arraytostring
   AUTO_PFX
   Hr_MASK
   TEXTLEAF_COND PARA_COND TEXTCONTAINER_COND TEXTLEAF_OR_PARA_COND
@@ -649,10 +650,62 @@ Alternatively, you can specify an existing (or to-be-created) ODF Style with
 
 =cut
 
+# Compose multiple XML::Twig search conditions to match any of them ("OR")
+sub Hor_cond(@) {
+  my @regexes;
+  my @coderefs;
+  my $str = "";
+  foreach (@_) {
+    return undef if !defined; # undef means match anything
+    if    (ref eq 'CODE')   { push @coderefs, $_; }
+    elsif (ref eq "Regexp") { push @regexes, $_;  }
+    elsif (ref)             { croak "Unhandled ref type ",ref; }
+    else                    { $str .= "|" if $str; $str .= $_; }
+  }
+  # Convert simple regexes into equivalent string conditions.
+  # Benchmark shows that 'text:h|text:p' is 30% faster than qr/^text:[hp]$/
+  foreach (@regexes) {
+    if (/^ \(\?\^u?:\^ ( [:\w]+ ) \$\) $/x # ^ONESTRING$
+        ||
+        /^ \(\?\^u?:\^ \((?:\?:)? ( [:\w]+ (?: \| [:\w]+)* ) \) \$\) $/x # ^(A|B)$
+       ) {
+      $str .= "|" if $str; $str .= $1; $_ = undef;
+    }
+    elsif (/^ \(\?\^u?:\^ ([:\w]+) \[ ([\w]+) \] \$\) $/x) {
+      # (?^u:^string[charset]$) e.g. qr/^text:[hs]$/
+      my ($lhs, $rhs_chars) = ($1, $2);
+      foreach (split //,$rhs_chars) {
+        $str .= "|" if $str; $str .= $lhs.$_;
+      }
+      $_ = undef;
+    }
+  }
+  @regexes = grep{defined} @regexes;
+  if (@regexes) {
+    if ($str) { push @regexes, qr/^(?:${str})$/; $str = ""; }
+    if (@regexes > 1) {
+      my $restr = join("|", map{ "(?:".$_.")" } @regexes);
+      eval{ @regexes = (qr/$restr/) };  oops "$restr\n$@" if $@;
+    }
+  }
+  if (@coderefs) {
+    push @coderefs, sub{ $_[0] =~ qr/$regexes[0]/ } if @regexes;
+    push @coderefs, sub{ $_[0]->passes($str) } if $str;
+    return $coderefs[0] if @coderefs == 1;
+    my $codestr =
+      "sub{ ".join(" || ", map{ "&{\$coderefs[$_]}" } 0..$#coderefs)." }";
+    my $code = eval $codestr || oops "$codestr\n$@";
+    return $code;
+  }
+  return $regexes[0] if @regexes;
+  return $str if $str;
+  oops avis(@_);
+}#Hor_cond
+
 use constant TEXTLEAF_COND         => '#TEXT|text:tab|text:line-break|text:s';
 use constant PARA_COND             => 'text:p|text:h';
-use constant TEXTCONTAINER_COND    => PARA_COND."|text:span";
-use constant TEXTLEAF_OR_PARA_COND => TEXTLEAF_COND."|".PARA_COND;
+use constant TEXTCONTAINER_COND    => Hor_cond(PARA_COND, "text:span");
+use constant TEXTLEAF_OR_PARA_COND => Hor_cond(TEXTLEAF_COND, PARA_COND);
 
 # These used to be lexical subs inside Hreplace, but a Perl bug prevented
 # reentrant searches (via callbacks).   The stuff in the $state hash
@@ -1511,7 +1564,7 @@ sub ODF::lpOD::Element::Hsplit_element_at {
   }
   elsif ($text_elt->tag eq '#PCDATA') {
     my $existing_len = length($text_elt->text);
-    confess ivis 'offset $offset exceeds existing pcdata length($len)'
+    confess ivis 'offset $offset exceeds existing pcdata length ($existing_len)'
       if $offset > $existing_len;
     return $text_elt->split_at($offset);
   }
@@ -1855,6 +1908,31 @@ sub XML::Twig::Elt::Hself_or_parent($$;$) {
 
 ###################################################
 
+=head2 $cond = Hor_cond(COND, ...)
+
+This function combines multiple XML::Twig search conditions,
+which may be any mixture of string, regex, or code-ref conditions.
+The resulting condition will match any of the input conditions ("or").
+
+This is useful to augment conditions exported by another module
+when you are not certain how the other condition is implemented, for example
+
+  use ODF::lpOD_Helper qw(:DEFAULT PARA_COND);
+  use constant MY_PARAORFRAME_COND => Hor_cond(PARA_COND, 'draw:frame');
+  ...
+  @elts = $context->descendants(MY_PARAORFRAME_COND)
+
+This would collect all paragraphs or frames below $context.
+Note that PARA_COND might be 'text:p|text:h' or qr/^text:[ph]$/
+or C<sub{ $_[0] eq 'text:p' || $_[0] eq 'text:h' }> etc.
+
+C<Hor_cond> optimizes a few regex forms into equivalent string conditions,
+which have been measured to be 30% faster.
+
+=cut
+
+###################################################
+
 =head2 $context->Hgen_style_name($family, SUFFIX)
 
 =head2 $context->Hgen_table_name(SUFFIX)
@@ -2061,14 +2139,31 @@ sub ODF::lpOD::Document::Hcommon_style($$@) {
 
 =head2 hashtostring($hashref)
 
-Returns a string uniquely representing the keys and values of a hash
-(not exported by default).
+=head2 arraytostring($arrayref)
+
+Returns a string uniquely representing the datum (hash or array).
+Any references within the datum are represented using their 'refaddr'
+i.e. the result will not match a datum with different sub-elements
+even if they have the same final content.
 
 =cut
 
+sub _item_rep(_) {
+  ref($_[0]) ? "~".refaddr($_[0])        :
+  substr($_[0],0,1) eq "~" ? visq($_[0]) :
+  index($_[0],"!") >= 0 ? vis($_[0])     :
+  $_[0];
+}
+
 sub hashtostring($) {
   my $href = shift;
-  return join("!", map{ "$_=>$href->{$_}" } sort keys %$href);
+  return join( "!", map{ _item_rep($_)."="._item_rep($href->{$_}) }
+                    sort keys %$href );
+}
+
+sub arraytostring($) {
+  my $aref = shift;
+  return join( "!", map{ _item_rep } @$aref );
 }
 
 ###################################################

@@ -8,7 +8,7 @@ use t_TestCommon ':silent',
 use LpodhTestUtils qw/verif_normalized/;
 
 use ODF::lpOD;
-use ODF::lpOD_Helper;
+use ODF::lpOD_Helper qw/:DEFAULT Hr_MASK/;
 BEGIN {
   *_abbrev_addrvis = *ODF::lpOD_Helper::_abbrev_addrvis;
   *TEXTLEAF_COND   = *ODF::lpOD_Helper::TEXTLEAF_COND;
@@ -26,6 +26,18 @@ say dvis '$pristine_bodytext' if $debug;
 
 $body->normalize; # just in case it isn't from LibreOffice
 verif_normalized($body);
+
+{ my $ystr = 'Hr_RESCAN';
+  for my $xstr (qw/Hr_STOP Hr_SUBST Hr_RESCAN/) {
+    my $x = eval $xstr // die "eval '$xstr' : $@";
+    my $y = eval $ystr // die "eval '$ystr' : $@";
+    fail("$xstr not contained in Hr_MASK")
+      unless ($x & Hr_MASK) == $x;
+    fail("$xstr overlaps with $ystr")
+      if (($y|$x) ^ $y) != $x or (($y|$x) ^ $x) != $y;
+    $ystr = $xstr;
+  }
+}
 
 #FIXME: replace adjacent to PCTEXT or text:s to check normalization
 
