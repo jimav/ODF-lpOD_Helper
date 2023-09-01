@@ -14,7 +14,31 @@ BEGIN {
 }
 
 use Exporter 'import';
-our @EXPORT = qw/verif_normalized/;
+our @EXPORT = qw/append_para verif_normalized/;
+
+sub append_para($$) {
+  my ($container, $textspec) = @_;
+  my $para = $container->insert_element(
+       odf_create_paragraph(), position => LAST_CHILD);
+  if (ref $textspec) { # leaves specified
+    foreach (@$textspec) {
+      my $node;
+      if (/^( +)$/) {
+        $para->set_spaces(length($1), position => LAST_CHILD);
+      }
+      elsif (/[\t\n]/) { confess "not handled" }
+      else {
+        my $seg = $para->append_element(TEXT_SEGMENT);
+        $seg->set_text($_);
+      }
+    }
+    say ivis 'AP appended ', fmt_tree($para,wi=>2) if $debug;
+  } else {
+    $para->set_text($textspec);
+    say ivis 'AP appended $para $text' if $debug;
+  }
+  $para
+}
 
 sub verif_normalized($) {
   my $elt = shift;
@@ -25,32 +49,32 @@ sub verif_normalized($) {
     my $tag = $e->tag;
     if ($tag eq '#PCDATA') {
       if (my $ps = $e->prev_sibling) {
-         $err = dvis 'CONSECUTIVE #PCDATA (w/prev) $e in $elt' 
+         $err = dvis 'CONSECUTIVE #PCDATA (w/prev) $e in $elt'
            if $ps->tag eq '#PCDATA';
       }
       if (my $ns = $e->next_sibling) {
-         $err = dvis 'CONSECUTIVE #PCDATA (w/next) $e in $elt' 
+         $err = dvis 'CONSECUTIVE #PCDATA (w/next) $e in $elt'
            if $ns->tag eq '#PCDATA';
       }
       my $text = $e->get_text // oops;
-      $err = dvis '"" text in #PCDATA $e in $elt' 
+      $err = dvis '"" text in #PCDATA $e in $elt'
         if $text eq "";
-      $err = dvis 'Consecutive spaces in #PCDATA $e in $elt' 
+      $err = dvis 'Consecutive spaces in #PCDATA $e in $elt'
         if $text =~ /  /;
     }
     elsif ($tag eq 'text:s') {
       if (my $ps = $e->prev_sibling) {
          my $prev_tag = $ps->tag;
-         $err = dvis 'CONSECUTIVE text:s (w/prev) $e in $elt' 
+         $err = dvis 'CONSECUTIVE text:s (w/prev) $e in $elt'
            if $prev_tag eq 'text:s';
         $err = dvis 'text:s NOT FOLLOWING A PCDATA SPACE $e in $elt'
            if $prev_tag eq '#PCDATA' && substr($ps->get_text,-1) ne " ";
       }
       if (my $ns = $e->next_sibling) {
-         $err = dvis 'CONSECUTIVE text:s (w/next) $e in $elt' 
+         $err = dvis 'CONSECUTIVE text:s (w/next) $e in $elt'
            if $ns->tag eq 'text:s';
       }
-      $err = dvis 'text:s with c==0 $e in $elt' 
+      $err = dvis 'text:s with c==0 $e in $elt'
         if ($e->get_attribute('c')//1) == 0;
     }
     elsif ($tag eq 'text:span') {

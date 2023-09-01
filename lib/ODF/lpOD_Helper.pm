@@ -96,7 +96,7 @@ package ODF::lpOD_Helper;
 # DATE from Dist::Zilla::Plugin::OurDate
 
 use Carp;
-use Data::Dumper::Interp 6.000 qw/visnew
+use Data::Dumper::Interp 6.004 qw/visnew
      vis  viso  avis  alvis  ivis  dvis  hvis  hlvis
      visq visoq avisq alvisq ivisq dvisq hvisq hlvisq
      rvis rvisq ravis ravisq rhvis rhvisq
@@ -259,7 +259,7 @@ sub import {
 #  local $_=join("",@_); s/\n\z//s; alert('#'.(caller(0))[2].": $_"); }
 
 sub oops(@) { @_=("\n".__PACKAGE__." oops:\n",@_,"\n"); goto &Carp::confess }
-sub btwN($@) { my $N=shift; local $_=join("",@_); s/\n\z//s; printf "%4d: %s\n",(caller($N))[2],$_; }
+sub btwN($@) { my $N=shift; local $_=join("",@_); s/\n\z//s; printf "H%d: %s\n",(caller($N))[2],$_; }
 sub btw(@) { unshift @_,0; goto &btwN }
 
 use Scalar::Util qw/refaddr blessed reftype weaken isweak/;
@@ -743,8 +743,6 @@ use constant TEXTLEAF_OR_PARA_COND => Hor_cond(TEXTLEAF_COND, PARA_COND);
     my $vtext_pos =
          $state->{offset} > $state->{para_start_offset} ? ($state->{offset} - $state->{para_start_offset}) : 0;
 
-btw rdvis '_first_match START : $node $vtext\n   $vtext_pos $state->{offset} $state->{totlen} $expr\n$seginfo' if $debug;
-
     oops(dvis '$vtext_pos $state->{para_start_offset} $state->{totlen} $vtext') if $vtext_pos < 0 or $vtext_pos > $state->{totlen};
 
     my ($vtoffset, $vtend);
@@ -753,13 +751,11 @@ btw rdvis '_first_match START : $node $vtext\n   $vtext_pos $state->{offset} $st
       if ($vtext =~ /\G.*?(${expr})/s) {
         $vtoffset = $-[1];
         $vtend    = $+[1];
-btw dvis '### Regex match, $expr $vtoffset $vtend $vtext_pos $vtext' if $debug;
       }
     } else {
       if ((my $off = index($vtext, $expr, $vtext_pos)) >= 0) {
         $vtoffset = $off;
         $vtend    = $vtoffset + length($expr);
-btw dvis '### NON-REGEX match, $vtoffset $vtend $vtext' if $debug;
       }
     }
     if (defined $vtoffset) {
@@ -812,7 +808,8 @@ btw dvis '### NON-REGEX match, $vtoffset $vtend $vtext' if $debug;
 
     my $para_startcount = scalar @{$state->{subst_results}};
     PARA: {
-      btw "Hr PARA ",_abbrev_addrvis($node),dvis(' Top $state->{totlen}') if $debug;
+      btw "Hr PARA ",_abbrev_addrvis($node),dvis(' Top $state->{totlen}')
+        if $debug;
 
       $state->{para_start_offset} = $state->{totlen};
       my ($vtext, $seginfo) = _get_seginfo($state, $node);
@@ -904,7 +901,6 @@ sub ODF::lpOD::Element::Hreplace {
   local $recursion_level = $recursion_level + 1;
 
   btw dvis 'Hreplace Top: $context $expr $repl %opts' if $debug;
-btw "context:\n", fmt_tree($context) if $debug;
 
   croak "'expr'  must be a qr/regex/ or plain string\n"
     if (!defined($expr) or ref($expr) && ref($expr) ne "Regexp");
@@ -1020,7 +1016,7 @@ sub Hreplace_match($$@) { # *FUNCTION*
   my $content = shift;
   my %opts    = @_;
   my $debug = $opts{debug};
-  btw 'Hrep_m match=',fmt_match(\%match),dvis '\n$content' if $debug;
+  btw 'Hrep_m match=',fmt_match(\%match),dvis '\n $content' if $debug;
 oops unless @{ $match{segments} };
 
   croak "Recursive substitutions are not permitted to avoid confusing Hreplace\n" if $recursion_level > 1;
@@ -1033,26 +1029,30 @@ oops unless @{ $match{segments} };
   #     ┌────────────────┐ ┌───┐
   # OR  │  A  ┊MMMM┊  B  │ │(C)│  (single-segment case)
   #     └────────────────┘ └───┘
+  my $did_splits;
   if ($match{offset}) {
     # Split off the before-residue ("A"), moving "MMM..." to a new segment
     # which becomes the new segment 0.
     my $rhs = $match{segments}[0]->Hsplit_element_at($match{offset});
-
-    btw dvis 'Hrep_m : Split off pre-residue at offset $match{offset} rhs=',
-    fmt_node($rhs) if $debug;
-
     if (@{$match{segments}}==1) {
       $match{end} -= $match{offset};  oops if $match{end} < 0;
     }
     $match{offset} = 0;
     $match{segments}[0] = $rhs;
+
+    btw dvis 'Hrep_m : Split off pre-residue at offset $match{offset} rhs=$rhs'
+      if $debug;
+    $did_splits = 1;
   }
   if ($match{end} < length($match{segments}[-1]->Hget_text//"")) {
     # Split off the after-residue ("B"), moving it to a new segment
     () = $match{segments}[-1]->Hsplit_element_at($match{end});
-    btw "Hrep_m post-residue has been split off. Now segments[-1]=\n  ",
-        fmt_node($match{segments}[-1]),
-        "\nnext:\n  ",fmt_node($match{segments}[-1]->{next_sibling}) if $debug;
+    btw "Hrep_m post-residue has been split off" if $debug;
+    $did_splits = 1;
+  }
+  if ($debug && $did_splits) {
+    btw "Hrep_m After Split(s) para=",fmt_tree($match{para},wi=>1),
+        " next_sib=", fmt_node($match{segments}[-1]->{next_sibling},wi=>1);
   }
   # ┌───┐ ┌───────────────┐ ┌──────┐ ┌───────────┐ ┌───┐
   # │ A │ │MMMMMMMMMMMMMMM│ │MMMMMM│ │MMMMMMMMMMM│ │ B │
@@ -1092,7 +1092,6 @@ oops unless @{ $match{segments} };
   $temp_para->cut;
 
   _cleanup_spans(\@nodes, %opts);
-
   return $vlength
 }#Hreplace_match
 
@@ -1382,7 +1381,7 @@ sub ODF::lpOD::Element::Hinsert_content($$) {
 
   my @content = @$what;
 
-show_context(dvis '##Hi_c TOP %opts\n     @content\n') if $debug;
+  show_context(dvis '##Hi_c TOP %opts\n @content\n') if $debug;
 
   croak "option 'Chomp' was renamed 'chomp'" if exists $opts{Chomp};
   if ($opts{chomp} && @content) {
@@ -1674,8 +1673,9 @@ $context may be any text container or ancestor up to the document body.
 
 sub ODF::lpOD::Element::Hnormalize {
   my $context = shift;
+  my $debug = 0;
   my @descendants= $context->descendants('#PCDATA|text:s');
-#Carp::cluck "=== Hnormalize BEFORE: ", fmt_tree($context);
+btw dvis 'Hnormalize TOP ',fmt_tree_brief($context,wi=>1) if $debug;
 
   # Relocate spaces between #PCDATA and text:s so that only single spaces are
   # in #PCDATA and text:s only represents 2nd and subsequent consecutive spaces
@@ -1690,17 +1690,14 @@ sub ODF::lpOD::Element::Hnormalize {
       my $s = $desc->insert_element("text:s",
                         position => WITHIN, offset => $offset+1);
       $s->set_attribute("text:c", $len-1);
-      my $rfrag = $s->{next_sibling};
+      my $rfrag = $s->{next_sibling}; oops if grep{$rfrag==$_} @descendants;
       my $rfrag_text = $rfrag->text;
       substr($rfrag_text, 0, $len-1, "") eq (" " x ($len-1)) or oops;
       $rfrag->set_text($rfrag_text);
-#{ my $p = $desc->parent;
-#btw visnew->dvisr('++INSERTED text:s  $desc $desc_text $offset $len $s p:\n'), fmt_tree($p);
-#}
       splice @descendants, $i+1, 0, $s, $rfrag;
       redo;
     }
-    if ($desc_tag eq "text:s" && (my $desc_len = length($desc_text))) {
+    if ($desc_tag eq "text:s" && length($desc_text) > 0) {
       # !! This might not be correct if the last preceding PCDATA has a
       # !! trailing space but it is isolated from $desc by span boundaries.
       # AFAIK ODF 1.2 permits text:s to hold all spaces without the first
@@ -1712,16 +1709,12 @@ sub ODF::lpOD::Element::Hnormalize {
         last unless $prev->tag eq "#PCDATA";
         my $prev_text = $prev->text//"";
         next if length($prev_text) == 0;
-        if (substr($prev_text, -1) ne " ") {
-          # Previous (non-empty) #PCDATA doesn't end with a space.
-          # Move the first text:s space to the end of the #PCDATA segment
-          $prev->set_text($prev_text." ");
-          $desc->set_attribute('c', ($desc->get_attribute('c') // 1) - 1);
-#{ my $p = $desc->parent;
-#btw visnew->dvisr('++MOVED FIRST SPACE from text:s $desc to non-empty $prev $desc_text p:\n'), fmt_tree($p);
-#}
-          next DESCENDANT
-        }
+        last unless substr($prev_text, -1) ne " ";
+        # Previous (non-empty) #PCDATA doesn't end with a space.
+        # Move the first text:s space to the end of the #PCDATA segment
+        $prev->set_text($prev_text." ");
+        $desc->set_attribute('c', ($desc->get_attribute('c') // 1) - 1);
+        next DESCENDANT
       }
       if (! $prev) {
         # text:s not preceded by PCDATA.  Move the first space to a new PCDATA.
@@ -1734,6 +1727,7 @@ sub ODF::lpOD::Element::Hnormalize {
     }
   }
 
+btw dvis 'Hn before cleanup @descendants\n context:',fmt_node($context,wi=>1) if $debug;
   # Now cleanup any empties and merge adjacents
   while( my $desc= shift @descendants) {
     my $desc_len = length($desc->Hget_text);
@@ -1760,7 +1754,7 @@ sub ODF::lpOD::Element::Hnormalize {
     }
   }
 
-#say "=== Hnormalize AFTER:", fmt_tree($context);
+btw dvis 'Hnormalize FINAL ',fmt_tree($context,wi=>1) if $debug;
   return $context
 }
 
@@ -1876,14 +1870,18 @@ Returns the nearest ancestor which matches condition C<$cond>.
 
 If C<$stop_cond> is defined, then undef is returned if the search would
 ascend above the nearest ancestor matching the stop condition.
+An exception is thrown if no ancestor matches either $cond or $stop_cond.
+
 For exmaple,
 
   my $row = $elt->Hparent("table:table-row", "draw:frame");
 
-would locate the table row containing $elt unless $elt was
+would locate the table row containing $elt but return undef if $elt was
 encapsulated in a frame within a row.
 
-An exception is thrown if no ancestor matches either $cond or $stop_cond.
+If you want to avoid an exception if '$cond' is not found then you
+can include 'office:text' in C<$stop_cond>, which stops at the
+root of the document body.
 
 =head2 $node->Hself_or_parent($cond, [$stop_cond])
 
@@ -2172,7 +2170,7 @@ sub arraytostring($) {
 
 Format a single node for debug messages, without a final newline.
 
-C<wrapindent =E<gt> NUM> may be given as assitional arguments
+C<wi =E<gt> NUM> may be given as assitional arguments
 to indent wrapped lines by the indicated number of spaces.
 
 =head2 fmt_tree($subtree_root)
@@ -2212,8 +2210,8 @@ sub fmt_node(_;@) {  # sans final newline
   my %opts = (showaddr => TRUE, showlen => TRUE, showisa => TRUE, @_);
   return "undef" unless defined($node);
   oops unless ref($node);
-  $opts{wrapindent} //= 0;
-  my $wrapspace = " " x $opts{wrapindent};
+  $opts{wi} //= 0;  # wi = "wrap indent"
+  my $wrapspace = " " x $opts{wi};
 
   state $indent_incr = 2;
   state $indent_incr_space = " " x $indent_incr;
@@ -2310,7 +2308,7 @@ sub fmt_node(_;@) {  # sans final newline
 
   { my @children = $node->children;
     if ($opts{_recursive}) {
-      local $opts{wrapindent} = $opts{wrapindent} + $indent_incr;
+      local $opts{wi} = $opts{wi} + $indent_incr;
       local $opts{parent} = $node;
       foreach my $child (@children) {
         push @middle_parts, __SUB__->($child, %opts);
@@ -2339,11 +2337,11 @@ sub fmt_node(_;@) {  # sans final newline
   #   last child
   # }
 
-  my $minlen = $opts{wrapindent}
+  my $minlen = $opts{wi}
                + length($tagopen) + 1
                + sum0(map{1 + length} @middle_parts)
                + 1 + length($tagclose);
-  my $maxwidth = $opts{maxwidth} // 80;
+  my $maxwidth = $opts{maxwidth} // $ENV{COLUMNS} // 80;
   if ($minlen <= $maxwidth or $maxwidth == 0) {
     return join(" ", $tagopen, @middle_parts, $tagclose);
   }
@@ -2434,7 +2432,7 @@ sub fmt_match(_;@) { # sans final newline
   _append_new_line(qw/match/);
   _append_new_line(qw/voffset vend vlength/);
   if (exists $h{para}) {
-    local $opts{wrapindent} += 2;
+    local $opts{wi} += 2;
     $s .= "\n  para => ".fmt_node(delete $h{para}, %opts)."\n ";
   }
   $s .= _collect("para_voffset");
