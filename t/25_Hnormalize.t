@@ -23,9 +23,10 @@ for my $textspec (
   my $frame = $body->insert_element('draw:frame', position => LAST_CHILD);
   scope_guard { $frame->delete };
 
-  my ($para, $text) = append_para($frame, $textspec);
+  my $para = append_para($frame, $textspec);
+  my $text = ref($textspec) ? join("", @$textspec) : $textspec;
   $para->Hnormalize();
-  is($para->Hget_text, $text, "Hnormalize ".visq($text));
+  is($para->Hget_text, $text, "Hnormalize ".visq($textspec));
   verif_normalized($para);
 }
 
