@@ -141,17 +141,14 @@ BEGIN {
 
 =head1 Transparent Unicode Support
 
-By default ODF::lpOD_Helper patches ODF::lpOD so that methods
+By default ODF::lpOD_Helper patches ODF::lpOD so that all methods
 accept and return arbitrary Perl character strings.
 
 You will B<always> want this unless
 your application really, really needs to pass un-decoded octets
 directly between file/network resources and ODF::lpOD without
-looking at the data along the way.
-Please see B<< L<ODF::lpOD_Helper::Unicode> >>.
-
-This can be disabled for legacy applications as described in
-L<ODF::lpOD_Helper::Unicode>.
+looking at the data along the way. This can be disabled for
+legacy applications.  Please see B<< L<ODF::lpOD_Helper::Unicode> >>.
 
 Currently this patch has global effect but might someday become
 scoped; to be safe put C<use ODF::lpOD_Helper> at the top of every file which
@@ -457,7 +454,7 @@ OPTIONS may be
   multi  => BOOL    # Allow multiple matches? (FALSE by default)
 
   prune_cond => STRING or qr/Regex/
-                    # Do not descend into nodes matching the indicated
+                    # Do not descend below nodes matching the indicated
                     # condition.  See "Hnext_elt".
 
 A hash is returned for each match:
@@ -510,8 +507,8 @@ In scalar context, a hashref or undef if there was no match
 
 =head2 B<Regex Anchoring>
 
-A qr/regex/ is matched against the combined virtual text of each paragraph.
-The match logic is
+If I<$expr> is a qr/regex/ it is matched against the combined
+virtual text of each paragraph.  The match logic is
 
    $paragraph_text =~ /\G.*?(${your_regex})/
 
@@ -566,7 +563,7 @@ with C<multi =E<gt> TRUE>, all instances are replaced.
 In the second form, the specified sub is called for each match, passing
 a I<match hashref> (see C<Hsearch>) as the only argument.  Its return
 value determines whether any substitutions occur.
-The sub must return one of the following:
+The sub must
 
  return(0)
 
@@ -578,20 +575,15 @@ The sub must return one of the following:
     starting immediately after the replaced text.
 
  return(Hr_SUBST | Hr_STOP, [content])
- return(Hr_SUBST | Hr_STOP, [content], optRESULTS)
 
     [content] is substituted for the matched text and then "Hreplace"
     terminates immediately.
 
-    If optRESULTS is provided, it is returned from "Hreplace" instead
-    of the default substitution-descriptor hashes.
-
  return(Hr_STOP)
- return(Hr_STOP, optRESULTS)
 
     "Hreplace" just terminates.
 
-C<Hreplace> returns, by default, a list of hashes describing the
+C<Hreplace> returns a list of hashes describing the
 substitutions which were performed:
 
   {
@@ -708,7 +700,7 @@ use constant TEXTCONTAINER_COND    => Hor_cond(PARA_COND, "text:span");
 use constant TEXTLEAF_OR_PARA_COND => Hor_cond(TEXTLEAF_COND, PARA_COND);
 
 # These used to be lexical subs inside Hreplace, but a Perl bug prevented
-# reentrant searches (via callbacks).   The stuff in the $state hash
+# reentrant searches via callbacks.   The stuff in the $state hash
 # used to be lexicals in Hreplace.  https://github.com/Perl/perl5/issues/18606
   sub _get_seginfo($$) {
     my ($state, $node) = @_;
@@ -801,6 +793,7 @@ use constant TEXTLEAF_OR_PARA_COND => Hor_cond(TEXTLEAF_COND, PARA_COND);
   }# _first_match
 
   sub _process_para($$) { # also called if context is a text leaf
+    # returns 0 to continue, Hr_STOP to stop
     my ($state, $node) = @_; # paragraph or total $context if a textual leaf
     my ($debug) = @$state{qw/debug/};
 
@@ -825,6 +818,8 @@ use constant TEXTLEAF_OR_PARA_COND => Hor_cond(TEXTLEAF_COND, PARA_COND);
         if (defined $m) {
 oops unless @{$m->{segments}};
           if ($r & Hr_SUBST) {
+            croak ivis 'Extraneous return values from callback @args'
+              if @args > 1;
             my $content = shift @args // confess "No [content] after Hr_SUBST";
             my $new_vlength = Hreplace_match($m, $content, debug => $debug);
 
@@ -834,7 +829,7 @@ oops unless @{$m->{segments}};
               vlength      => $new_vlength,
               para         => $m->{para},
               para_voffset => $m->{para_voffset},
-            } ;#if defined wantarray;
+            } ;#if defined wantarray in Hreplace();
 
             # Re-process the whole paragraph with $offset set appropriately.
             $state->{offset} = $m->{voffset}; # start of match
@@ -854,6 +849,8 @@ oops unless @{$m->{segments}};
               redo PARA;
             }
           } else {
+            croak ivis 'Extraneous return values from callback @args'
+              if @args > 0;
             if ($m->{match} eq "") {
               # Avoid infinite loop
               btw dvis '  Hr NULL MATCH: offset++' if $debug;
@@ -864,8 +861,7 @@ oops unless @{$m->{segments}};
           }
           if ($r & Hr_STOP) {
             $node->Hnormalize() if $para_startcount != scalar @{$state->{subst_results}};
-            #btw ivis '  Hr STOP  retvals=@args' if $debug; #logged in mainbody
-            return(Hr_STOP, @args);
+            return(Hr_STOP)
           }
           if ($state->{offset} < $state->{totlen}) {
             btw dvis '  Hr CONTINUE: new $state->{offset}, *redo MATCH*' if $debug;
@@ -897,7 +893,7 @@ sub ODF::lpOD::Element::Hreplace {
   #
   # Attempted modifications throw an exception if $recursion_level > 1
   # i.e. only the outer-most level is allowed to change anything.
-  # This is checked in Hreplace_match (in case we ever make it public)
+  # This is checked in Hreplace_match (in case we ever make that public)
   local $recursion_level = $recursion_level + 1;
 
   btw dvis 'Hreplace Top: $context $expr $repl %opts' if $debug;
@@ -962,7 +958,7 @@ sub ODF::lpOD::Element::Hreplace {
   my ($stop, @retvals);
   # If $context itself is a paragraph or a leaf segment, process it first
   if ($context->passes(TEXTLEAF_OR_PARA_COND)) {
-    ($stop, @retvals) = _process_para($state, $context); # ignores nested paras
+    $stop = _process_para($state, $context); # ignores nested paras
   }
   # Now process paragraphs which are descendants.
   # _process_para will not descend into nested paragraphs, i.e. it only
@@ -970,19 +966,15 @@ sub ODF::lpOD::Element::Hreplace {
   # here (after the parent paragraph was visited).
   { my $para = $context ;
     while ($para = $para->Hnext_elt($context, PARA_COND, $opts{prune_cond})) {
-      ($stop, @retvals) = _process_para($state, $para);
+      $stop = _process_para($state, $para);
       last if $stop & Hr_STOP;
     }
   }
 
   if ($stop & Hr_STOP) {
     btw dvis 'Hreplace STOP. @retvals' if $debug;
-    croak ("Callback specified results to return but context is void")
-      if @retvals && !defined(wantarray);
-    croak ("Callback specified multiple results but context is scalar")
-      if @retvals > 1 && !wantarray;
   }
-  @retvals = @{$state->{subst_results}} if @retvals == 0;
+  @retvals = @{$state->{subst_results}};
 
   if (wantarray) {
     btw ivis 'Hreplace RETURNING @retvals' if $debug;
@@ -1525,7 +1517,7 @@ and the original node will be empty upon return.
 if $offset equals the existing length then the new sibling will be empty.
 
 If a text:s node is split then the new node will also be a text:s node
-"containing" the appropriate number of spaces.  The 'c' attribute will
+"containing" the appropriate number of spaces.  The 'text:c' attribute will
 be zero if the node is "empty".
 
 If a text:tab or text:line-break node is split then either the new node
@@ -1605,7 +1597,7 @@ sub ODF::lpOD::Element::Hsplit_element_at {
 =head2 $context->Hget_text(prune_cond => COND)
 
 Gets the combined "virtual text" in or below C<$context>,
-including in any nested paragraphs (e.g. in Frames or Tables).
+by default including in nested paragraphs (e.g. in Frames or Tables).
 The special nodes which represent tabs, line-breaks and
 consecutive spaces are expanded to the corresponding characters.
 
@@ -1637,9 +1629,8 @@ I think get_text's "recursive" option was probably intended to include text from
 paragraphs in possibly-nested frames and tables, and it was an oversight
 that that special text nodes are not always handled correctly.
 
-Note that there is no 'recursive' option to C<Hget_text>, which behaves
-that way by default.  Hget_text offers the 'prune_cond' option to
-restrict expansion.
+Note that B<Hget_text> is "recursive" by default; the 'prune_cond'
+option is the only way to restrict recursion.
 
 =cut
 
@@ -1809,7 +1800,7 @@ work exactly like the correspoinding non-B<H> methods.
 
 C<Hnext_elt>, C<Hdescendants> and C<Hdescendants_or_self>
 C<Hparent> and C<Hself_or_parent>
-are installed as methods of XML::Twig::Elt.
+are installed as methods of I<XML::Twig::Elt>.
 
 =cut
 
@@ -1877,11 +1868,13 @@ For exmaple,
   my $row = $elt->Hparent("table:table-row", "draw:frame");
 
 would locate the table row containing $elt but return undef if $elt was
-encapsulated in a frame within a row.
+encapsulated in a frame within the row (if it is in a table).
 
 If you want to avoid an exception if '$cond' is not found then you
 can include 'office:text' in C<$stop_cond>, which stops at the
 root of the document body.
+
+The "exception if not found" behaviour may change in a future update...
 
 =head2 $node->Hself_or_parent($cond, [$stop_cond])
 
@@ -1910,7 +1903,7 @@ sub XML::Twig::Elt::Hself_or_parent($$;$) {
 
 This function combines multiple XML::Twig search conditions,
 which may be any mixture of string, regex, or code-ref conditions.
-The resulting condition will match any of the input conditions ("or").
+The resulting condition will match any of the input conditions (hence "or").
 
 This is useful to augment conditions exported by another module
 when you are not certain how the other condition is implemented, for example
@@ -1941,7 +1934,7 @@ In the case of a I<style>, the C<$family> must be specified
 ("text", "table", etc.).
 
 SUFFIX is an optional string which will be appended to a generated
-unique name (to make it easier for humans to recognize).
+unique name to make it easier for humans to recognize.
 
 C<$context> may be the document itself or any Element.
 
@@ -2139,14 +2132,17 @@ sub ODF::lpOD::Document::Hcommon_style($$@) {
 
 =head2 arraytostring($arrayref)
 
-Returns a string uniquely representing the datum (hash or array).
-Any references within the datum are represented using their 'refaddr'
-i.e. the result will not match a datum with different sub-elements
-even if they have the same final content.
+Returns a signature string uniquely representing the members
+(keys and values in the case of a hash).  References are represented
+using their 'refaddr'.
+
+Note that referenced data is not recursively examined.
+Signatures of different structures will match only if
+corresponding first-level non-ref values are 'eq' and refs are exactly the same refs.
 
 =cut
 
-sub _item_rep(_) {
+sub _item_rep(_) {  # encode so that a string can not fake something else
   ref($_[0]) ? "~".refaddr($_[0])        :
   substr($_[0],0,1) eq "~" ? visq($_[0]) :
   index($_[0],"!") >= 0 ? vis($_[0])     :
@@ -2166,14 +2162,15 @@ sub arraytostring($) {
 
 ###################################################
 
-=head2 fmt_node($node)
+=head2 fmt_node($node, OPTIONS)
 
-Format a single node for debug messages, without a final newline.
+Format a single ODF::lpOD (really XML::Twig) node for
+debug messages, without a final newline.
 
-C<wi =E<gt> NUM> may be given as assitional arguments
+C<wi =E<gt> NUM> may be given in OPTIONS
 to indent wrapped lines by the indicated number of spaces.
 
-=head2 fmt_tree($subtree_root)
+=head2 fmt_tree($subtree_root, OPTIONS)
 
 Format a node and all of it's children (sans final newline).
 
@@ -2460,15 +2457,19 @@ using "rsid" styles which interfere with cloning.
 The problem is that LO expectes these styles to be referenced exactly
 once.  The C<Hclean_for_cloning()> method will remove them.
 
-It may also be possible to save LibreOffice documents without 'rsids' :
+It may also be possible to save LibreOffice documents without 'rsids':
 
-  https://ask.libreoffice.org/t/where-do-the-text-style-name-tnn-span-tags-come-from-and-how-do-i-get-rid-of-them/31681/2
+=over
 
-  https://bugs.documentfoundation.org/show_bug.cgi?id=68183
+L<https://ask.libreoffice.org/t/where-do-the-text-style-name-tnn-span-tags-come-from-and-how-do-i-get-rid-of-them/31681/2>
+
+L<https://bugs.documentfoundation.org/show_bug.cgi?id=68183>
+
+=back
 
 =head2 $doc->Hclean_for_cloning();
 
-This unpleasant hack removes any "rsid" styles.
+This unpleasant hack removes all "rsid" styles from the document.
 
 C<Hclean_for_cloning> should be called before cloning any content
 in the document, if the cloned items might have been edited by Libre Office.
@@ -2591,9 +2592,7 @@ As of Feb 2023, the underlying ODF::lpOD is not actively maintained
 However with ODF::lpOD_Helper, ODF::lpOD is once again an
 extremely useful tool.
 
-B<Original Motivation:>
-
-ODF::lpOD by itself can be inconvenient because
+B<Motivation:> ODF::lpOD by itself can be inconvenient because
 
 =over
 
@@ -2614,10 +2613,34 @@ I<replace()> has analogous limitations.
 
 =item 3.
 
+Nested paragraphs (which can occur via frames and tables) are difficult
+or impossible to deal with because of various limitations of L<ODF::lpOD>
+(notably with C<get_text()>).
+
+=item 4.
+
 "Unknown method DESTROY" warnings occur without a patch (ODF::lpOD v1.126;
 L<https://rt.cpan.org/Public/Bug/Display.html?id=97977>)
 
 =back
+
+=head2 Why not just fix ODF::lpOD ?
+
+Ideally bugs in L<ODF::lpOD> would simply be fixed.
+Enhancements should be added in a compatible way
+with integrated documentation for everything.
+
+However the original author of ODF::lpOD, Jean-Marie Gouarne,
+is no longer active and some bugs (notably with C<get_text>) appear
+to require non-trivial changes.
+Making substantial changes to the ODF::lpOD code base
+would be too risky at this point in history.
+
+ODF::lpOD_Helper introduced higher-level APIs which should
+get further study and revision to fully comport with Jean-Marie's
+vision and usage model.
+Ideally that would be done but it would require too much effort
+(again, at this point in history).  At least for this author!
 
 =head1 AUTHOR
 
