@@ -2204,7 +2204,7 @@ sub _abbrev_addrvis($) {  # like DDI::addrvis() but elides ODF::lpOD:: prefix
 #
 sub fmt_node(_;@) {  # sans final newline
   my $node = shift;
-  my %opts = (showaddr => TRUE, showlen => TRUE, showisa => TRUE, @_);
+  my %opts = (showlevel => FALSE, showaddr => TRUE, showlen => TRUE, showisa => TRUE, @_);
   return "undef" unless defined($node);
   oops unless ref($node);
   $opts{wi} //= 0;  # wi = "wrap indent"
@@ -2239,13 +2239,15 @@ sub fmt_node(_;@) {  # sans final newline
     $tagopen .= " ";
   }
   $tagopen .= "{";
-  if (defined $opts{_level}) {
+  if ($opts{showlevel}) {
     $tagopen .= $opts{_level};
     ++$opts{_level};
   }
 
   my @middle_parts;
-  my $mid_visobj = visnew->Pad($wrapspace.$indent_incr_space);
+  my $mid_foldwidth = visnew->Foldwidth() - (($opts{wi}//0) + $indent_incr);
+  my $mid_visobj = visnew->Pad($wrapspace.$indent_incr_space)
+                         ->Foldwidth($mid_foldwidth);
 
   if (defined($opts{parent})) {
     push @middle_parts,
@@ -2257,10 +2259,15 @@ sub fmt_node(_;@) {  # sans final newline
       if $opts{showaddr};
   }
   if (defined(my $att  = $node->get_attributes)) {
-    if (($tag//"") =~ /^(table-cell|sequence)/) {
+    if (($tag//"") =~ /^(table-cell|sequence)/ && !$opts{showall}) {
       push @middle_parts, "att={...}"; # voluminous & uninteresting
     } else {
-      push @middle_parts, "att=".$mid_visobj->vis($att);
+      my %edited_att = map{ ($_ => $att->{$_}) }
+                       grep{ !/^#lpod:/ }  # e.g. #lpod:part circular reference
+                       keys %$att;
+      push @middle_parts,
+           #"att=".$mid_visobj->visq(\%edited_att);
+           "att=".$mid_visobj->Foldwidth1($mid_foldwidth-4)->visq(\%edited_att);
     }
   }
 
@@ -2319,7 +2326,7 @@ sub fmt_node(_;@) {  # sans final newline
   }
 
   my $tagclose = "}";
-  if (defined $opts{_level}) {
+  if ($opts{showlevel}) {
     --$opts{_level};
     $tagclose .= $opts{_level};
   }
@@ -2357,7 +2364,7 @@ sub fmt_node_brief(_;@) {
 
 sub fmt_tree(_;@) { # sans final newline
   my $top = shift;
-  my %opts = (showoff => TRUE, @_);
+  my %opts = (showoff => TRUE, showlevel => TRUE, @_);
   my $indent = $opts{indent};
   my $string = "";
   my $parent;
@@ -2375,10 +2382,7 @@ sub fmt_tree(_;@) { # sans final newline
   my $vtoffset = 0;
   $opts{_vtoref} = \$vtoffset if $opts{showoff};
   $opts{_level} = 0;
-  $string .= fmt_node($top, %opts, _leaftextonly => 1, _recursive => 1);
-
-  #return "------------\n".$string."------------";
-  return $string;
+  fmt_node($top, %opts, _leaftextonly => 1, _recursive => 1);
 }
 sub fmt_tree_brief(_;@) {
   fmt_tree($_[0], showaddr=>FALSE, showlen=>FALSE, showoff=>FALSE, @_[1..$#_])

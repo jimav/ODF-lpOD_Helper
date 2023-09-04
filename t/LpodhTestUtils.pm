@@ -35,7 +35,7 @@ sub append_para($$) {
     say ivis 'AP appended ', fmt_tree($para,wi=>2) if $debug;
   } else {
     $para->set_text($textspec);
-    say ivis 'AP appended $para $text' if $debug;
+    say ivis 'AP appended $para $textspec' if $debug;
   }
   confess "only returns 1 value" if wantarray;
   $para

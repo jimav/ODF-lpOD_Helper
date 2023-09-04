@@ -1,3 +1,4 @@
+6.003 - Added bin/dumpodf script to dump the body tree of an ODF document.
 6.002 - Simplify callback protocol: Remove optRESULTS callback return support.
         (Users can pass such info out of a callback via closures/curried refs)
 6.001 - Work around https://github.com/Perl/perl5/issues/18606
