@@ -116,6 +116,9 @@ our @EXPORT_OK = qw(
   TEXTLEAF_COND PARA_COND TEXTCONTAINER_COND TEXTLEAF_OR_PARA_COND
 );
 
+# FIXME: Should these be renamed *_FILTER to be consistent with
+#   ODF::lpOD::Table.pm ?
+
 use constant {
   Hr_STOP   => 1,
   Hr_SUBST  => 2,
@@ -868,7 +871,7 @@ oops unless @{$m->{segments}};
             redo MATCH;
           }
         } else {
-          btw '  Hr [no match] expr=',vis($state->{expr}),dvis '$state $vtext' if $debug;
+          btw '  Hr [no match] expr=',vis($state->{expr}),dvis '\n $state $vtext' if $debug;
         }
       }#MATCH
     }#PARA
@@ -1348,7 +1351,7 @@ sub ODF::lpOD::Element::Hinsert_content($$) {
   my %opts = (position => FIRST_CHILD, @_);
   my $debug = $opts{debug};
 
-  my sub show_context {
+  my sub _show_context {
     my $msg = join("", @_);
     $msg .= "context="._abbrev_addrvis($context);
     my $item = $context;
@@ -1357,8 +1360,7 @@ sub ODF::lpOD::Element::Hinsert_content($$) {
       $msg .= " (showing ancestor para)";
     }
     $msg .= " :\n".fmt_tree($item);
-    @_ = ($msg);
-    goto &btw;  # show caller's line number
+    btwN 1,$msg;
   }
 
   # Hinsert_content might become a superset (i.e. drop-in replacement
@@ -1373,7 +1375,7 @@ sub ODF::lpOD::Element::Hinsert_content($$) {
 
   my @content = @$what;
 
-  show_context(dvis '##Hi_c TOP %opts\n @content\n') if $debug;
+  _show_context(dvis '##Hi_c TOP %opts\n @content\n') if $debug;
 
   croak "option 'Chomp' was renamed 'chomp'" if exists $opts{Chomp};
   if ($opts{chomp} && @content) {
@@ -1482,7 +1484,7 @@ sub ODF::lpOD::Element::Hinsert_content($$) {
   _cleanup_spans(\@nodes, %opts) unless $opts{_nocleanup};
 
   my $result = { vlength => $vlength // 0 };
-  show_context(dvis '##Hi_c RESULT: $result\n') if $opts{debug};
+  _show_context(dvis '##Hi_c RESULT: $result\n') if $opts{debug};
 
   confess "Hinsert_content() returns a scalar (a hashref)\n" if wantarray;
   $result;
@@ -1859,22 +1861,16 @@ sub XML::Twig::Elt::Hdescendants_or_self {
 
 Returns the nearest ancestor which matches condition C<$cond>.
 
-If C<$stop_cond> is defined, then undef is returned if the search would
+If C<$stop_cond> is defined, then 0 is returned if the search would
 ascend above the nearest ancestor matching the stop condition.
-An exception is thrown if no ancestor matches either $cond or $stop_cond.
+Undef is returned no ancestor matches either $cond or $stop_cond.
 
 For exmaple,
 
   my $row = $elt->Hparent("table:table-row", "draw:frame");
 
-would locate the table row containing $elt but return undef if $elt was
-encapsulated in a frame within the row (if it is in a table).
-
-If you want to avoid an exception if '$cond' is not found then you
-can include 'office:text' in C<$stop_cond>, which stops at the
-root of the document body.
-
-The "exception if not found" behaviour may change in a future update...
+would locate the table row containing $elt but return false if $elt was
+encapsulated in a frame within the row (or if it is in a table at all).
 
 =head2 $node->Hself_or_parent($cond, [$stop_cond])
 
@@ -1885,9 +1881,9 @@ Like C<Hparent> but returns $node itself if it matches $cond.
 sub XML::Twig::Elt::Hparent($$;$) {
   my ($elt, $cond, $stop_cond) = @_;
   for(;;) {
-    $elt = $elt->{parent} || croak "No ancestors match ",vis($cond);
+    $elt = $elt->{parent} || return undef;
     return $elt if $elt->passes($cond);
-    return undef if $stop_cond && $elt->passes($stop_cond);
+    return 0 if $stop_cond && $elt->passes($stop_cond);
   }
 }
 
@@ -2365,7 +2361,7 @@ sub fmt_node_brief(_;@) {
 sub fmt_tree(_;@) { # sans final newline
   my $top = shift;
   my %opts = (showoff => TRUE, showlevel => TRUE, @_);
-  my $indent = $opts{indent};
+  my $indent = $opts{indent} // 0;
   my $string = "";
   my $parent;
   if ($opts{ancestors} and ref $top) {
@@ -2461,7 +2457,8 @@ using "rsid" styles which interfere with cloning.
 The problem is that LO expectes these styles to be referenced exactly
 once.  The C<Hclean_for_cloning()> method will remove them.
 
-It may also be possible to save LibreOffice documents without 'rsids':
+There is some evidence that it was supposed to be possible to save LO documents
+without 'rsid's but AFAIK such a feature is not currently available. See
 
 =over
 
@@ -2473,25 +2470,22 @@ L<https://bugs.documentfoundation.org/show_bug.cgi?id=68183>
 
 =head2 $doc->Hclean_for_cloning();
 
-This unpleasant hack removes all "rsid" styles from the document.
+This unpleasant hack removes all "rsid" properties from all styles the document.
 
-C<Hclean_for_cloning> should be called before cloning any content
-in the document, if the cloned items might have been edited by Libre Office.
+C<Hclean_for_cloning> should be called before cloning anything
+in a document if the cloned items might have been edited by Libre Office.
 It may be called multiple times; second and subsequent calls do nothing.
 
 Gory detail:
-Every span in the document body is examined;
-if it references a text style with
-a B<officeooo:rsid> or B<officeooo:paragraph-rsid>
-attribute in a
-descendant style:text-properties node, then that attribute is removed.
-If the text-properties contains other attributes then everything
-else is left as-is (this is the case when the style has an additional
-purpose besides holding an rsid attribute).
-If the text-properties node has no other
-attributes it is deleted, and if the ancestor style has no surviving
-text-properties then the style is deleted and span(s) which
-reference it are erased, moving up the span's childen.
+Every style in the document is examined and
+B<officeooo:rsid> and B<officeooo:paragraph-rsid>
+attributes are deleted.
+
+(This next step is currently disabled:)
+Then every span in the document body is examined and if the span's
+style is a style which no longer has any properties (i.e. it existed
+only to record an rsid property), then the span is erased, moving up the
+span's children.
 
 =cut
 
@@ -2499,89 +2493,80 @@ reference it are erased, moving up the span's childen.
 # which if cloned or otherwise used for multiple spans cause Libre Office
 # to hang or crash.
 #
-# Modified styles which have no remaining attributes are deleted, and spans
-# which were useing them are erased (moving their content up one level).
 sub ODF::lpOD::Document::Hclean_for_cloning {
   my ($doc, %opts) = @_;
 
   my $sh = _get_ephemeral_statehash($doc);
   return if $sh->{cleaned_for_cloning}++;
 
-  # Collect the *names* of styles bearing rsid properties.
-  #  values are [$style_object, $property_objects....]
-  my %rsid_styles;
+  my %rsid_styles; # stylename => style
   {
-    # [OLD] This does not work due to a bug overloading "text" with the
-    # same-named DataStyle type:
-    # my @textstyles = $doc->get_styles('text');
-    #FIXME ... I can't see why get_styles('text') is not correct!
-    ##    DataStyle::is_numeric_family('text') should return false...
+    # Find all children of style:style
+    # (namely style:{paragraph,text}-properties) containing an rsid property
+    # and delete the property from the style.
 
-    # The following was extracted from ODF::lpOD::Document::get_styles
-    my $xp = '//style:style[@style:family="text"]';
-    my @textstyles = ($doc->get_elements(STYLES,$xp), $doc->get_elements(CONTENT,$xp));
-    foreach my $tstyle (@textstyles) {
-      my @props = $tstyle->descendants(qr/style:text-properties/);
-      if (any{
-            # Look for 'officeooo:rsid', 'officeooo:paragraph-rsid'
-            any{ /officeooo:.*rsid/ } keys(%{ $_->get_attributes })
-          } @props)
-      {
-        $rsid_styles{$tstyle->get_name} = [$tstyle, @props];
-      }
+    my $xp = '//style:style/[@officeooo:paragraph-rsid or @officeooo:rsid]';
+    my @items=($doc->get_elements(STYLES,$xp), $doc->get_elements(CONTENT,$xp));
+    foreach my $item (@items) {
+      # style:paragraph-properties or style:text-properties
+      my $atts = $item->atts;  # XML::Twig
+      # DELETE the rsid property
+      my @attnames = grep{ /rsid/ } keys %$atts;
+      oops unless @attnames;
+      delete @$atts{@attnames};
+      $item->set_atts($atts); # XML::Twig
+      my $style = $item->parent('style:style') // oops;
+      $rsid_styles{$style->get_name} = $style;
     }
+
+    my @items2=($doc->get_elements(STYLES,$xp), $doc->get_elements(CONTENT,$xp));
+    oops if @items2;
   }
+
+  # That should be enough; the body will still be littered with spans which
+  # use zero-effect styles (now that the rsid properties are gone).
+
+##  # For now, leave them be.
+#btw "Temp skipping rsid-only span erasure";
+##  return
+##    unless $ENV{ERASE_RSID_SPANS};
+##btw "Erasing rsid-only spans ...";
 
   # Check every span in the document body
   my $body = $doc->get_body;
   my $span = $body;
+  my @to_be_erased;
   while ($span = $span->next_elt($body, 'text:span')) {
     my $tsname = $span->get_attribute('style') // oops;
-    next unless (my $v = $rsid_styles{$tsname});
-    if (ref $v) { # not (yet) deleted
-      # Remove rsid properties from the style.  If other properties remain
-      # then the cleaned style is left; if there are other spans that
-      # reference the same style (which I don't think LibreOffice allows,
-      # but being defensive here...) then the style will be harmlessly
-      # re-examined again.
-      #
-      # If no properties remain after removing rsid properties, then the style
-      # is deleted and the value in %rsid_styles set to "DELETED", which
-      # signals that all spans referencing the style should be erased.
-      my ($tstyle, @props) = @$v;
-      oops unless $tstyle->{parent};
+    my $style = $rsid_styles{$tsname};
+    unless ($style) {
+#btw dvis 'MM0 $tsname not in rsid_styles' if $opts{debug};
+      next;
+    }
+#btw dvis 'MM1 $span $tsname $style' if $opts{debug};
+    if (ref $style) { # not (yet) deleted
+      oops unless $style->{parent};
       my $props_remain;
-      for my $text_prop (@props) {
-        oops unless $text_prop->{parent};
-        my %att = $text_prop->get_attributes;
-        foreach my $key (grep { /officeooo:.*rsid/ } keys %att) {
-          delete $att{$key}
-        }
-        if (keys %att) {
-          $text_prop->del_attributes;
-          $text_prop->set_attributes(%att);
-          $props_remain = 1;
-          btw "$tsname : now-rsid-free text_prop ",fmt_node($text_prop) if $opts{debug};
-        } else {
-          btw "$tsname : Deleting rsid-only text_prop ",fmt_node($text_prop) if $opts{debug};
-          $text_prop->delete;
-        }
+      foreach my $ch ($style->children) {
+         oops unless $ch->tag() =~ /^style:.*properties$/;
+         #my $atts = $item->atts;  # XML::Twig
+         my $atts = $ch->get_attributes;
+         ($props_remain=1,last) if keys %$atts;
       }
       if (! $props_remain) {
-        btw "$tsname : Deleting rsid style ",fmt_tree($tstyle, internals=>1)
+        btw "$tsname : Deleting rsid-only style ",fmt_tree($style, internals=>1)
           if $opts{debug};
-        $tstyle->delete;
-        $rsid_styles{$tsname} = $v = "DELETED";
+        $style->delete;
+        $rsid_styles{$tsname} = $style = "DELETED";
+      } else {
+        btw "$tsname : KEEPING style ",fmt_tree($style, internals=>1) if $opts{debug};
       }
     }
-    if ($v eq "DELETED") {
-      btw "Erasing rsid-only span ",fmt_node($span) if $opts{debug};
-      $span->erase; # XML::Twig
-      # FIXME: There were old comments in the code copied from RFFMDirGenODF
-      # to the effect that ODF::lpOD overrides XML::Twig methods with
-      # incompatible APIs and breaks XML::Twig::Elt::erase().
-      # But I don't see that now...
-    }
+    push @to_be_erased, $span if $style eq "DELETED";
+  }
+  foreach my $span (@to_be_erased) {
+    btw "Erasing rsid-only span ",fmt_node($span) if $opts{debug};
+    $span->erase; # XML::Twig
   }
 }#Hclean_for_cloning
 

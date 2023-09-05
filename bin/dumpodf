@@ -20,7 +20,7 @@ format intended to make human inspection easier.  Instead of xml
 <tag> ... </tag>, hierarchy is represended using nested {blocks},
 wrapped intelligently to your terminal width.
 
-It looks like this:
+A node hierarchy looks like this:
 
   Tag {
     att={AtrributeName => VALUE, ...}
@@ -39,19 +39,24 @@ use Data::Dumper::Interp qw/visnew u visq qsh dvis/;
 use ODF::lpOD;
 use ODF::lpOD_Helper qw/fmt_tree/;
 
+my $width;
+my %fmt_options = (showaddr => 0, showoff => 0, showisa => 0, showlevel => 0);
+Getopt::Long::Configure('gnu_compat');
+GetOptions(
+  'o|option=s' => \%fmt_options,
+  'w|width=n'  => \$width,
+) or die $usage;
+die $usage unless @ARGV==1;
+my $path = $ARGV[0];
+
+# If not width was specified, D::D::I uses the terminal width
+$Data::Dumper::Interp::Foldwidth = $width if defined($width);
+
 my $numcols = visnew->Foldwidth();
 sub print_header($) {
   my $label = shift;
   say sprintf "=====%s%s", $label, ("=" x ($numcols-1-7-length($label)));
 }
-
-my %fmt_options = (showaddr => 0, showoff => 0, showlevel => 1);
-Getopt::Long::Configure('gnu_compat');
-GetOptions('o|option=s' => \%fmt_options) or die $usage;
-die $usage unless @ARGV==1;
-my $path = $ARGV[0];
-
-say dvis '### %fmt_options';
 
 say "Dumping ",qsh($path), "    # vim: filetype=perl";
 
