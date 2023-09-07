@@ -17,8 +17,6 @@ nytprof/
 cover_db/
 
 .~*
-*.bak
-*.old
 *~
 *.swp
 *.o

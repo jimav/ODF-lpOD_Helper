@@ -113,11 +113,9 @@ our @EXPORT_OK = qw(
   hashtostring arraytostring
   AUTO_PFX
   Hr_MASK
-  TEXTLEAF_COND PARA_COND TEXTCONTAINER_COND TEXTLEAF_OR_PARA_COND
+  TEXTLEAF_FILTER PARA_FILTER TEXTCONTAINER_FILTER TEXTLEAF_OR_PARA_FILTER
+  ROW_FILTER COLUMN_FILTER CELL_FILTER TABLE_FILTER
 );
-
-# FIXME: Should these be renamed *_FILTER to be consistent with
-#   ODF::lpOD::Table.pm ?
 
 use constant {
   Hr_STOP   => 1,
@@ -697,10 +695,15 @@ sub Hor_cond(@) {
   oops avis(@_);
 }#Hor_cond
 
-use constant TEXTLEAF_COND         => '#TEXT|text:tab|text:line-break|text:s';
-use constant PARA_COND             => 'text:p|text:h';
-use constant TEXTCONTAINER_COND    => Hor_cond(PARA_COND, "text:span");
-use constant TEXTLEAF_OR_PARA_COND => Hor_cond(TEXTLEAF_COND, PARA_COND);
+use constant ROW_FILTER              => ODF::lpOD::Matrix::ROW_FILTER;    # 'table:table-row'
+use constant COLUMN_FILTER           => ODF::lpOD::Matrix::COLUMN_FILTER; # 'table:table-column'
+use constant CELL_FILTER             => ODF::lpOD::Matrix::CELL_FILTER;   # qr'table:(covered-|)table-cell'
+use constant TABLE_FILTER            => ODF::lpOD::Matrix::TABLE_FILTER;  # 'table:table'
+
+use constant TEXTLEAF_FILTER         => '#TEXT|text:tab|text:line-break|text:s';
+use constant PARA_FILTER             => 'text:p|text:h';
+use constant TEXTCONTAINER_FILTER    => Hor_cond(PARA_FILTER, "text:span");
+use constant TEXTLEAF_OR_PARA_FILTER => Hor_cond(TEXTLEAF_FILTER, PARA_FILTER);
 
 # These used to be lexical subs inside Hreplace, but a Perl bug prevented
 # reentrant searches via callbacks.   The stuff in the $state hash
@@ -710,7 +713,7 @@ use constant TEXTLEAF_OR_PARA_COND => Hor_cond(TEXTLEAF_COND, PARA_COND);
     my @seginfo;
     my $vtext = "";
     # Do not descend into nested paragraphs, which are visited in outer loop
-    for my $e ($node->Hdescendants_or_self(TEXTLEAF_COND, PARA_COND)) {
+    for my $e ($node->Hdescendants_or_self(TEXTLEAF_FILTER, PARA_FILTER)) {
       my $etext = __leaf2vtext($e);
       my $textlen = length($etext);
       push @seginfo, {
@@ -960,7 +963,7 @@ sub ODF::lpOD::Element::Hreplace {
 
   my ($stop, @retvals);
   # If $context itself is a paragraph or a leaf segment, process it first
-  if ($context->passes(TEXTLEAF_OR_PARA_COND)) {
+  if ($context->passes(TEXTLEAF_OR_PARA_FILTER)) {
     $stop = _process_para($state, $context); # ignores nested paras
   }
   # Now process paragraphs which are descendants.
@@ -968,7 +971,7 @@ sub ODF::lpOD::Element::Hreplace {
   # looks at the text at that level; nested paragraphs are visited directly
   # here (after the parent paragraph was visited).
   { my $para = $context ;
-    while ($para = $para->Hnext_elt($context, PARA_COND, $opts{prune_cond})) {
+    while ($para = $para->Hnext_elt($context, PARA_FILTER, $opts{prune_cond})) {
       $stop = _process_para($state, $para);
       last if $stop & Hr_STOP;
     }
@@ -1127,23 +1130,23 @@ sub ODF::lpOD::Element::Hoffset_into_vtext {
   my ($context, $offset, $prune_cond) = @_;
   confess ivis 'Invalid offset $offset' if ($offset//-1) < 0;
   my $remaining = $offset;
-  my $elt = $context->passes(TEXTLEAF_COND)
-              // $context->Hnext_elt($context, TEXTLEAF_COND, $prune_cond);
+  my $elt = $context->passes(TEXTLEAF_FILTER)
+              // $context->Hnext_elt($context, TEXTLEAF_FILTER, $prune_cond);
   my $last_leaf;
   while ($elt) {
     my $text = __leaf2vtext($elt);
     if ($remaining >= length($text)) {
       $remaining -= length($text);
       $last_leaf = $elt;
-      $elt = $elt->Hnext_elt($context, TEXTLEAF_COND, $prune_cond);
+      $elt = $elt->Hnext_elt($context, TEXTLEAF_FILTER, $prune_cond);
       next
     }
     return ($elt, $remaining);
-#    my $para = $elt->parent(PARA_COND);
+#    my $para = $elt->parent(PARA_FILTER);
 #    my $poffset = 0;
 #    my $ptxt = $para;
 #    for(;;) {
-#      $ptxt = $ptxt->Hnext_elt($para,TEXTLEAF_COND,$prune_cond) // oops;
+#      $ptxt = $ptxt->Hnext_elt($para,TEXTLEAF_FILTER,$prune_cond) // oops;
 #      last if $ptxt == $elt;
 #      $poffset += length(__leaf2vtext($ptxt));
 #    }
@@ -1242,9 +1245,9 @@ sub ODF::lpOD::Element::Hinsert_element {
     }
     # There are _no_ textual leaves.  Insert as FIRST_CHILD of container
     oops unless $offset==0;
-    oops if $context->passes(TEXTLEAF_COND);
-    my $container = $context->passes(TEXTCONTAINER_COND)
-                         ? $context : $context->next_elt(TEXTCONTAINER_COND);
+    oops if $context->passes(TEXTLEAF_FILTER);
+    my $container = $context->passes(TEXTCONTAINER_FILTER)
+                         ? $context : $context->next_elt(TEXTCONTAINER_FILTER);
     confess "context is not a/has no text container" unless $container;
     return $container->insert_element($to_insert, position => FIRST_CHILD)
   }
@@ -1530,11 +1533,11 @@ to become an empty PCDATA node.
 
 sub ODF::lpOD::Element::His_textual {
   my $elt = shift;
-  $elt->passes(TEXTLEAF_COND)
+  $elt->passes(TEXTLEAF_FILTER)
 }
 sub ODF::lpOD::Element::His_text_container {
   my $elt = shift;
-  $elt->passes(TEXTCONTAINER_COND)
+  $elt->passes(TEXTCONTAINER_FILTER)
 }
 
 sub ODF::lpOD::Element::Hsplit_element_at {
@@ -1542,7 +1545,7 @@ sub ODF::lpOD::Element::Hsplit_element_at {
   confess "Wrong number of arguments" unless @_==2;
   # see XML::Twig::split_at
   my $text_elt= $elt->His_textual() ? $elt
-                                    : $elt->first_child(TEXTLEAF_COND)
+                                    : $elt->first_child(TEXTLEAF_FILTER)
                                         || confess("no textual leaf found");
   if ($text_elt->tag eq 'text:s') {
     my $existing_count = $text_elt->get_attribute('c') // 1;
@@ -1562,7 +1565,7 @@ sub ODF::lpOD::Element::Hsplit_element_at {
     return $text_elt->split_at($offset);
   }
   elsif ($offset == 0) {
-#my $para = $elt->passes(PARA_COND) ? $elt : $elt->parent(PARA_COND);
+#my $para = $elt->passes(PARA_FILTER) ? $elt : $elt->parent(PARA_FILTER);
 #btw dvis 'BEFORE TRANSMUTE $para = ',fmt_tree($para);
 #btw dvis 'BEFORE TRANSMUTE $elt = ',fmt_tree($elt);
     my $result =
@@ -1644,7 +1647,7 @@ sub ODF::lpOD::Element::Hget_text {
   # by ODF::lpOD, and now does nothing unless our ':bytes' tag is imported.
   ODF::lpOD::Common::output_conversion(
     join "", map{ __leaf2vtext($_) }
-             $self->Hdescendants_or_self(TEXTLEAF_COND, $opt{prune_cond})
+             $self->Hdescendants_or_self(TEXTLEAF_FILTER, $opt{prune_cond})
   )
 }
 
@@ -1904,13 +1907,13 @@ The resulting condition will match any of the input conditions (hence "or").
 This is useful to augment conditions exported by another module
 when you are not certain how the other condition is implemented, for example
 
-  use ODF::lpOD_Helper qw(:DEFAULT PARA_COND);
-  use constant MY_PARAORFRAME_COND => Hor_cond(PARA_COND, 'draw:frame');
+  use ODF::lpOD_Helper qw(:DEFAULT PARA_FILTER);
+  use constant MY_PARAORFRAME_FILTER => Hor_cond(PARA_FILTER, 'draw:frame');
   ...
-  @elts = $context->descendants(MY_PARAORFRAME_COND)
+  @elts = $context->descendants(MY_PARAORFRAME_FILTER)
 
 This would collect all paragraphs or frames below $context.
-Note that PARA_COND might be 'text:p|text:h' or qr/^text:[ph]$/
+Note that PARA_FILTER might be 'text:p|text:h' or qr/^text:[ph]$/
 or C<sub{ $_[0] eq 'text:p' || $_[0] eq 'text:h' }> etc.
 
 C<Hor_cond> optimizes a few regex forms into equivalent string conditions,
@@ -2170,7 +2173,7 @@ to indent wrapped lines by the indicated number of spaces.
 
 Format a node and all of it's children (sans final newline).
 
-=for Pod::Coverage TEXTLEAF_COND PARA_COND TEXTCONTAINER_COND
+=for Pod::Coverage TEXTLEAF_FILTER PARA_FILTER TEXTCONTAINER_FILTER
 =for Pod::Coverage fmt_node_brief fmt_tree_brief fmt_match
 =cut
 

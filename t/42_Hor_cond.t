@@ -9,8 +9,8 @@ use Test2::Plugin::BailOnFail;
 
 use ODF::lpOD;
 use ODF::lpOD_Helper qw/:DEFAULT
-                        TEXTLEAF_COND PARA_COND TEXTCONTAINER_COND
-                        TEXTLEAF_OR_PARA_COND/;
+                        TEXTLEAF_FILTER PARA_FILTER TEXTCONTAINER_FILTER
+                        TEXTLEAF_OR_PARA_FILTER/;
 
 
 is (Hor_cond(qr/^foo$/), "foo", 'Hor_cond optmized qr/^foo$/');
@@ -66,18 +66,18 @@ foreach my $input (@bad) {
 }
 ok(1, "combined cond failing when it should");
 
-is (join('|', sort split(/\|/, PARA_COND)),
-    join('|', sort qw/text:h text:p/), "PARA_COND");
+is (join('|', sort split(/\|/, PARA_FILTER)),
+    join('|', sort qw/text:h text:p/), "PARA_FILTER");
 
-is (join('|', sort split(/\|/, TEXTLEAF_COND)),
+is (join('|', sort split(/\|/, TEXTLEAF_FILTER)),
     join('|', sort ('#TEXT',qw/text:s text:tab text:line-break/)),
-    "TEXTLEAF_COND");
+    "TEXTLEAF_FILTER");
 
-is (join('|', sort split(/\|/, TEXTCONTAINER_COND)),
-    join('|', sort qw/text:h text:p text:span/), "TEXTCONTAINER_COND");
+is (join('|', sort split(/\|/, TEXTCONTAINER_FILTER)),
+    join('|', sort qw/text:h text:p text:span/), "TEXTCONTAINER_FILTER");
 
-is (join('|', sort split(/\|/, TEXTLEAF_OR_PARA_COND)),
+is (join('|', sort split(/\|/, TEXTLEAF_OR_PARA_FILTER)),
     join('|', sort ('#TEXT',qw/text:p text:h text:s text:tab text:line-break/)),
-    "TEXTLEAF_OR_PARA_COND");
+    "TEXTLEAF_OR_PARA_FILTER");
 
 done_testing;

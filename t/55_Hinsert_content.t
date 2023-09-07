@@ -11,8 +11,8 @@ use ODF::lpOD;
 use ODF::lpOD_Helper qw/:DEFAULT Hr_MASK/;
 BEGIN {
   *_abbrev_addrvis = *ODF::lpOD_Helper::_abbrev_addrvis;
-  *TEXTLEAF_COND   = *ODF::lpOD_Helper::TEXTLEAF_COND;
-  *PARA_COND       = *ODF::lpOD_Helper::PARA_COND;
+  *TEXTLEAF_FILTER   = *ODF::lpOD_Helper::TEXTLEAF_FILTER;
+  *PARA_FILTER       = *ODF::lpOD_Helper::PARA_FILTER;
   *__leaf2vtext    = *ODF::lpOD_Helper::__leaf2vtext;
 }
 
