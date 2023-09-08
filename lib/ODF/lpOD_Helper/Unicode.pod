@@ -1,6 +1,6 @@
 =head1 NAME
 
-Unicode and ODF::lpOD (and XML::Twig)
+ODF::lpOD_Helper::Unicode - Unicode and ODF::lpOD (and XML::Twig)
 
 =head1 SYNOPSIS
 
