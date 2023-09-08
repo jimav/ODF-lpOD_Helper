@@ -450,7 +450,7 @@ as well as regular PCDATA text.
 OPTIONS may be
 
   offset => NUMBER  # Starting position within the combined virtual
-                    # texts of all paragraphs in C<$context>
+                    # texts of all paragraphs in $context
 
   multi  => BOOL    # Allow multiple matches? (FALSE by default)
 
@@ -458,7 +458,7 @@ OPTIONS may be
                     # Do not descend below nodes matching the indicated
                     # condition.  See "Hnext_elt".
 
-A hash is returned for each match:
+A match hashref is returned for each match:
 
  {
    match        => The matched virtual text
@@ -473,7 +473,7 @@ A hash is returned for each match:
    vend         => Offset+1 of match-end in the combined virtual texts
  }
 
-The following illustrates the 'offset' OPTION and match results:
+The following illustrates how the 'offset' OPTION works:
 
           Para.#1 ║ Paragraph #2 containing a match  │
           (ignored║  straddling the last two segments│
@@ -499,7 +499,7 @@ RETURNS:
 
 =over
 
-In array context, zero or more hashrefs.
+In array context, zero or more match hashrefs.
 
 In scalar context, a hashref or undef if there was no match
 (option 'multi' is not allowed when called in scalar context).
@@ -508,13 +508,13 @@ In scalar context, a hashref or undef if there was no match
 
 =head2 B<Regex Anchoring>
 
-If I<$expr> is a qr/regex/ it is matched against the combined
+If C<$expr> is a qr/regex/ it is matched against the combined
 virtual text of each paragraph.  The match logic is
 
    $paragraph_text =~ /\G.*?(${your_regex})/
 
 with B<pos> set to the position implied by B<$offset>, if relevant,
-or to the position following a previous match (with C<multi =E<gt> TRUE>).
+or to the position following a previous match (when C<multi =E<gt> TRUE>).
 
 Therefore B<\A> will match the start of the paragraph only on the first
 match (when B<pos> is zero), provided B<$offset> is not specified or
@@ -598,9 +598,9 @@ substitutions which were performed:
     para_voffset => offset into the paragraph's virtual text
   }
 
-Nodes following replaced text might be merged out of existence.
+The node following replaced text might be merged out of existence.
 
-=head3 B<Content Specification>
+=head3 B<[content] Specifications>
 
 A C<[content]> value is a ref to an array of zero or more elements,
 each of which is either
@@ -637,7 +637,7 @@ Internally, an ODF "automatic" Style is created for
 each unique combination of properties, re-using styles when possible.
 Fonts are automatically registered.
 
-Alternatively, you can specify an existing (or to-be-created) ODF Style with
+To use an existing (or to-be-created) ODF Style, use
 
   [style-name => "name of style"]
 
@@ -1326,13 +1326,13 @@ relative to C<$context> and others will follow as siblings.
 OPTIONS may contain:
 
   position => ...  # default is FIRST_CHILD.  Always relative to $context.
-                   # See L<Hinsert_content> herein and L<ODF::lpOD::Element>.
+                   # See Hinsert_content herein and ODF::lpOD::Element.
 
   offset   => ...  # Used when position is 'WITHIN', and counts characters
                    # in the virtual text of $context
 
-  prune_cond => qr/^text:[ph]$/  # (for example) skip over nested
-                   # paragraphs when counting 'offset'
+  prune_cond => qr/^text:[ph]$/
+                   # (for example) ignore, i.e. skip over nested paragraphs
 
   chomp => BOOL    # remove \n, if present, from the end of content
 
@@ -1340,11 +1340,12 @@ Returns a hashref:
 
   {
     vlength => total virtual length of the new content
-    # (no other public fields are defined)
+    # (currently no other public fields are defined)
   }
 
 To facilitate further processing, pre-existing segments are never merged;
-Hnormalize() should later be called on $context or the nearest container.
+C<Hnormalize()> should later be called on $context or the nearest
+ancestral container.
 
 =cut
 
@@ -1495,17 +1496,17 @@ sub ODF::lpOD::Element::Hinsert_content($$) {
 
 ####################################################
 
-=head2 $boolean = $elt=>His_textual()
+=head2 $boolean = $elt->His_textual()
 
 Returns TRUE if C<$elt> is a leaf node which represents text,
 either PCDATA/CDATA or one of the special ODF nodes representing tab,
 line-break or consecutive spaces.
 
-=head2 $boolean = $elt=>His_text_container()
+=head2 $boolean = $elt->His_text_container()
 
 Returns TRUE if C<$elt> is a paragraph, heading or span.
 
-=head2 $newelt = $elt=>Hsplit_element_at($offset)
+=head2 $newelt = $elt->Hsplit_element_at($offset)
 
 C<Hsplit_element_at> is like XML::Twig's C<split_at> but also knows how
 to split text:s nodes.
@@ -1525,9 +1526,10 @@ If a text:s node is split then the new node will also be a text:s node
 "containing" the appropriate number of spaces.  The 'text:c' attribute will
 be zero if the node is "empty".
 
-If a text:tab or text:line-break node is split then either the new node
-will be an empty PCDATA node or the original will be transmuted in-place
-to become an empty PCDATA node.
+If a text:tab or text:line-break node is split then if $offset==0 the new node
+will be an empty PCDATA node,
+or if $offset==1 the original will be transmuted in-place to become
+an empty PCDATA node.
 
 =cut
 
@@ -1766,7 +1768,8 @@ A pruned node is itself returned if it also matches the primary condition.
 
 C<$subtree_root> is never pruned, i.e. it's children are always visited.
 
-If $prune_cond is undef then Hnext_elt works exactly like XML::Twig's next_elt.
+If C<$prune_cond> is undef then Hnext_elt works exactly
+like XML::Twig's next_elt.
 
 =head2 @elts = $context->Hdescendants($cond, $prune_cond);
 
@@ -1780,12 +1783,13 @@ contain encapsulated paragraphs.  To find only top-level paragraphs and
 treat frames as opaque:
 
     # Iterative
-    my $elt = $doc->get_body;
+    my $body = $doc->get_body;
+    my $elt = $body;
     while($elt = $elt->Hnext_elt($body, qr/^text:[ph]$/, 'draw:frame'))
     { ...process paragraph $elt }
 
     # Same thing but getting all the paragraphs at once
-    @paras = $doc->get_body->Hdescendants(qr/^text:[ph]$/, 'draw:frame');
+    @paras = $body->Hdescendants(qr/^text:[ph]$/, 'draw:frame');
 
 EXAMPLE 2: Get all the leaf nodes representing ODF text in a paragraph
 (including under spans), and also any top-level frames;
@@ -1873,7 +1877,8 @@ For exmaple,
   my $row = $elt->Hparent("table:table-row", "draw:frame");
 
 would locate the table row containing $elt but return false if $elt was
-encapsulated in a frame within the row (or if it is in a table at all).
+encapsulated in a frame and the frame within an enclosing table row (0 result)
+or not in a table at all (undef result).
 
 =head2 $node->Hself_or_parent($cond, [$stop_cond])
 
@@ -1900,12 +1905,11 @@ sub XML::Twig::Elt::Hself_or_parent($$;$) {
 
 =head2 $cond = Hor_cond(COND, ...)
 
-This function combines multiple XML::Twig search conditions,
+This function combines multiple L<XML::Twig> search conditions,
 which may be any mixture of string, regex, or code-ref conditions.
 The resulting condition will match any of the input conditions (hence "or").
 
-This is useful to augment conditions exported by another module
-when you are not certain how the other condition is implemented, for example
+Example:
 
   use ODF::lpOD_Helper qw(:DEFAULT PARA_FILTER);
   use constant MY_PARAORFRAME_FILTER => Hor_cond(PARA_FILTER, 'draw:frame');
@@ -1913,11 +1917,11 @@ when you are not certain how the other condition is implemented, for example
   @elts = $context->descendants(MY_PARAORFRAME_FILTER)
 
 This would collect all paragraphs or frames below $context.
-Note that PARA_FILTER might be 'text:p|text:h' or qr/^text:[ph]$/
+Note that C<PARA_FILTER> might be C<'text:p|text:h'> or C<qr/^text:[ph]$/>
 or C<sub{ $_[0] eq 'text:p' || $_[0] eq 'text:h' }> etc.
 
-C<Hor_cond> optimizes a few regex forms into equivalent string conditions,
-which have been measured to be 30% faster.
+C<Hor_cond> optimizes a few regex forms into equivalent string conditions
+measured to be 30% faster.
 
 =cut
 
@@ -1933,7 +1937,7 @@ In the case of a I<style>, the C<$family> must be specified
 ("text", "table", etc.).
 
 SUFFIX is an optional string which will be appended to a generated
-unique name to make it easier for humans to recognize.
+unique name to make recognition by humans easier.
 
 C<$context> may be the document itself or any Element.
 
@@ -2132,12 +2136,12 @@ sub ODF::lpOD::Document::Hcommon_style($$@) {
 =head2 arraytostring($arrayref)
 
 Returns a signature string uniquely representing the members
-(keys and values in the case of a hash).  References are represented
-using their 'refaddr'.
+(keys and values in the case of a hash).
 
-Note that referenced data is not recursively examined.
-Signatures of different structures will match only if
-corresponding first-level non-ref values are 'eq' and refs are exactly the same refs.
+References are not recursively examined, but are representing
+using their 'refaddr'.  Therefore signatures of different structures
+will match only if corresponding first-level non-ref values are 'eq'
+and refs are exactly the same refs.
 
 =cut
 
@@ -2457,19 +2461,13 @@ sub fmt_Hreplace_result(_) {
 
 Some versions of LibreOffice track revisions by installing special spans
 using "rsid" styles which interfere with cloning.
-The problem is that LO expectes these styles to be referenced exactly
+The problem is that LO expects these styles to be referenced exactly
 once.  The C<Hclean_for_cloning()> method will remove them.
 
-There is some evidence that it was supposed to be possible to save LO documents
-without 'rsid's but AFAIK such a feature is not currently available. See
-
-=over
-
-L<https://ask.libreoffice.org/t/where-do-the-text-style-name-tnn-span-tags-come-from-and-how-do-i-get-rid-of-them/31681/2>
-
-L<https://bugs.documentfoundation.org/show_bug.cgi?id=68183>
-
-=back
+An old 2015 reference said a "no rsids" feature was added Libre Office
+but AFAIK such a feature is not available in current releases,
+or anyway isn't documented.
+See L<https://bugs.documentfoundation.org/show_bug.cgi?id=68183>
 
 =head2 $doc->Hclean_for_cloning();
 
@@ -2480,15 +2478,12 @@ in a document if the cloned items might have been edited by Libre Office.
 It may be called multiple times; second and subsequent calls do nothing.
 
 Gory detail:
-Every style in the document is examined and
-B<officeooo:rsid> and B<officeooo:paragraph-rsid>
-attributes are deleted.
-
-(This next step is currently disabled:)
+Every style in the document is examined and any
+B<officeooo:rsid> and B<officeooo:paragraph-rsid> attributes are deleted.
 Then every span in the document body is examined and if the span's
 style is a style which no longer has any properties (i.e. it existed
 only to record an rsid property), then the span is erased, moving up the
-span's children.
+span's children, and the empty style is deleted.
 
 =cut
 
@@ -2526,14 +2521,8 @@ sub ODF::lpOD::Document::Hclean_for_cloning {
     oops if @items2;
   }
 
-  # That should be enough; the body will still be littered with spans which
-  # use zero-effect styles (now that the rsid properties are gone).
-
-##  # For now, leave them be.
-#btw "Temp skipping rsid-only span erasure";
-##  return
-##    unless $ENV{ERASE_RSID_SPANS};
-##btw "Erasing rsid-only spans ...";
+  # The body is still littered with spans which use now-zero-effect styles
+  # (now that the rsid properties are gone).
 
   # Check every span in the document body
   my $body = $doc->get_body;
@@ -2597,8 +2586,8 @@ for why this is a problem.
 =item 2.
 
 I<search()> can not match segmented strings, and so
-can not match text which was internally fragmented by LibreOffice,
-or which crosses style boundaries;
+can not match text which was internally fragmented by LibreOffice
+(e.g. for rsids), or which crosses style boundaries;
 nor can searches match tab, newline or consecutive spaces (which
 are represented by specialized elements).
 I<replace()> has analogous limitations.
@@ -2618,21 +2607,23 @@ L<https://rt.cpan.org/Public/Bug/Display.html?id=97977>)
 
 =head2 Why not just fix ODF::lpOD ?
 
-Ideally bugs in L<ODF::lpOD> would simply be fixed.
-Enhancements should be added in a compatible way
-with integrated documentation for everything.
+Ideally bugs in L<ODF::lpOD> would be fixed without API changes,
+enhancements added in a compatible way, and
+there would be a single integrated documentation set for everything.
 
-However the original author of ODF::lpOD, Jean-Marie Gouarne,
-is no longer active and some bugs (notably with C<get_text>) appear
-to require non-trivial changes.
-Making substantial changes to the ODF::lpOD code base
-would be too risky at this point in history.
+However the original author of L<ODF::lpOD>, Jean-Marie Gouarne,
+is no longer active and some bugs (notably with C<get_text>) might
+require structural changes to the class hierarchy.
+ODF::lpOD is a complex tool and encodes deep knowledge about ODF.
+It seems too risky at this point in history to make non-trivial
+changes which might de-stabilize ODF::lpOD.
 
-ODF::lpOD_Helper introduced higher-level APIs which should
-get further study and revision to fully comport with Jean-Marie's
-vision and usage model.
-Ideally that would be done but it would require too much effort
-(again, at this point in history).  At least for this author!
+Also, ODF::lpOD_Helper introduced new APIs which partly function at a higher level;
+without futher study is is not obvious how they could be merged into
+ODF::lpOD while remaining consistent with Jean-Marie's
+vision and usage model.  Working this out would require too much
+effort (again, at this point in history), at least from the present
+maintainer of ODF::lpOD_Helper!
 
 =head1 AUTHOR
 
@@ -2644,7 +2635,7 @@ ODF::lpOD_Helper is in the Public Domain or CC0 license.
 However it requires ODF::lpOD to function so as a practical matter
 you must comply with ODF::lpOD's license.
 
-ODF::lpOD (v1.126) may be used under the GPL 3 or Apache 2.0 license.
+ODF::lpOD (as of v1.126) may be used under the GPL 3 or Apache 2.0 license.
 
 =for Pod::Coverage oops btw btwN
 =for Pod::Coverage fmt_node_brief fmt_tree_brief fmt_match
