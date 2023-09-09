@@ -1065,17 +1065,27 @@ oops unless @{ $match{segments} };
                                             debug=>$debug, _nocleanup => TRUE
                                            )->{vlength};
   # ┌───┐ ┌───────────────┐ ┌──────┐ ┌───────────┐ ┌─────────┐ ┌───┐
-  # │ A │ │MMMMMMMMMMMMMMM│ │MMMMMM│ │MMMMMMMMMMM│ │temp_para│ │ B │
+  # │ A │ │M1MMMMMMMMMMMMM│ │M2MMMM│ │M3MMMMMMMMM│ │temp_para│ │ B │
   # └───┘ └───────────────┘ └──────┘ └───────────┘ └─────────┘ └───┘
 
-  # Delete the old segments right-to-left; merging will not occur
-  # because the right neighbor is always the unmergeable paragraph.
+  # Delete all but the first old segment in right-to-left order; then, if
+  # the temp para isn't already the next sibling of M1, move it there
+  # (this occurs when M1 is in a span; we want the substituted result
+  # to always get whatever formatting the first character of the
+  # replaced text had).
   my @nodes;
-  for my $e (reverse @{$match{segments}}) {
+  my $seg_count = @{$match{segments}};
+  for my $e (reverse @{$match{segments}}[1..$seg_count-1]) {
     my $p = $e->parent // oops;
     push @nodes, $p;  # in case it's now an empty span.
     $e->delete();
   }
+  unless (($match{segments}[0]->next_sibling//0) == $temp_para) {
+    btw "Hrep_m (moving temp_para into first seg's style)" if $debug;
+    $temp_para->move(after=>$match{segments}[0]);
+  }
+  # Now delete the remaining (0th) old segment
+  $match{segments}[0]->delete;
 
   # No need to normalize here because Hreplace will do an overall normalize
   #$temp_para->Hnormalize();
