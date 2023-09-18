@@ -1,3 +1,5 @@
+6.005 - dumpodf --help improved.  ODF::ODF_Helper Documentation tweaks.
+        Added Hinsert_content tester; various test clean-ups.
 6.003 - Added bin/dumpodf script to dump the body tree of an ODF document.
         Renamed *_COND constants *_FILTER for consistency with ODF::lpOD
 6.002 - Simplify callback protocol: Remove optRESULTS callback return support.

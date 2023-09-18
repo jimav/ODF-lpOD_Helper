@@ -96,7 +96,9 @@ sub verif_normalized($) {
     elsif ($tag eq 'text:line-break') { }
     else { oops $e }
     if ($err) {
-      my $para = $e->self_or_parent(PARA_FILTER);
+      eval{ $e->can('Hself_or_parent') }
+        or fail dvis 'ODDBALL OBJECT $e ; $@ $err :\n'.fmt_tree($e);
+      my $para = $e->Hself_or_parent(PARA_FILTER);
       @_ = ("verif_normalized", "$err\nContaining para:\n".fmt_tree($para));
       goto &fail
     }
