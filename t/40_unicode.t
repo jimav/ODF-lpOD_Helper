@@ -38,12 +38,13 @@ my $body = $doc->get_body;
 
 my $ascii_only_re= qr/This.*Para.*has.*Unicode/;
 
-my $smiley_char = "☺";
+my $smiley_char = "\N{U+263A}";  # ☺
 my $justsmiley_re = qr/${smiley_char}/;
-my $full_char_re = qr/This.*Para.*${smiley_char}.*Unicode.*text\./;
 
 my $smiley_octets = encode("UTF-8", $smiley_char, Encode::LEAVE_SRC);
 my $justsmiley_octet_re = qr/${smiley_octets}/;
+
+my $full_char_re = qr/This.*Para.*${smiley_char}.*Unicode.*text\./;
 my $full_octet_re = qr/This.*Para.*${smiley_octets}.*Unicode.*text\./;
 
 bug unless length($ascii_only_re) == do{ use bytes; my $x=length($ascii_only_re) };
@@ -80,12 +81,19 @@ sub check_search_chars($) {
     # argument if it contains abstract "wide" characters
     if (defined $m) {
       # 9/17/23: EXCEPT... on one cpan tester platform the match "succeeds"
-      #   but matches "" i.e. a zero-length thing. HOW IS THIS POSSIBLE?
+      #   because, for some reason, the match expression becomes "" and
+      #   so the match succeeds at the first character in $body.
+      #   That implies $smiley_char came back as "" with no 'wide char'
+      #   error from decode() in ODF::lpOD::Common::input_conversion
+      #   HOW IS THIS POSSIBLE?
       my ($out,$err,$stat) = Capture::Tiny::capture {
-         my $m2 = eval{ $body->search(qr/$smiley_char/, debug => 1) };
-         btw dvis '$m2 $@\nbody:', fmt_tree($body);
+         my $m2 = eval{ $body->search(qr/$smiley_char/) };
+         btw dvis '$smiley_char $m2 $@';
+         my $m3 = eval{ $body->search(qr/${smiley_char}Unicode/) };
+         btw dvis '$m3 $@\nbody:', fmt_tree($body);
       };
-      fail("bytes mode problem","out:$out\nerr:$err\n");
+      fail("bytes mode problem",
+           "stdout:$out<END stdout>\nstderr:$err<END stderr>\n");
     }
     ok(!defined($m) && $@ =~ /wide char/i,
        "bytes mode: search(wide char) blows up (regex)",
@@ -98,12 +106,13 @@ sub check_search_chars($) {
   }
 
   # But Hsearch does not throw because it does not try to decode() it's args
-  # and will not try to encode the result
+  # and will not try to encode the result.  However it will not match
+  # wide characters because __leaf2vtext() returns octets in :bytes mode.
   my @m = eval{ $body->Hsearch($smiley_char) };
   if ($octet_mode) {
     ok(@m==0 && $@ eq "",
        "bytes mode: Hsearch(wide char) fails as expected",
-       dvis '$@  \@m=', join("\n   ", map{fmt_match} @m)
+       dvis '$@\n$ODF::lpOD::Common::INPUT_CHARSET\n$ODF::lpOD::Common::OUTPUT_CHARSET\n@m=', join("\n   ", map{fmt_match} @m)
       );
   } else {
     ok(@m > 0 && $@ eq "",

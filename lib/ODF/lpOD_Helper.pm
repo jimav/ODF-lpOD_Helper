@@ -36,7 +36,8 @@ ODF::lpOD_Helper - fix and enhance ODF::lpOD
   @matches = $context->Hsearch("Search Phrase");
 
   # Replace every occurrence of "Search Phrase" with "Hi Mom"
-  $body->Hreplace("Search Phrase", ["Hi Mom"], multi => TRUE);
+  $body->Hreplace("Search Phrase", ["Hi Mom"], multi => TRUE)
+    or die "not found";
 
   # Replace "{famous author}" with "Stephen King" in bold, large red text.
   #
@@ -378,10 +379,9 @@ sub __unabbrev_props($) {
 }
 
 # Get virtual text from a single node, expanding tab/newline/space
-# objects to the corresponding character(s).
-#
-# This is like ODF::lpOD::TextElement::get_text() but operates on
-# a leaf element rather than all elements in a container.
+# objects to the corresponding character(s).  This *does* encode results
+# into octets if ODF::lpOD has OUTPUT_CHARSET set (i.e. in :bytes mode);
+# this is necessary so Hsearch can match octets in :bytes mode.
 sub __leaf2vtext($) {
   my $node = shift;
 
@@ -391,7 +391,7 @@ sub __leaf2vtext($) {
   my $tag = $node->get_tag;
   if ($tag eq '#PCDATA')
           {
-          $text = $node->get_text();
+          return $node->get_text(); # encoded while in :bytes mode
           }
   elsif ($tag eq 'text:s')
           {
@@ -410,7 +410,7 @@ sub __leaf2vtext($) {
   else    {
           confess "not a leaf: $tag";
           }
-  return $text;
+  ODF::lpOD::Common::output_conversion( $text );
 }
 
 ###############################################################
@@ -587,7 +587,7 @@ The sub must
 
     "Hreplace" just terminates.
 
-C<Hreplace> returns a list of hashes describing the
+C<Hreplace> returns a list of zero or more hashes describing the
 substitutions which were performed:
 
   {
@@ -601,7 +601,7 @@ substitutions which were performed:
     para_voffset => offset into the paragraph's virtual text
   }
 
-The node following replaced text might be merged out of existence.
+Note: The node following replaced text might be merged out of existence.
 
 =head3 B<[content] Specifications>
 
@@ -964,7 +964,7 @@ sub ODF::lpOD::Element::Hreplace {
 
   ### MAIN BODY OF Hreplace ###
 
-  my ($stop, @retvals);
+  my $stop;
   # If $context itself is a paragraph or a leaf segment, process it first
   if ($context->passes(TEXTLEAF_OR_PARA_FILTER)) {
     $stop = _process_para($state, $context); # ignores nested paras
@@ -981,17 +981,11 @@ sub ODF::lpOD::Element::Hreplace {
   }
 
   if ($stop & Hr_STOP) {
-    btw dvis 'Hreplace STOP. @retvals' if $debug;
+    btw dvis 'Hreplace STOP.' if $debug;
   }
-  @retvals = @{$state->{subst_results}};
 
-  if (wantarray) {
-    btw ivis 'Hreplace RETURNING @retvals' if $debug;
-    return @retvals
-  } else {
-    btw ivis 'Hreplace RETURNING $retvals[0]' if $debug;
-    return $retvals[0]
-  }
+  btw ivis 'Hreplace RETURNING @{$$state{subst_results}}' if $debug;
+  return @{$$state{subst_results}};
 }#Hreplace
 
 ###sub _nonempty_content($) { any{! ref($_) && length($_) != 0} @{shift @_} }
@@ -2309,10 +2303,8 @@ sub fmt_node(_;@) {  # sans final newline
   my $text = eval{ __leaf2vtext($node) }; # undef (throws) if not a leaf
   unless ($opts{_leaftextonly}) {
     if (! defined $text) {
-      $text = eval{ # input_conversion to undo output_conversion in get_text
-                    # so we get back Perl characters (no-op except with :bytes)
-                    ODF::lpOD::Common::input_conversion($node->get_text)
-                  };
+      local $ODF::lpOD::Common::OUTPUT_CHARSET = undef; # always get characters
+      $text = $node->get_text;
       $text_suf .= "[non-leaf]" if defined($text);
 
     }
