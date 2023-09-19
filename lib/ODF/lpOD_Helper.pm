@@ -119,6 +119,7 @@ our @EXPORT_OK = qw(
   Hr_MASK
   TEXTLEAF_FILTER PARA_FILTER TEXTCONTAINER_FILTER TEXTLEAF_OR_PARA_FILTER
   ROW_FILTER COLUMN_FILTER CELL_FILTER TABLE_FILTER
+  SPAN_FILTER FRAME_FILTER
 );
 
 use constant {
@@ -642,7 +643,7 @@ Fonts are automatically registered.
 
 To use an existing (or to-be-created) ODF Style, use
 
-  [style-name => "name of style"]
+  [style_name => "name of style"]
 
 =cut
 
@@ -705,7 +706,9 @@ use constant TABLE_FILTER            => ODF::lpOD::Matrix::TABLE_FILTER;  # 'tab
 
 use constant TEXTLEAF_FILTER         => '#TEXT|text:tab|text:line-break|text:s';
 use constant PARA_FILTER             => 'text:p|text:h';
-use constant TEXTCONTAINER_FILTER    => Hor_cond(PARA_FILTER, "text:span");
+use constant FRAME_FILTER            => 'draw:frame';
+use constant SPAN_FILTER             => 'text:span';
+use constant TEXTCONTAINER_FILTER    => Hor_cond(PARA_FILTER, SPAN_FILTER);
 use constant TEXTLEAF_OR_PARA_FILTER => Hor_cond(TEXTLEAF_FILTER, PARA_FILTER);
 
 # These used to be lexical subs inside Hreplace, but a Perl bug prevented
@@ -2145,25 +2148,25 @@ sub ODF::lpOD::Document::Hcommon_style($$@) {
 
 ###################################################
 
-=head2 hashtostring($hashref)
-
 =head2 arraytostring($arrayref)
+
+=head2 hashtostring($hashref)
 
 Returns a signature string uniquely representing the members
 (keys and values in the case of a hash).
 
-References are not recursively examined, but are representing
-using their 'refaddr'.  Therefore signatures of different structures
+References are not recursively examined, but are represented
+using their 'refaddr'.  Signatures of different structures
 will match only if corresponding first-level non-ref values are 'eq'
 and refs are exactly the same refs.
 
 =cut
 
-sub _item_rep(_) {  # encode so that a string can not fake something else
-  ref($_[0]) ? "~".refaddr($_[0])        :
-  substr($_[0],0,1) eq "~" ? visq($_[0]) :
-  index($_[0],"!") >= 0 ? vis($_[0])     :
-  $_[0];
+sub _item_rep(_) {
+  local $_ = $_[0];
+  return("~".refaddr($_)) if ref;
+  s/([\~\!\\])/\\$1/g; # so a string can not fake something else
+  $_
 }
 
 sub hashtostring($) {
