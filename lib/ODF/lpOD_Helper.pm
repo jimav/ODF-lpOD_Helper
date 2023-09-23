@@ -1630,7 +1630,7 @@ Option B<prune_cond> may be used to omit text below specified node types
 
 =head3 B<Note>
 
-C<ODF::lpOD::TextElement::get_text()> with option I<recursive E<gt> TRUE>
+C<ODF::lpOD::TextElement::get_text()> with option I<recursive -E<gt> TRUE>
 looks like it should do the same thing as C<Hget_text()>, but it has bugs:
 
 =over 4
