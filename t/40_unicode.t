@@ -87,13 +87,19 @@ sub check_search_chars($) {
       #   error from decode() in ODF::lpOD::Common::input_conversion
       #   HOW IS THIS POSSIBLE?
       my ($out,$err,$stat) = Capture::Tiny::capture {
-         my $m2 = eval{ $body->search(qr/$smiley_char/) };
+         no warnings FATAL => 'all'; no warnings; use warnings;  # undo FATAL
+         my $bytes_regex = qr/$smiley_char/;
+         btw dvis '$ODF::lpOD::Common::INPUT_CHARSET $ODF::lpOD::Common::INPUT_ENCODER';
+         my $bytes_regex_copy = $bytes_regex;
+         my $decoded_regex = eval{ $ODF::lpOD::Common::INPUT_ENCODER->decode($bytes_regex_copy) };
+         btw dvis '$decoded_regex $@';
+         my $m2 = eval{ $body->search($bytes_regex) };
          btw dvis '$smiley_char $m2 $@';
          my $m3 = eval{ $body->search(qr/${smiley_char}Unicode/) };
          btw dvis '$m3 $@\nbody:', fmt_tree($body);
       };
       fail("bytes mode problem",
-           "stdout:$out<END stdout>\nstderr:$err<END stderr>\n");
+           "OUT:$out<END stdout>\nERR:$err<END stderr>\n");
     }
     ok(!defined($m) && $@ =~ /wide char/i,
        "bytes mode: search(wide char) blows up (regex)",
