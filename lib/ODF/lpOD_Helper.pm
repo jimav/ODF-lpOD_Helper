@@ -1503,7 +1503,7 @@ sub ODF::lpOD::Element::Hinsert_content {
       $span->set_attribute('style-name', $stylename);
       $span->ODF::lpOD::TextElement::set_text($vtext);
       if (%hyperlink_params) {
-        my $url = delete %hyperlink_params{url} // croak "No hyperlink 'url'";
+        my $url = delete $hyperlink_params{url} // croak "No hyperlink 'url'";
         # Example in ODF::lpOD::TextElement
         $span->set_hyperlink(filter => '.*', url => $url);
       }
