@@ -634,14 +634,14 @@ by C<odf_create_style>, as well as these single-item abbreviations:
   "small-caps"  means  variant => "small-caps"
   "normal-caps" means  variant => "normal", #??
 
-  <NUM>         means  size => "<NUM>pt,   # bare number means point size
-  "<NUM>pt"     means  size => "<NUM>pt,
+  <NUM>         means  size => "<NUM>pt",   # bare number means point size
+  "<NUM>pt"     means  size => "<NUM>pt",
 
 Internally, an ODF "automatic" Style is created for
 each unique combination of properties, re-using styles when possible.
 Fonts are automatically registered.
 
-To use an existing (or to-be-created) ODF Style, use
+To use an existing (or to-be-explicitly-created) ODF Style, use
 
   [style_name => "name of style"]
 
