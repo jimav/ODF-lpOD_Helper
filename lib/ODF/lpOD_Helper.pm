@@ -16,7 +16,7 @@ use strict; use warnings;
 # and remove such from their private copies of the code.
 use warnings FATAL => 'all';
 
-use feature qw(say switch state current_sub lexical_subs);
+use feature qw(say state current_sub lexical_subs);
 no warnings "experimental::lexical_subs";
 use utf8;
 
