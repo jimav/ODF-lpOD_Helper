@@ -1929,7 +1929,7 @@ Returns the nearest ancestor which matches condition C<$cond>.
 
 If C<$stop_cond> is defined, then 0 is returned if the search would
 ascend above the nearest ancestor matching the stop condition.
-Undef is returned no ancestor matches either $cond or $stop_cond.
+Undef is returned if no ancestor matches either $cond or $stop_cond.
 
 For example,
 
