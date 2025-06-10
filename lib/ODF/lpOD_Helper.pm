@@ -132,6 +132,7 @@ use constant {
 sub _is_Hr_valid($) { ($_[0]//"invalid") =~ /^[01236]$/ }
 
 use ODF::lpOD;
+use XML::Twig 3.53; # force version which fixes precedence warnings
 
 #$ODF::lpOD::Common::DEBUG = TRUE;
 
@@ -2682,6 +2683,10 @@ better be done by extending ODF::lpOD in a compatible way.
 That is still a distant goal, but would involve
 major surgery on ODF::lpOD and careful regression testing
 against unknown legacy applications of ODF::lpOD.
+
+=head1 SEE ALSO
+
+ODF::MailMerge
 
 =head1 AUTHOR
 
